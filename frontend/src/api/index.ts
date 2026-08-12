@@ -14,6 +14,7 @@ import type {
   MyParticipation,
   SchoolAdminApplicationCreate,
   UsernameAvailability,
+  Announcement,
 } from './types'
 
 // ---------- Auth ----------
@@ -255,4 +256,41 @@ export async function createApplication(payload: SchoolAdminApplicationCreate) {
   if (payload.evidence) fd.append('evidence', payload.evidence)
   const { data } = await client.post('/applications/', fd)
   return data
+}
+
+// ---------- 系统公告 ----------
+// 用户端公开列表（无需登录）：仅启用中的，后端按 pinned→updated_at 排序
+export async function listAnnouncements(): Promise<Announcement[]> {
+  const { data } = await client.get<Announcement[]>('/announcements/public/')
+  return data
+}
+
+// 超管管理列表（含已停用），支持分页
+export async function listAdminAnnouncements(params: PageQuery = {}) {
+  const { data } = await client.get<Paginated<Announcement>>('/announcements/', {
+    params,
+  })
+  return data
+}
+
+export async function createAnnouncement(
+  payload: Partial<Announcement>,
+): Promise<Announcement> {
+  const { data } = await client.post<Announcement>('/announcements/', payload)
+  return data
+}
+
+export async function updateAnnouncement(
+  id: number,
+  payload: Partial<Announcement>,
+): Promise<Announcement> {
+  const { data } = await client.patch<Announcement>(
+    `/announcements/${id}/`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteAnnouncement(id: number) {
+  await client.delete(`/announcements/${id}/`)
 }

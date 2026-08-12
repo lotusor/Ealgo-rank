@@ -249,3 +249,18 @@ export interface SchoolAdminApplicationCreate {
   contact: string
   evidence?: File
 }
+
+// 系统公告（任务1）：用户端顶栏轮播展示 + 超管发布
+export type AnnouncementLevel = 'info' | 'success' | 'warning' | 'danger'
+
+export interface Announcement {
+  id: number
+  title: string
+  content: string
+  level: AnnouncementLevel
+  level_display: string
+  pinned: boolean
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}

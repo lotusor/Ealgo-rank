@@ -1,29 +1,28 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import {
+  listAnnouncements,
+  createAnnouncement,
+  updateAnnouncement,
+  deleteAnnouncement,
+} from '@/api'
+import type { Announcement } from '@/api/types'
 
 /**
  * 系统公告模块（任务1）：页面内容区左上角的公告条。
- * 后端暂无公告接口，当前用 localStorage 持久化（演示/过渡用），
- * 后续接后端公告接口时只需把 load/save 换成 API 调用即可。
+ * 数据来源为后端公告接口（Announcement 模型 + 超管发布接口），
+ * 不再用 localStorage 持久化（前端的过渡方案已废弃）。
  */
 
-interface Announcement {
-  id: string
-  title: string
-  content: string
-  level: 'info' | 'success' | 'warning' | 'danger'
-  pinned: boolean
-  updated_at: string
-}
+interface EditableAnnouncement extends Partial<Announcement> {}
 
-const STORE_KEY = 'sys_announcements_v1'
 const auth = useAuthStore()
 
 const list = ref<Announcement[]>([])
-const dismissed = ref<Set<string>>(new Set())
+const dismissed = ref<Set<number>>(new Set())
 const editorOpen = ref(false)
-const editing = ref<Announcement | null>(null)
+const editing = ref<EditableAnnouncement | null>(null)
 
 const LEVEL_CLS: Record<Announcement['level'], string> = {
   info: 'badge-info',
@@ -32,30 +31,12 @@ const LEVEL_CLS: Record<Announcement['level'], string> = {
   danger: 'badge-danger',
 }
 
-function seed(): Announcement[] {
-  return [
-    {
-      id: 'seed-1',
-      title: '欢迎使用 E-algo Rank',
-      content: '系统已接入 Codeforces / AtCoder / 牛客三大平台，榜单每日自动同步更新。',
-      level: 'info',
-      pinned: true,
-      updated_at: new Date().toISOString(),
-    },
-  ]
-}
-
-function load() {
+async function load() {
   try {
-    const raw = localStorage.getItem(STORE_KEY)
-    list.value = raw ? (JSON.parse(raw) as Announcement[]) : seed()
+    list.value = await listAnnouncements()
   } catch {
-    list.value = seed()
+    list.value = []
   }
-}
-
-function persist() {
-  localStorage.setItem(STORE_KEY, JSON.stringify(list.value))
 }
 
 const visible = computed(() =>
@@ -75,33 +56,35 @@ function dismiss() {
 function openEditor(a?: Announcement) {
   editing.value = a
     ? { ...a }
-    : {
-        id: 'a-' + Date.now(),
-        title: '',
-        content: '',
-        level: 'info',
-        pinned: false,
-        updated_at: new Date().toISOString(),
-      }
+    : { title: '', content: '', level: 'info', pinned: false, is_active: true }
   editorOpen.value = true
 }
 
-function saveEditor() {
+async function saveEditor() {
   const e = editing.value
-  if (!e || !e.title.trim() || !e.content.trim()) return
-  e.updated_at = new Date().toISOString()
-  const idx = list.value.findIndex((x) => x.id === e.id)
-  if (idx >= 0) list.value[idx] = { ...e }
-  else list.value.unshift({ ...e })
-  persist()
+  if (!e || !e.title?.trim() || !e.content?.trim()) return
+  const payload = {
+    title: e.title.trim(),
+    content: e.content.trim(),
+    level: e.level ?? 'info',
+    pinned: Boolean(e.pinned),
+    is_active: e.is_active ?? true,
+  }
+  if (e.id != null) {
+    await updateAnnouncement(e.id, payload)
+  } else {
+    await createAnnouncement(payload)
+  }
   editorOpen.value = false
   editing.value = null
+  await load()
 }
 
-function removeEditor() {
-  if (editing.value) {
-    list.value = list.value.filter((x) => x.id !== editing.value!.id)
-    persist()
+async function removeEditor() {
+  const e = editing.value
+  if (e?.id != null) {
+    await deleteAnnouncement(e.id)
+    await load()
   }
   editorOpen.value = false
   editing.value = null
@@ -126,6 +109,16 @@ onMounted(load)
     <button
       v-if="auth.isSuperAdmin"
       class="announce-act"
+      title="新建公告"
+      @click="openEditor()"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+    </button>
+    <button
+      v-if="auth.isSuperAdmin"
+      class="announce-act"
       title="管理公告"
       @click="openEditor(current)"
     >
@@ -145,7 +138,7 @@ onMounted(load)
   <div v-if="editorOpen" class="modal-overlay" @click.self="editorOpen = false">
     <div class="modal">
       <div class="modal-header">
-        <span>{{ editing && list.some((x) => x.id === editing!.id) ? '编辑公告' : '新建公告' }}</span>
+        <span>{{ editing && editing.id != null ? '编辑公告' : '新建公告' }}</span>
       </div>
       <div class="modal-body">
         <div class="field">
@@ -169,10 +162,19 @@ onMounted(load)
           <label class="field-check">
             <input type="checkbox" v-model="editing!.pinned" /> 置顶
           </label>
+          <label class="field-check">
+            <input type="checkbox" v-model="editing!.is_active" /> 启用
+          </label>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-ghost btn-sm" @click="removeEditor" v-if="editing && list.some((x) => x.id === editing!.id)">删除</button>
+        <button
+          class="btn btn-ghost btn-sm"
+          @click="removeEditor"
+          v-if="editing && editing.id != null"
+        >
+          删除
+        </button>
         <span style="flex: 1" />
         <button class="btn btn-ghost btn-sm" @click="editorOpen = false">取消</button>
         <button class="btn btn-primary btn-sm" @click="saveEditor">保存</button>

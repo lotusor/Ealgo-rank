@@ -21,6 +21,7 @@ api_v1 = [
     path("", include("apps.contests.urls")),
     path("", include("apps.ranking.urls")),
     path("", include("apps.crawler.urls")),
+    path("", include("apps.announcements.urls")),
 ]
 
 urlpatterns = [
