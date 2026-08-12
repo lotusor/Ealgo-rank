@@ -1,0 +1,287 @@
+/**
+ * 基础层 · reset + 排版工具类
+ * 来源：prototype.html 的 Reset / Typography utilities 段
+ *
+ * 与原型的差异（有意为之）：
+ * 原型用 `*,*::before,*::after{margin:0;padding:0}` 全局清零，
+ * 迁移期还有页面挂在 Naive UI 上，全局清零会打掉它们的内建间距。
+ * 这里改成只清常见文本容器，效果等价且不伤及第三方组件。
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+figure,
+blockquote,
+dl,
+dd,
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+::selection {
+  background: var(--color-primary-subtle);
+  color: var(--color-text-primary);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg-inset);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-overlay);
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-bg-inset);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
+/* ===== Typography utilities ===== */
+.display {
+  font-size: 48px;
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+}
+.h1 {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+.h2 {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+.h3 {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.h4 {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.body {
+  font-size: 16px;
+}
+.body-sm {
+  font-size: 14px;
+  line-height: 1.55;
+}
+.caption {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.micro {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* 数字统一等宽 + tabular，避免榜单跳动 */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.text-secondary {
+  color: var(--color-text-secondary);
+}
+.text-tertiary {
+  color: var(--color-text-tertiary);
+}
+.text-primary-c {
+  color: var(--color-primary);
+}
+.text-cyan {
+  color: var(--color-accent-cyan);
+}
+.text-success {
+  color: var(--color-success);
+}
+.text-warning {
+  color: var(--color-warning);
+}
+.text-danger {
+  color: var(--color-danger);
+}
+.gradient-text {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ===== 容器 ===== */
+.container {
+  max-width: var(--container-max);
+  margin: 0 auto;
+  width: 100%;
+}
+.container-wide {
+  max-width: var(--container-wide);
+  margin: 0 auto;
+  width: 100%;
+}
+.container-narrow {
+  max-width: var(--container-narrow);
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ===== 布局辅助 ===== */
+.grid {
+  display: grid;
+  gap: var(--grid-gutter);
+}
+.grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+.grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+.grid-auto {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.divider {
+  height: 1px;
+  background: var(--color-divider);
+  border: none;
+  margin: var(--space-6) 0;
+}
+
+.link {
+  color: var(--color-primary);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--duration-fast);
+}
+.link:hover {
+  color: var(--color-primary-hover);
+  text-decoration: underline;
+}
+
+.hide-mobile {
+  display: initial;
+}
+.show-mobile {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  :root {
+    --page-padding-x: 20px;
+  }
+  .grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .grid-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 768px) {
+  :root {
+    --page-padding-x: 16px;
+  }
+  .display {
+    font-size: 34px;
+  }
+  .h1 {
+    font-size: 28px;
+  }
+  .h2 {
+    font-size: 22px;
+  }
+  .grid-2,
+  .grid-3,
+  .grid-4,
+  .grid-auto {
+    grid-template-columns: 1fr;
+  }
+  .hide-mobile {
+    display: none;
+  }
+  .show-mobile {
+    display: initial;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

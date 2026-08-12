@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+.env
+db.sqlite3
+db.sqlite3-journal
+
+staticfiles/
+media/
+crawlers/data/
+
+.idea/
+.vscode/
+*.log
+
+node_modules/
+dist/
+.DS_Store
+
+# Test artifacts / screenshots
+_shots/
+_e2e_shots/

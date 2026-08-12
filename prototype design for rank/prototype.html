@@ -1,0 +1,1962 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>E-algo Rank · 高校算法竞赛积分排名系统</title>
+<!--
+  E-algo Rank 原型 · 使用设计系统: Dark Tech Indigo
+  设计令牌来自 design-system-expert，深色科技感风格
+  单文件 SPA，15 页面，hash 路由，纯 HTML/CSS/原生 JS
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* ===== Color ===== */
+  --color-bg-base:#0a0a0f; --color-bg-surface:#13131a; --color-bg-elevated:#1a1a24; --color-bg-overlay:#20202c; --color-bg-inset:#08080d;
+  --color-primary:#6366f1; --color-primary-hover:#5558e0; --color-primary-active:#4f46e5; --color-primary-subtle:rgba(99,102,241,.12); --color-primary-border:rgba(99,102,241,.40);
+  --color-secondary:#8b5cf6;
+  --gradient-primary:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);
+  --gradient-primary-soft:linear-gradient(135deg,rgba(99,102,241,.15),rgba(139,92,246,.15));
+  --gradient-hero-glow:radial-gradient(ellipse at top,rgba(99,102,241,.18),transparent 60%);
+  --color-accent-cyan:#06b6d4; --color-accent-cyan-subtle:rgba(6,182,212,.12);
+  --color-success:#10b981; --color-warning:#f59e0b; --color-danger:#ef4444; --color-info:#3b82f6;
+  --color-success-subtle:rgba(16,185,129,.12); --color-warning-subtle:rgba(245,158,11,.12);
+  --color-danger-subtle:rgba(239,68,68,.12); --color-info-subtle:rgba(59,130,246,.12);
+  --color-text-primary:#f4f4f5; --color-text-secondary:#a1a1aa; --color-text-tertiary:#9b9ba3; --color-text-disabled:#52525b; --color-text-inverse:#0a0a0f;
+  --color-border:rgba(255,255,255,.08); --color-border-strong:rgba(255,255,255,.14); --color-border-focus:rgba(99,102,241,.50); --color-divider:rgba(255,255,255,.06);
+  --color-medal-gold:#fbbf24; --color-medal-silver:#cbd5e1; --color-medal-bronze:#d97706; --gradient-gold:linear-gradient(135deg,#fbbf24,#f59e0b);
+  /* ===== Typography ===== */
+  --font-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei','Source Han Sans CN','Noto Sans SC',sans-serif;
+  --font-mono:'JetBrains Mono','Fira Code',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  /* ===== Spacing ===== */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px;
+  --space-8:32px; --space-10:40px; --space-12:48px; --space-16:64px; --space-20:80px; --space-24:96px;
+  /* ===== Radius ===== */
+  --radius-sm:4px; --radius-md:8px; --radius-lg:12px; --radius-xl:16px; --radius-2xl:20px; --radius-full:9999px;
+  /* ===== Shadow ===== */
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3); --shadow-md:0 4px 12px rgba(0,0,0,.4); --shadow-lg:0 4px 24px rgba(0,0,0,.4);
+  --shadow-xl:0 8px 32px rgba(0,0,0,.5); --shadow-glow:0 8px 32px rgba(99,102,241,.15); --shadow-glow-strong:0 0 24px rgba(99,102,241,.25);
+  /* ===== Glass ===== */
+  --glass-bg:rgba(255,255,255,.03); --glass-bg-strong:rgba(255,255,255,.05); --glass-border:1px solid rgba(255,255,255,.08); --glass-blur:blur(12px); --glass-blur-strong:blur(20px);
+  /* ===== Motion ===== */
+  --ease-standard:cubic-bezier(.4,0,.2,1); --ease-out:cubic-bezier(0,0,.2,1); --ease-in-out:cubic-bezier(.4,0,.6,1); --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  --duration-fast:150ms; --duration-base:200ms; --duration-slow:300ms; --duration-slower:400ms;
+  /* ===== Layout ===== */
+  --container-max:1280px; --container-wide:1440px; --container-narrow:720px; --grid-gutter:24px; --page-padding-x:32px;
+  --nav-height:64px; --sidebar-width:240px; --sidebar-collapsed:64px;
+  --control-height:36px; --control-height-sm:30px; --control-height-lg:44px; --table-row-h:44px; --avatar-size:32px;
+  /* ===== Z-index ===== */
+  --z-base:0; --z-dropdown:100; --z-sticky:200; --z-sidebar:300; --z-nav:400; --z-modal:1000; --z-drawer:1050; --z-toast:1100; --z-tooltip:1200;
+}
+
+/* ===== Reset ===== */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{font-family:var(--font-sans);background:var(--color-bg-base);color:var(--color-text-primary);line-height:1.6;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;min-height:100vh;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+img,svg{display:block;max-width:100%}
+ul,ol{list-style:none}
+::selection{background:var(--color-primary-subtle);color:var(--color-text-primary)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--color-bg-inset)}
+::-webkit-scrollbar-thumb{background:var(--color-bg-overlay);border-radius:var(--radius-full);border:2px solid var(--color-bg-inset)}
+::-webkit-scrollbar-thumb:hover{background:var(--color-border-strong)}
+
+/* ===== Typography utilities ===== */
+.display{font-size:48px;font-weight:800;line-height:1.08;letter-spacing:-.025em}
+.h1{font-size:36px;font-weight:700;line-height:1.15;letter-spacing:-.015em}
+.h2{font-size:28px;font-weight:700;line-height:1.2;letter-spacing:-.01em}
+.h3{font-size:22px;font-weight:600;line-height:1.3}
+.h4{font-size:18px;font-weight:600;line-height:1.4}
+.body{font-size:16px}
+.body-sm{font-size:14px;line-height:1.55}
+.caption{font-size:13px;line-height:1.5}
+.micro{font-size:12px;line-height:1.4}
+.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.text-secondary{color:var(--color-text-secondary)}
+.text-tertiary{color:var(--color-text-tertiary)}
+.text-primary-c{color:var(--color-primary)}
+.text-cyan{color:var(--color-accent-cyan)}
+.text-success{color:var(--color-success)}
+.text-warning{color:var(--color-warning)}
+.text-danger{color:var(--color-danger)}
+.gradient-text{background:var(--gradient-primary);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.mono-badge{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+
+/* ===== Layout: app shell ===== */
+#app{display:flex;flex-direction:column;min-height:100vh}
+.app-body{display:flex;flex:1;min-height:calc(100vh - var(--nav-height))}
+.main-content{flex:1;min-width:0;padding:var(--space-8) var(--page-padding-x)}
+.layout-auth .navbar,.layout-auth .admin-sidebar{display:none}
+.layout-auth .main-content{padding:0}
+.layout-auth #app{min-height:100vh}
+.admin-sidebar{display:none}
+.layout-admin .admin-sidebar{display:flex}
+
+.container{max-width:var(--container-max);margin:0 auto;width:100%}
+.container-wide{max-width:var(--container-wide);margin:0 auto;width:100%}
+.container-narrow{max-width:var(--container-narrow);margin:0 auto;width:100%}
+
+/* ===== Navbar ===== */
+.navbar{position:sticky;top:0;height:var(--nav-height);background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-bottom:var(--glass-border);z-index:var(--z-nav);display:flex;align-items:center}
+.navbar-inner{max-width:var(--container-wide);margin:0 auto;width:100%;padding:0 var(--page-padding-x);display:flex;align-items:center;gap:var(--space-8);height:100%}
+.brand{display:flex;align-items:center;gap:var(--space-3);font-weight:800;font-size:18px;letter-spacing:-.02em;flex-shrink:0}
+.brand-mark{width:32px;height:32px;border-radius:var(--radius-md);background:var(--gradient-primary);display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-glow)}
+.brand-mark svg{width:18px;height:18px}
+.brand-accent{background:var(--gradient-primary);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.nav-links{display:flex;align-items:center;gap:var(--space-1);margin-left:var(--space-4)}
+.nav-links a{padding:var(--space-2) var(--space-4);border-radius:var(--radius-md);font-size:14px;font-weight:500;color:var(--color-text-secondary);transition:all var(--duration-base) var(--ease-standard)}
+.nav-links a:hover{color:var(--color-text-primary);background:var(--color-bg-elevated)}
+.nav-links a.active{color:var(--color-text-primary);background:var(--color-primary-subtle)}
+.nav-actions{margin-left:auto;display:flex;align-items:center;gap:var(--space-3)}
+.nav-toggle{display:none;width:40px;height:40px;border-radius:var(--radius-md);align-items:center;justify-content:center;color:var(--color-text-secondary)}
+.nav-toggle:hover{background:var(--color-bg-elevated)}
+.mobile-drawer{display:none}
+
+/* ===== Admin sidebar ===== */
+.admin-sidebar{width:var(--sidebar-width);flex-shrink:0;flex-direction:column;background:var(--color-bg-surface);border-right:var(--color-border);position:sticky;top:var(--nav-height);height:calc(100vh - var(--nav-height));overflow-y:auto;padding:var(--space-6) var(--space-4);z-index:var(--z-sidebar)}
+.sidebar-group-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--color-text-tertiary);padding:0 var(--space-3);margin:var(--space-4) 0 var(--space-2)}
+.sidebar-link{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3);border-radius:var(--radius-md);font-size:14px;font-weight:500;color:var(--color-text-secondary);transition:all var(--duration-base) var(--ease-standard);margin-bottom:2px}
+.sidebar-link:hover{color:var(--color-text-primary);background:var(--color-bg-elevated)}
+.sidebar-link.active{color:var(--color-text-primary);background:var(--color-primary-subtle)}
+.sidebar-link.active svg{color:var(--color-primary)}
+.sidebar-link svg{width:18px;height:18px;flex-shrink:0;color:var(--color-text-tertiary)}
+.sidebar-link.active svg{color:var(--color-primary)}
+
+/* ===== Buttons ===== */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);height:var(--control-height);padding:0 var(--space-5);border-radius:var(--radius-md);font-size:14px;font-weight:600;transition:all var(--duration-base) var(--ease-standard);white-space:nowrap;user-select:none;border:1px solid transparent}
+.btn svg{width:16px;height:16px}
+.btn-primary{background:var(--gradient-primary);color:#fff;box-shadow:0 1px 3px rgba(99,102,241,.3)}
+.btn-primary:hover{box-shadow:var(--shadow-glow);transform:translateY(-1px)}
+.btn-primary:active{transform:translateY(0)}
+.btn-secondary{background:var(--color-bg-elevated);color:var(--color-text-primary);border-color:var(--color-border-strong)}
+.btn-secondary:hover{background:var(--color-bg-overlay);border-color:var(--color-border-focus)}
+.btn-ghost{color:var(--color-text-secondary);background:transparent}
+.btn-ghost:hover{color:var(--color-text-primary);background:var(--color-bg-elevated)}
+.btn-danger{background:var(--color-danger-subtle);color:var(--color-danger);border-color:rgba(239,68,68,.25)}
+.btn-danger:hover{background:rgba(239,68,68,.2)}
+.btn-lg{height:var(--control-height-lg);padding:0 var(--space-8);font-size:15px}
+.btn-sm{height:var(--control-height-sm);padding:0 var(--space-3);font-size:13px}
+.btn-block{width:100%}
+.btn-icon{width:var(--control-height);padding:0}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* ===== Cards ===== */
+.card{background:var(--color-bg-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);box-shadow:var(--shadow-md);transition:all var(--duration-base) var(--ease-standard)}
+.card-hover:hover{transform:translateY(-2px);border-color:var(--color-border-strong);box-shadow:var(--shadow-lg)}
+.card-pad{padding:var(--space-6)}
+.card-header{display:flex;align-items:center;justify-content:space-between;padding:var(--space-5) var(--space-6);border-bottom:var(--color-divider)}
+.card-title{font-size:16px;font-weight:600}
+.card-body{padding:var(--space-6)}
+
+/* ===== Stat cards ===== */
+.stat-card{background:var(--color-bg-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:var(--space-6);transition:all var(--duration-base) var(--ease-standard);position:relative;overflow:hidden}
+.stat-card:hover{border-color:var(--color-border-strong);transform:translateY(-2px)}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--gradient-primary);opacity:0;transition:opacity var(--duration-base)}
+.stat-card:hover::before{opacity:1}
+.stat-label{font-size:13px;color:var(--color-text-secondary);font-weight:500;display:flex;align-items:center;gap:var(--space-2)}
+.stat-value{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:32px;font-weight:700;line-height:1.1;margin-top:var(--space-2);letter-spacing:-.02em}
+.stat-sub{font-size:12px;color:var(--color-text-tertiary);margin-top:var(--space-1)}
+.stat-icon{width:36px;height:36px;border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.stat-icon svg{width:18px;height:18px}
+.stat-icon.cyan{background:var(--color-accent-cyan-subtle);color:var(--color-accent-cyan)}
+.stat-icon.primary{background:var(--color-primary-subtle);color:var(--color-primary)}
+.stat-icon.success{background:var(--color-success-subtle);color:var(--color-success)}
+.stat-icon.warning{background:var(--color-warning-subtle);color:var(--color-warning)}
+
+/* ===== Tables ===== */
+.table-wrap{overflow-x:auto;border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-bg-surface)}
+table.data-table{width:100%;border-collapse:collapse;font-size:14px}
+.data-table thead th{background:var(--color-bg-inset);text-align:left;padding:var(--space-3) var(--space-4);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-text-tertiary);border-bottom:1px solid var(--color-border);white-space:nowrap}
+.data-table tbody td{padding:0 var(--space-4);height:var(--table-row-h);border-bottom:var(--color-divider);color:var(--color-text-primary);vertical-align:middle}
+.data-table tbody tr:nth-child(even){background:rgba(255,255,255,.015)}
+.data-table tbody tr:hover{background:var(--color-primary-subtle)}
+.data-table tbody tr:last-child td{border-bottom:none}
+.data-table .num-cell{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.data-table th.num-cell,.data-table td.num-cell{text-align:right}
+.data-table td.center{text-align:center}
+.row-expand{cursor:pointer}
+.expand-content{padding:var(--space-4) var(--space-6) var(--space-6);background:var(--color-bg-inset);border-top:1px solid var(--color-border)}
+
+/* medal rows */
+.medal-row{position:relative}
+.medal-row::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px}
+.medal-row.gold::before{background:var(--color-medal-gold)}
+.medal-row.silver::before{background:var(--color-medal-silver)}
+.medal-row.bronze::before{background:var(--color-medal-bronze)}
+.rank-badge{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:var(--radius-md);font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-weight:700;font-size:13px}
+.rank-badge.gold{background:var(--gradient-gold);color:#3b2606}
+.rank-badge.silver{background:var(--color-medal-silver);color:#1e293b}
+.rank-badge.bronze{background:var(--color-medal-bronze);color:#fff}
+.rank-badge.normal{background:var(--color-bg-elevated);color:var(--color-text-secondary)}
+
+/* school/student cell */
+.cell-org{display:flex;align-items:center;gap:var(--space-3)}
+.org-logo{width:30px;height:30px;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0;letter-spacing:-.02em}
+.cell-user{display:flex;align-items:center;gap:var(--space-3)}
+.avatar{width:var(--avatar-size);height:var(--avatar-size);border-radius:var(--radius-full);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;flex-shrink:0;background:var(--gradient-primary)}
+
+/* trend */
+.trend{display:inline-flex;align-items:center;gap:2px;font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:13px;font-weight:600}
+.trend.up{color:var(--color-success)}
+.trend.down{color:var(--color-danger)}
+.trend.flat{color:var(--color-text-tertiary)}
+.trend svg{width:14px;height:14px}
+
+/* ===== Badges ===== */
+.badge{display:inline-flex;align-items:center;gap:var(--space-1);padding:3px var(--space-2);border-radius:var(--radius-full);font-size:12px;font-weight:600;line-height:1.4;white-space:nowrap;border:1px solid transparent}
+.badge svg{width:12px;height:12px}
+.badge-success{color:var(--color-success);background:var(--color-success-subtle);border-color:rgba(16,185,129,.25)}
+.badge-danger{color:var(--color-danger);background:var(--color-danger-subtle);border-color:rgba(239,68,68,.25)}
+.badge-warning{color:var(--color-warning);background:var(--color-warning-subtle);border-color:rgba(245,158,11,.25)}
+.badge-info{color:var(--color-info);background:var(--color-info-subtle);border-color:rgba(59,130,246,.25)}
+.badge-primary{color:var(--color-primary);background:var(--color-primary-subtle);border-color:var(--color-primary-border)}
+.badge-muted{color:var(--color-text-tertiary);background:rgba(255,255,255,.05);border-color:var(--color-border)}
+.badge-cyan{color:var(--color-accent-cyan);background:var(--color-accent-cyan-subtle);border-color:rgba(6,182,212,.25)}
+.dot{width:6px;height:6px;border-radius:var(--radius-full);background:currentColor;flex-shrink:0}
+.dot-pulse{animation:pulse 1.5s var(--ease-in-out) infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
+
+/* platform tag */
+.platform-tag{display:inline-flex;align-items:center;gap:var(--space-1);padding:2px var(--space-2);border-radius:var(--radius-sm);font-size:11px;font-weight:700;letter-spacing:.02em;font-family:var(--font-mono)}
+.platform-tag.cf{background:rgba(239,68,68,.12);color:#f87171}
+.platform-tag.atcoder{background:rgba(210,210,210,.1);color:#e4e4e7}
+.platform-tag.nowcoder{background:rgba(34,197,94,.12);color:#4ade80}
+
+/* ===== Inputs ===== */
+.field{margin-bottom:var(--space-5)}
+.field-label{display:block;font-size:13px;font-weight:600;color:var(--color-text-secondary);margin-bottom:var(--space-2)}
+.input,.select,.textarea{width:100%;height:var(--control-height);background:var(--color-bg-inset);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:0 var(--space-3);color:var(--color-text-primary);font-size:14px;transition:all var(--duration-base) var(--ease-standard);outline:none}
+.textarea{height:auto;padding:var(--space-3);resize:vertical;line-height:1.5;min-height:88px}
+.input::placeholder,.textarea::placeholder{color:var(--color-text-disabled)}
+.input:focus,.select:focus,.textarea:focus{border-color:var(--color-primary);box-shadow:0 0 0 3px var(--color-primary-subtle);background:var(--color-bg-base)}
+.select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right var(--space-3) center;padding-right:var(--space-8)}
+.input-group{position:relative}
+.input-icon{position:absolute;left:var(--space-3);top:50%;transform:translateY(-50%);color:var(--color-text-tertiary);width:16px;height:16px;pointer-events:none}
+.input-group .input{padding-left:var(--space-8)}
+.field-hint{font-size:12px;color:var(--color-text-tertiary);margin-top:var(--space-2)}
+.field-error{font-size:12px;color:var(--color-danger);margin-top:var(--space-2)}
+
+/* ===== Tabs ===== */
+.tabs{display:flex;gap:var(--space-1);border-bottom:1px solid var(--color-border);margin-bottom:var(--space-6)}
+.tab{padding:var(--space-3) var(--space-4);font-size:14px;font-weight:500;color:var(--color-text-secondary);border-bottom:2px solid transparent;transition:all var(--duration-base) var(--ease-standard);margin-bottom:-1px;display:inline-flex;align-items:center;gap:var(--space-2)}
+.tab:hover{color:var(--color-text-primary)}
+.tab.active{color:var(--color-text-primary);border-bottom-color:var(--color-primary)}
+.tab-count{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:12px;padding:1px 6px;border-radius:var(--radius-full);background:var(--color-bg-elevated);color:var(--color-text-tertiary)}
+.tab.active .tab-count{background:var(--color-primary-subtle);color:var(--color-primary)}
+
+/* segmented control (filter pills) */
+.segmented{display:inline-flex;background:var(--color-bg-inset);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:3px;gap:2px}
+.seg-btn{padding:var(--space-2) var(--space-4);border-radius:var(--radius-sm);font-size:13px;font-weight:500;color:var(--color-text-secondary);transition:all var(--duration-fast) var(--ease-standard)}
+.seg-btn:hover{color:var(--color-text-primary)}
+.seg-btn.active{background:var(--color-bg-elevated);color:var(--color-text-primary);box-shadow:var(--shadow-sm)}
+
+/* ===== Pagination ===== */
+.pagination{display:flex;align-items:center;justify-content:center;gap:var(--space-1);margin-top:var(--space-6)}
+.page-btn{min-width:36px;height:36px;padding:0 var(--space-2);border-radius:var(--radius-md);display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--color-text-secondary);font-family:var(--font-mono);font-variant-numeric:tabular-nums;transition:all var(--duration-fast) var(--ease-standard)}
+.page-btn:hover:not(:disabled){background:var(--color-bg-elevated);color:var(--color-text-primary)}
+.page-btn.active{background:var(--color-primary-subtle);color:var(--color-primary);border:1px solid var(--color-primary-border)}
+.page-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ===== Modal ===== */
+.modal-overlay{position:fixed;inset:0;background:rgba(5,5,10,.7);backdrop-filter:blur(4px);z-index:var(--z-modal);display:none;align-items:center;justify-content:center;padding:var(--space-6)}
+.modal-overlay.show{display:flex;animation:fadeIn var(--duration-base) var(--ease-out)}
+.modal{background:var(--color-bg-elevated);border:1px solid var(--color-border-strong);border-radius:var(--radius-xl);box-shadow:var(--shadow-xl);width:100%;max-width:480px;max-height:90vh;overflow-y:auto;animation:modalIn var(--duration-slow) var(--ease-spring)}
+.modal-lg{max-width:640px}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:var(--space-5) var(--space-6);border-bottom:var(--color-divider)}
+.modal-title{font-size:17px;font-weight:600}
+.modal-close{width:32px;height:32px;border-radius:var(--radius-md);display:flex;align-items:center;justify-content:center;color:var(--color-text-tertiary);transition:all var(--duration-fast)}
+.modal-close:hover{background:var(--color-bg-overlay);color:var(--color-text-primary)}
+.modal-body{padding:var(--space-6)}
+.modal-footer{display:flex;justify-content:flex-end;gap:var(--space-3);padding:var(--space-5) var(--space-6);border-top:var(--color-divider)}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes modalIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+
+/* ===== Toast ===== */
+.toast-container{position:fixed;top:calc(var(--nav-height) + var(--space-4));right:var(--space-6);z-index:var(--z-toast);display:flex;flex-direction:column;gap:var(--space-3);pointer-events:none}
+.toast{background:var(--color-bg-elevated);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);box-shadow:var(--shadow-lg);display:flex;align-items:center;gap:var(--space-3);min-width:280px;max-width:380px;pointer-events:auto;animation:toastIn var(--duration-slow) var(--ease-spring)}
+.toast.success{border-left:3px solid var(--color-success)}
+.toast.error{border-left:3px solid var(--color-danger)}
+.toast.info{border-left:3px solid var(--color-info)}
+.toast-icon{width:20px;height:20px;flex-shrink:0}
+.toast.success .toast-icon{color:var(--color-success)}
+.toast.error .toast-icon{color:var(--color-danger)}
+.toast.info .toast-icon{color:var(--color-info)}
+.toast-msg{font-size:14px;font-weight:500}
+@keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}
+
+/* ===== Tooltip (chart) ===== */
+.chart-tooltip{position:absolute;background:var(--color-bg-overlay);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);padding:var(--space-2) var(--space-3);box-shadow:var(--shadow-lg);font-size:12px;pointer-events:none;opacity:0;transition:opacity var(--duration-fast);z-index:var(--z-tooltip);white-space:nowrap}
+.chart-tooltip.show{opacity:1}
+
+/* ===== Page sections ===== */
+.page{display:none}
+.page.active{display:block;animation:pageIn var(--duration-slow) var(--ease-out)}
+@keyframes pageIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-4);margin-bottom:var(--space-6);flex-wrap:wrap}
+.page-title{font-size:24px;font-weight:700;letter-spacing:-.01em}
+.page-subtitle{font-size:14px;color:var(--color-text-secondary);margin-top:var(--space-1)}
+.breadcrumb{display:flex;align-items:center;gap:var(--space-2);font-size:13px;color:var(--color-text-tertiary);margin-bottom:var(--space-2)}
+.breadcrumb a:hover{color:var(--color-text-primary)}
+.section-title{font-size:18px;font-weight:700;margin-bottom:var(--space-5);display:flex;align-items:center;gap:var(--space-2)}
+
+/* filter bar */
+.filter-bar{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-6)}
+.filter-bar .input{width:auto;min-width:200px}
+
+/* grid helpers */
+.grid{display:grid;gap:var(--grid-gutter)}
+.grid-2{grid-template-columns:repeat(2,1fr)}
+.grid-3{grid-template-columns:repeat(3,1fr)}
+.grid-4{grid-template-columns:repeat(4,1fr)}
+.grid-auto{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+
+/* divider */
+.divider{height:1px;background:var(--color-divider);border:none;margin:var(--space-6) 0}
+
+/* link */
+.link{color:var(--color-primary);font-weight:500;transition:color var(--duration-fast)}
+.link:hover{color:var(--color-primary-hover);text-decoration:underline}
+
+/* empty state */
+.empty-state{text-align:center;padding:var(--space-12) var(--space-6);color:var(--color-text-tertiary)}
+.empty-state svg{width:48px;height:48px;margin:0 auto var(--space-4);opacity:.4}
+
+/* responsive helpers */
+.hide-mobile{display:initial}
+.show-mobile{display:none}
+
+/* ===== Responsive ===== */
+@media(max-width:1024px){
+  :root{--page-padding-x:20px}
+  .grid-4{grid-template-columns:repeat(2,1fr)}
+  .grid-3{grid-template-columns:repeat(2,1fr)}
+  .layout-admin .admin-sidebar{position:fixed;left:0;top:var(--nav-height);height:calc(100vh - var(--nav-height));transform:translateX(-100%);transition:transform var(--duration-slow) var(--ease-standard);box-shadow:var(--shadow-xl);z-index:var(--z-drawer)}
+  .layout-admin.sidebar-open .admin-sidebar{transform:translateX(0)}
+  .admin-backdrop{display:none}
+  .layout-admin.sidebar-open .admin-backdrop{display:block;position:fixed;inset:var(--nav-height) 0 0 0;background:rgba(0,0,0,.5);z-index:calc(var(--z-drawer) - 1)}
+}
+@media(max-width:768px){
+  :root{--page-padding-x:16px}
+  .display{font-size:34px}
+  .h1{font-size:28px}
+  .h2{font-size:22px}
+  .nav-links{display:none}
+  .nav-toggle{display:flex}
+  .mobile-drawer{position:fixed;top:var(--nav-height);left:0;right:0;background:var(--color-bg-elevated);border-bottom:var(--color-border);padding:var(--space-3);z-index:var(--z-drawer);transform:translateY(-120%);transition:transform var(--duration-slow) var(--ease-standard);box-shadow:var(--shadow-xl)}
+  .mobile-drawer.open{transform:translateY(0)}
+  .mobile-drawer a{display:block;padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);font-size:15px;font-weight:500;color:var(--color-text-secondary)}
+  .mobile-drawer a:hover{background:var(--color-bg-overlay);color:var(--color-text-primary)}
+  .grid-2,.grid-3,.grid-4{grid-template-columns:1fr}
+  .grid-auto{grid-template-columns:1fr}
+  .main-content{padding:var(--space-5) var(--page-padding-x)}
+  .page-head{flex-direction:column}
+  .hide-mobile{display:none}
+  .show-mobile{display:initial}
+  .stat-value{font-size:26px}
+  .card-pad{padding:var(--space-4)}
+  .modal{max-width:calc(100vw - 32px)}
+  #dashboardGrid, #crawlerGrid {
+    grid-template-columns: 1fr !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* step indicator (auth) */
+.step-item{display:flex;flex-direction:column;align-items:center;gap:6px}
+.step-num{width:32px;height:32px;border-radius:var(--radius-full);background:var(--color-bg-elevated);border:1px solid var(--color-border);display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-weight:700;font-size:14px;color:var(--color-text-tertiary);transition:all var(--duration-base) var(--ease-standard)}
+.step-label{font-size:12px;color:var(--color-text-tertiary);font-weight:500;transition:color var(--duration-base)}
+.step-line{width:48px;height:2px;background:var(--color-border);border-radius:1px;flex-shrink:0}
+.step-item.active .step-num{background:var(--gradient-primary);color:#fff;border-color:transparent;box-shadow:var(--shadow-glow)}
+.step-item.active .step-label{color:var(--color-text-primary)}
+.step-item.done .step-num{background:var(--color-success-subtle);color:var(--color-success);border-color:transparent}
+.step-item.done .step-label{color:var(--color-text-secondary)}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* school bind result item */
+.bind-item{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);cursor:pointer;transition:background var(--duration-fast);border-bottom:1px solid var(--color-divider)}
+.bind-item:last-child{border-bottom:none}
+.bind-item:hover{background:var(--color-primary-subtle)}
+/* contest card */
+.comp-card{background:var(--color-bg-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:var(--space-5);transition:all var(--duration-base) var(--ease-standard);cursor:pointer}
+.comp-card:hover{border-color:var(--color-border-strong);transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+.comp-card .comp-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-3)}
+/* table action buttons */
+.row-action{padding:var(--space-1) var(--space-2);border-radius:var(--radius-sm);font-size:12px;font-weight:600;transition:all var(--duration-fast);display:inline-flex;align-items:center;gap:4px}
+.row-action svg{width:13px;height:13px}
+.row-action.approve{color:var(--color-success);background:var(--color-success-subtle)}
+.row-action.approve:hover{background:rgba(16,185,129,.2)}
+.row-action.reject{color:var(--color-danger);background:var(--color-danger-subtle)}
+.row-action.reject:hover{background:rgba(239,68,68,.2)}
+.row-action.edit{color:var(--color-primary);background:var(--color-primary-subtle)}
+.row-action.edit:hover{background:rgba(99,102,241,.2)}
+.row-action.neutral{color:var(--color-text-secondary);background:var(--color-bg-elevated)}
+.row-action.neutral:hover{background:var(--color-bg-overlay)}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- ===== Navbar ===== -->
+  <header class="navbar" id="navbar">
+    <div class="navbar-inner">
+      <a class="brand" href="#/home" onclick="navigate('home')">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l4-4 4 4 4-8 4 8"/><circle cx="7" cy="13" r="1" fill="#fff"/><circle cx="19" cy="13" r="1" fill="#fff"/></svg></span>
+        <span>E-algo <span class="brand-accent">Rank</span></span>
+      </a>
+      <nav class="nav-links" id="navLinks">
+        <a href="#/home" data-route="home" onclick="navigate('home')">首页</a>
+        <a href="#/rankings" data-route="rankings" onclick="navigate('rankings')">排名榜</a>
+        <a href="#/competitions" data-route="competitions" onclick="navigate('competitions')">比赛列表</a>
+        <a href="#/profile" data-route="profile" onclick="navigate('profile')">个人中心</a>
+        <a href="#/admin/dashboard" data-route="admin" onclick="navigate('admin/dashboard')">管理后台</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="btn btn-ghost btn-sm hide-mobile" onclick="navigate('rankings')">查看排名</button>
+        <button class="btn btn-primary" onclick="navigate('auth/login')">登录 / 注册</button>
+        <button class="nav-toggle" id="navToggle" onclick="toggleMobileNav()">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+  <div class="mobile-drawer" id="mobileDrawer">
+    <a href="#/home" onclick="navigate('home')">首页</a>
+    <a href="#/rankings" onclick="navigate('rankings')">排名榜</a>
+    <a href="#/competitions" onclick="navigate('competitions')">比赛列表</a>
+    <a href="#/profile" onclick="navigate('profile')">个人中心</a>
+    <a href="#/admin/dashboard" onclick="navigate('admin/dashboard')">管理后台</a>
+  </div>
+
+  <div class="app-body" id="appBody">
+    <!-- ===== Admin sidebar ===== -->
+    <aside class="admin-sidebar" id="adminSidebar">
+      <div class="sidebar-group-label">概览</div>
+      <a class="sidebar-link" href="#/admin/dashboard" data-admin="dashboard" onclick="navigate('admin/dashboard')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>仪表盘</a>
+      <div class="sidebar-group-label">数据管理</div>
+      <a class="sidebar-link" href="#/admin/schools" data-admin="schools" onclick="navigate('admin/schools')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>学校管理</a>
+      <a class="sidebar-link" href="#/admin/records" data-admin="records" onclick="navigate('admin/records')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg>参赛记录</a>
+      <a class="sidebar-link" href="#/admin/members" data-admin="members" onclick="navigate('admin/members')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>成员名单</a>
+      <div class="sidebar-group-label">运营</div>
+      <a class="sidebar-link" href="#/admin/approvals" data-admin="approvals" onclick="navigate('admin/approvals')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>申请审批</a>
+      <a class="sidebar-link" href="#/admin/crawler" data-admin="crawler" onclick="navigate('admin/crawler')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>爬虫任务</a>
+    </aside>
+    <div class="admin-backdrop" onclick="closeSidebar()"></div>
+
+    <!-- ===== Main content ===== -->
+    <main class="main-content" id="mainContent">
+<!-- ============ PAGE 1: HOME / LANDING ============ -->
+<section class="page" id="page-home">
+  <div class="container-wide">
+    <!-- Hero -->
+    <div style="position:relative;border-radius:var(--radius-2xl);overflow:hidden;background:var(--color-bg-surface);border:1px solid var(--color-border);margin-bottom:var(--space-12)">
+      <div style="position:absolute;inset:0;background:var(--gradient-hero-glow);pointer-events:none"></div>
+      <div style="position:absolute;top:-40%;right:-10%;width:500px;height:500px;background:radial-gradient(circle,rgba(139,92,246,.12),transparent 70%);pointer-events:none"></div>
+      <div style="position:relative;padding:var(--space-20) var(--space-12) var(--space-16);text-align:center">
+        <span class="badge badge-primary" style="margin-bottom:var(--space-6)"><span class="dot dot-pulse"></span>已覆盖 48 所高校 · 实时同步三大平台</span>
+        <h1 class="display" style="margin-bottom:var(--space-5)">高校算法竞赛，<span class="gradient-text">谁与争锋</span></h1>
+        <p class="body text-secondary" style="max-width:640px;margin:0 auto var(--space-8);font-size:18px">自动采集 Codeforces、AtCoder、牛客三大平台比赛数据，按学校维度智能积分排名。让每一行代码的实力，被看见、被衡量、被铭记。</p>
+        <div style="display:flex;gap:var(--space-4);justify-content:center;flex-wrap:wrap">
+          <button class="btn btn-primary btn-lg" onclick="navigate('rankings')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg>
+            查看排名
+          </button>
+          <button class="btn btn-secondary btn-lg" onclick="navigate('auth/login')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5M15 12H3"/></svg>
+            登录 / 注册
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-4" style="margin-bottom:var(--space-12)">
+      <div class="stat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="stat-label">覆盖学校</div><div class="stat-value">48</div><div class="stat-sub">所高校</div></div><div class="stat-icon primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/></svg></div></div></div>
+      <div class="stat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="stat-label">收录比赛</div><div class="stat-value">1,247</div><div class="stat-sub">场赛事</div></div><div class="stat-icon cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg></div></div></div>
+      <div class="stat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="stat-label">在册学生</div><div class="stat-value">3,856</div><div class="stat-sub">名选手</div></div><div class="stat-icon success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div></div></div>
+      <div class="stat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="stat-label">参赛记录</div><div class="stat-value">28,934</div><div class="stat-sub">条记录</div></div><div class="stat-icon warning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg></div></div></div>
+    </div>
+
+    <!-- Platforms -->
+    <div style="margin-bottom:var(--space-12)">
+      <div class="section-title"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>支持的平台</div>
+      <div class="grid grid-3">
+        <div class="card card-hover card-pad">
+          <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-4)">
+            <div style="width:48px;height:48px;border-radius:var(--radius-lg);background:rgba(239,68,68,.12);display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="#f87171"><path d="M4.5 7.5L1 9l2 2-1 5 4 6h4l1-2-2-4 3-1 2-3-3-2 1-3-5-1zM20 4l-3 2 1 3-2 2 2 3-3 1 1 3h3l3-5-1-4 2-2z"/></svg></div>
+            <div><div class="h4">Codeforces</div><div class="caption text-tertiary">codeforces.com</div></div>
+          </div>
+          <p class="body-sm text-secondary" style="margin-bottom:var(--space-4)">全球最活跃的算法竞赛平台，Rating 系统权威，高校选手主战场。</p>
+          <div style="display:flex;gap:var(--space-4)"><div><div class="caption text-tertiary">收录比赛</div><div class="num" style="font-weight:600;font-size:15px">712</div></div><div><div class="caption text-tertiary">活跃选手</div><div class="num" style="font-weight:600;font-size:15px">2,103</div></div></div>
+        </div>
+        <div class="card card-hover card-pad">
+          <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-4)">
+            <div style="width:48px;height:48px;border-radius:var(--radius-lg);background:rgba(210,210,210,.1);display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="#e4e4e7"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+            <div><div class="h4">AtCoder</div><div class="caption text-tertiary">atcoder.jp</div></div>
+          </div>
+          <p class="body-sm text-secondary" style="margin-bottom:var(--space-4)">日本老牌竞赛平台，题目质量高，ABC / ARC 系列深受高校欢迎。</p>
+          <div style="display:flex;gap:var(--space-4)"><div><div class="caption text-tertiary">收录比赛</div><div class="num" style="font-weight:600;font-size:15px">348</div></div><div><div class="caption text-tertiary">活跃选手</div><div class="num" style="font-weight:600;font-size:15px">1,247</div></div></div>
+        </div>
+        <div class="card card-hover card-pad">
+          <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-4)">
+            <div style="width:48px;height:48px;border-radius:var(--radius-lg);background:rgba(34,197,94,.12);display:flex;align-items:center;justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="#4ade80"><circle cx="12" cy="12" r="10"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="#0a0a0f" font-weight="700">牛</text></svg></div>
+            <div><div class="h4">牛客竞赛</div><div class="caption text-tertiary">nowcoder.com</div></div>
+          </div>
+          <p class="body-sm text-secondary" style="margin-bottom:var(--space-4)">国内高校赛事核心阵地，多校训练赛、寒假集训营覆盖面广。</p>
+          <div style="display:flex;gap:var(--space-4)"><div><div class="caption text-tertiary">收录比赛</div><div class="num" style="font-weight:600;font-size:15px">187</div></div><div><div class="caption text-tertiary">活跃选手</div><div class="num" style="font-weight:600;font-size:15px">1,894</div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Features -->
+    <div style="margin-bottom:var(--space-12)">
+      <div class="section-title"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>核心功能</div>
+      <div class="grid grid-4">
+        <div class="card card-hover card-pad">
+          <div class="stat-icon primary" style="margin-bottom:var(--space-4)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/><circle cx="7" cy="14" r="1"/><circle cx="11" cy="10" r="1"/><circle cx="15" cy="14" r="1"/><circle cx="20" cy="9" r="1"/></svg></div>
+          <div class="h4" style="margin-bottom:var(--space-2)">学校积分排名</div>
+          <p class="body-sm text-secondary">按学校维度聚合选手成绩，科学积分模型，实时更新榜单。</p>
+        </div>
+        <div class="card card-hover card-pad">
+          <div class="stat-icon cyan" style="margin-bottom:var(--space-4)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg></div>
+          <div class="h4" style="margin-bottom:var(--space-2)">个人成绩追踪</div>
+          <p class="body-sm text-secondary">跨平台 Rating 折线图、参赛历史、积分明细，一目了然。</p>
+        </div>
+        <div class="card card-hover card-pad">
+          <div class="stat-icon success" style="margin-bottom:var(--space-4)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3"/></svg></div>
+          <div class="h4" style="margin-bottom:var(--space-2)">自动数据采集</div>
+          <p class="body-sm text-secondary">爬虫定时同步三大平台比赛与成绩，零人工录入。</p>
+        </div>
+        <div class="card card-hover card-pad">
+          <div class="stat-icon warning" style="margin-bottom:var(--space-4)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
+          <div class="h4" style="margin-bottom:var(--space-2)">智能积分引擎</div>
+          <p class="body-sm text-secondary">融合难度系数、参赛规模、排名表现，公平量化实力。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top 5 preview -->
+    <div style="margin-bottom:var(--space-12)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-5)">
+        <div class="section-title" style="margin-bottom:0"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>学校榜 Top 5</div>
+        <button class="btn btn-ghost btn-sm" onclick="navigate('rankings')">查看完整榜单 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
+      </div>
+      <div class="card" style="overflow:hidden">
+        <div class="table-wrap" style="border:none;border-radius:0">
+          <table class="data-table">
+            <thead><tr><th style="width:60px">排名</th><th>学校</th><th class="num-cell">积分</th><th class="num-cell hide-mobile">参赛人数</th><th class="num-cell">趋势</th></tr></thead>
+            <tbody id="homeTop5Body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer style="border-top:1px solid var(--color-border);margin-top:var(--space-16);padding:var(--space-10) var(--page-padding-x) var(--space-8);background:var(--color-bg-surface)">
+    <div class="container-wide">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:var(--space-8);margin-bottom:var(--space-8)">
+        <div style="max-width:320px">
+          <div class="brand" style="margin-bottom:var(--space-4)"><span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M3 17l4-4 4 4 4-8 4 8"/></svg></span>E-algo <span class="brand-accent">Rank</span></div>
+          <p class="body-sm text-tertiary">面向高校算法竞赛生态的学校维度积分排名系统，让算法实力有据可查。</p>
+        </div>
+        <div><div class="caption text-tertiary" style="margin-bottom:var(--space-3);font-weight:600">产品</div><div style="display:flex;flex-direction:column;gap:var(--space-2)"><a class="link body-sm" onclick="navigate('rankings')">排名榜</a><a class="link body-sm" onclick="navigate('competitions')">比赛列表</a><a class="link body-sm" onclick="navigate('profile')">个人中心</a></div></div>
+        <div><div class="caption text-tertiary" style="margin-bottom:var(--space-3);font-weight:600">平台</div><div style="display:flex;flex-direction:column;gap:var(--space-2)"><span class="body-sm text-secondary">Codeforces</span><span class="body-sm text-secondary">AtCoder</span><span class="body-sm text-secondary">牛客竞赛</span></div></div>
+        <div><div class="caption text-tertiary" style="margin-bottom:var(--space-3);font-weight:600">关于</div><div style="display:flex;flex-direction:column;gap:var(--space-2)"><span class="body-sm text-secondary">积分规则</span><span class="body-sm text-secondary">数据来源</span><span class="body-sm text-secondary">联系我们</span></div></div>
+      </div>
+      <div style="border-top:var(--color-divider);padding-top:var(--space-6);display:flex;justify-content:space-between;flex-wrap:wrap;gap:var(--space-3)">
+        <span class="caption text-tertiary">© 2026 E-algo Rank · 仅供原型演示</span>
+        <span class="caption text-tertiary">数据每 6 小时自动同步</span>
+      </div>
+    </div>
+  </footer>
+</section>
+
+<!-- ============ PAGE 2: RANKINGS ============ -->
+<section class="page" id="page-rankings">
+  <div class="container-wide">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><a onclick="navigate('home')">首页</a><span>/</span><span>排名榜</span></div>
+        <h1 class="page-title">积分排名</h1>
+        <p class="page-subtitle">按学校 / 个人维度查看算法竞赛积分排行</p>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs" id="rankTabs">
+      <button class="tab active" data-ranktab="school" onclick="switchRankTab('school')">学校榜 <span class="tab-count" id="schoolCount">12</span></button>
+      <button class="tab" data-ranktab="student" onclick="switchRankTab('student')">学生榜 <span class="tab-count" id="studentCount">10</span></button>
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-bar">
+      <div class="segmented" id="rankTimeFilter">
+        <button class="seg-btn active" data-time="all" onclick="setRankTime('all')">全部时间</button>
+        <button class="seg-btn" data-time="2026" onclick="setRankTime('2026')">2026年</button>
+        <button class="seg-btn" data-time="2025" onclick="setRankTime('2025')">2025年</button>
+      </div>
+      <div class="input-group" id="rankSchoolFilter" style="display:none;margin-left:auto">
+        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21v-5M3 16l4-4 4 4 6-6 4 4M21 3v18"/></svg>
+        <select class="input" id="rankSchoolSelect" onchange="renderRankTable()" style="min-width:180px">
+          <option value="">全部学校</option>
+        </select>
+      </div>
+      <div class="input-group" style="margin-left:auto" id="rankSchoolFilterAlt">
+        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="input" type="text" placeholder="搜索学校名称…" id="rankSearch" oninput="renderRankTable()">
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="card" style="overflow:hidden">
+      <div class="table-wrap" style="border:none;border-radius:0">
+        <table class="data-table">
+          <thead>
+            <tr id="rankTableHead"></tr>
+          </thead>
+          <tbody id="rankTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination" id="rankPagination"></div>
+  </div>
+</section>
+
+<!-- ============ PAGE 3: PROFILE ============ -->
+<section class="page" id="page-profile">
+  <div class="container-wide">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><a onclick="navigate('home')">首页</a><span>/</span><span>个人中心</span></div>
+        <h1 class="page-title">个人成绩</h1>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="navigate('auth/info')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>编辑资料</button>
+    </div>
+
+    <!-- Profile info card -->
+    <div class="card card-pad" style="margin-bottom:var(--space-6);position:relative;overflow:hidden">
+      <div style="position:absolute;top:0;right:0;width:300px;height:100%;background:var(--gradient-primary-soft);opacity:.5;pointer-events:none"></div>
+      <div style="position:relative;display:flex;align-items:center;gap:var(--space-6);flex-wrap:wrap">
+        <div style="width:72px;height:72px;border-radius:var(--radius-xl);background:var(--gradient-primary);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:700;color:#fff;box-shadow:var(--shadow-glow)">张</div>
+        <div style="flex:1;min-width:200px">
+          <div style="display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap">
+            <h2 class="h2" style="margin:0">张明远</h2>
+            <span class="badge badge-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>已认证</span>
+          </div>
+          <div style="display:flex;gap:var(--space-6);margin-top:var(--space-3);flex-wrap:wrap" class="body-sm text-secondary">
+            <span style="display:flex;align-items:center;gap:var(--space-2)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/></svg>浙江大学</span>
+            <span style="display:flex;align-items:center;gap:var(--space-2)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>学号 3220100001</span>
+          </div>
+        </div>
+        <!-- platform accounts -->
+        <div style="display:flex;gap:var(--space-3);flex-wrap:wrap" id="profileAccounts">
+          <div class="badge badge-muted" style="padding:var(--space-2) var(--space-3);flex-direction:column;align-items:flex-start;gap:2px;border-color:var(--color-border)">
+            <span class="platform-tag cf" style="margin-bottom:2px">CF</span>
+            <span class="num" style="font-size:13px;color:var(--color-text-primary)">tourist_zju</span>
+          </div>
+          <div class="badge badge-muted" style="padding:var(--space-2) var(--space-3);flex-direction:column;align-items:flex-start;gap:2px;border-color:var(--color-border)">
+            <span class="platform-tag atcoder" style="margin-bottom:2px">AtCoder</span>
+            <span class="num" style="font-size:13px;color:var(--color-text-primary)">zju_min</span>
+          </div>
+          <div class="badge badge-muted" style="padding:var(--space-2) var(--space-3);flex-direction:column;align-items:flex-start;gap:2px;border-color:var(--color-border)">
+            <span class="platform-tag nowcoder" style="margin-bottom:2px">牛客</span>
+            <span class="num" style="font-size:13px;color:var(--color-text-primary)">12345678</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary metrics -->
+    <div class="grid grid-4" style="margin-bottom:var(--space-6)">
+      <div class="stat-card"><div class="stat-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>总积分</div><div class="stat-value">2,847</div><div class="stat-sub">本校排名第 1</div></div>
+      <div class="stat-card"><div class="stat-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2z"/></svg>总参赛数</div><div class="stat-value">87</div><div class="stat-sub">含 71 场 rated</div></div>
+      <div class="stat-card"><div class="stat-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg>平均排名</div><div class="stat-value">34.2</div><div class="stat-sub">近 12 场</div></div>
+      <div class="stat-card"><div class="stat-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/></svg>最高 Rating</div><div class="stat-value text-cyan">2,456</div><div class="stat-sub">Codeforces</div></div>
+    </div>
+
+    <!-- Rating chart -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-header">
+        <div class="card-title">Rating 趋势</div>
+        <div class="segmented" id="chartPlatformTabs">
+          <button class="seg-btn active" data-pf="cf" onclick="switchChartPlatform('cf')">Codeforces</button>
+          <button class="seg-btn" data-pf="atcoder" onclick="switchChartPlatform('atcoder')">AtCoder</button>
+          <button class="seg-btn" data-pf="nowcoder" onclick="switchChartPlatform('nowcoder')">牛客</button>
+        </div>
+      </div>
+      <div class="card-body" style="position:relative">
+        <div id="ratingChart" style="width:100%;overflow-x:auto"></div>
+        <div class="chart-tooltip" id="chartTooltip"></div>
+        <div style="display:flex;gap:var(--space-6);margin-top:var(--space-4);flex-wrap:wrap" class="caption text-tertiary">
+          <span style="display:flex;align-items:center;gap:var(--space-2)"><span style="width:12px;height:3px;border-radius:2px;background:var(--color-accent-cyan);display:inline-block"></span>Rating 走势</span>
+          <span>当前 Rating: <b class="num text-cyan" id="chartCurrent">2456</b></span>
+          <span>峰值 Rating: <b class="num text-primary-c" id="chartPeak">2456</b></span>
+          <span>参赛场次: <b class="num" id="chartCount">11</b></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Contest history -->
+    <div class="card" style="overflow:hidden">
+      <div class="card-header">
+        <div class="card-title">参赛历史</div>
+        <span class="caption text-tertiary">共 87 场，展示最近 10 场</span>
+      </div>
+      <div class="table-wrap" style="border:none;border-radius:0">
+        <table class="data-table">
+          <thead><tr><th>比赛名称</th><th>平台</th><th class="num-cell">时间</th><th class="num-cell">排名</th><th class="num-cell hide-mobile">解题数</th><th class="num-cell">Rating 变化</th><th class="num-cell">单场积分</th></tr></thead>
+          <tbody id="profileContestBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PAGE 4: COMPETITIONS ============ -->
+<section class="page" id="page-competitions">
+  <div class="container-wide">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><a onclick="navigate('home')">首页</a><span>/</span><span>比赛列表</span></div>
+        <h1 class="page-title">比赛列表</h1>
+        <p class="page-subtitle">已收录的三大平台算法竞赛，按时间倒序排列</p>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-bar">
+      <div class="segmented" id="compPlatformFilter">
+        <button class="seg-btn active" data-pf="all" onclick="setCompFilter('platform','all')">全部</button>
+        <button class="seg-btn" data-pf="cf" onclick="setCompFilter('platform','cf')">Codeforces</button>
+        <button class="seg-btn" data-pf="atcoder" onclick="setCompFilter('platform','atcoder')">AtCoder</button>
+        <button class="seg-btn" data-pf="nowcoder" onclick="setCompFilter('platform','nowcoder')">牛客</button>
+      </div>
+      <div class="segmented" id="compRatedFilter">
+        <button class="seg-btn active" data-rated="all" onclick="setCompFilter('rated','all')">全部</button>
+        <button class="seg-btn" data-rated="yes" onclick="setCompFilter('rated','yes')">仅 Rated</button>
+        <button class="seg-btn" data-rated="no" onclick="setCompFilter('rated','no')">非 Rated</button>
+      </div>
+      <div class="input-group" style="margin-left:auto">
+        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="input" type="text" placeholder="搜索比赛名称…" id="compSearch" oninput="renderCompList()">
+      </div>
+      <select class="input" id="compSort" style="width:auto" onchange="renderCompList()">
+        <option value="time">按时间倒序</option>
+        <option value="difficulty">按难度</option>
+        <option value="participants">按参与人数</option>
+      </select>
+    </div>
+
+    <!-- Contest cards -->
+    <div class="grid grid-2" id="compList" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))"></div>
+    <div class="pagination" id="compPagination"></div>
+  </div>
+</section>
+
+<!-- ============ PAGE 5: ADMIN DASHBOARD ============ -->
+<section class="page" id="page-admin-dashboard">
+  <div class="container">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><a onclick="navigate('home')">首页</a><span>/</span><a onclick="navigate('admin/dashboard')">管理后台</a><span>/</span><span>仪表盘</span></div>
+        <h1 class="page-title">仪表盘</h1>
+        <p class="page-subtitle">系统运营概览与待处理事项</p>
+      </div>
+      <button class="btn btn-primary" onclick="navigate('admin/crawler')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3"/></svg>触发爬取任务</button>
+    </div>
+
+    <!-- Stat cards -->
+    <div class="grid grid-4" style="margin-bottom:var(--space-6)">
+      <div class="stat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="stat-label">待审批申请</div><div class="stat-value text-warning">7</div><div class="stat-sub">需尽快处理</div></div><div class="stat-icon warning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></div></div></div>
+      <div class="stat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="stat-label">今日爬取任务</div><div class="stat-value">3</div><div class="stat-sub">2 进行中 · 1 完成</div></div><div class="stat-icon cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/><circle cx="12" cy="12" r="3"/></svg></div></div></div>
+      <div class="stat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="stat-label">参赛记录总数</div><div class="stat-value">28,934</div><div class="stat-sub">今日新增 142</div></div><div class="stat-icon primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg></div></div></div>
+      <div class="stat-card"><div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div class="stat-label">本校学生数</div><div class="stat-value">156</div><div class="stat-sub">已绑定平台账号</div></div><div class="stat-icon success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div></div></div>
+    </div>
+
+    <!-- Two-column lists -->
+    <div class="grid" style="grid-template-columns:1.2fr 1fr;gap:var(--space-6)" id="dashboardGrid">
+      <!-- Pending approvals -->
+      <div class="card" style="overflow:hidden">
+        <div class="card-header">
+          <div class="card-title">最新申请 · 待审批</div>
+          <a class="link caption" onclick="navigate('admin/approvals')">查看全部</a>
+        </div>
+        <div class="table-wrap" style="border:none;border-radius:0">
+          <table class="data-table">
+            <thead><tr><th>申请人</th><th>学校</th><th class="num-cell">申请时间</th><th class="center">操作</th></tr></thead>
+            <tbody id="dashApprovalBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- Crawl tasks -->
+      <div class="card" style="overflow:hidden">
+        <div class="card-header">
+          <div class="card-title">最新爬取任务</div>
+          <a class="link caption" onclick="navigate('admin/crawler')">查看全部</a>
+        </div>
+        <div class="table-wrap" style="border:none;border-radius:0">
+          <table class="data-table">
+            <thead><tr><th>任务ID</th><th>平台</th><th>状态</th><th class="num-cell">记录数</th></tr></thead>
+            <tbody id="dashCrawlBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Latest records -->
+    <div class="card" style="overflow:hidden;margin-top:var(--space-6)">
+      <div class="card-header">
+        <div class="card-title">最新参赛记录</div>
+        <a class="link caption" onclick="navigate('admin/records')">查看全部</a>
+      </div>
+      <div class="table-wrap" style="border:none;border-radius:0">
+        <table class="data-table">
+          <thead><tr><th>学生</th><th>学校</th><th>比赛</th><th>平台</th><th class="num-cell">排名</th><th class="num-cell">积分</th><th class="num-cell">时间</th></tr></thead>
+          <tbody id="dashRecordBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PAGE 6: ADMIN SCHOOLS ============ -->
+<section class="page" id="page-admin-schools">
+  <div class="container">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><a onclick="navigate('home')">首页</a><span>/</span><a onclick="navigate('admin/dashboard')">管理后台</a><span>/</span><span>学校管理</span></div>
+        <h1 class="page-title">学校管理</h1>
+        <p class="page-subtitle">维护参与排名的高校信息</p>
+      </div>
+      <button class="btn btn-primary" onclick="openSchoolModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>新增学校</button>
+    </div>
+
+    <div class="filter-bar">
+      <div class="input-group" style="flex:1;max-width:320px">
+        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="input" type="text" placeholder="搜索学校名称 / 简称 / 代码…" id="schoolSearch" oninput="renderSchoolTable()">
+      </div>
+      <span class="caption text-tertiary" style="margin-left:auto">共 <b class="num" id="schoolTotal">12</b> 所学校</span>
+    </div>
+
+    <div class="card" style="overflow:hidden">
+      <div class="table-wrap" style="border:none;border-radius:0">
+        <table class="data-table">
+          <thead><tr><th>学校名称</th><th>简称</th><th class="num-cell">代码</th><th class="num-cell">学生数</th><th class="num-cell">管理员数</th><th class="center">操作</th></tr></thead>
+          <tbody id="schoolTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pagination" id="schoolPagination"></div>
+  </div>
+</section>
+
+<!-- ============ PAGE 7: ADMIN APPROVALS ============ -->
+<section class="page" id="page-admin-approvals">
+  <div class="container">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><a onclick="navigate('home')">首页</a><span>/</span><a onclick="navigate('admin/dashboard')">管理后台</a><span>/</span><span>申请审批</span></div>
+        <h1 class="page-title">管理员申请审批</h1>
+        <p class="page-subtitle">处理学生申请成为学校管理员的请求</p>
+      </div>
+    </div>
+
+    <div class="tabs" id="approvalTabs">
+      <button class="tab active" data-status="pending" onclick="switchApprovalTab('pending')">待审批 <span class="tab-count">7</span></button>
+      <button class="tab" data-status="approved" onclick="switchApprovalTab('approved')">已通过 <span class="tab-count">23</span></button>
+      <button class="tab" data-status="rejected" onclick="switchApprovalTab('rejected')">已驳回 <span class="tab-count">4</span></button>
+      <button class="tab" data-status="all" onclick="switchApprovalTab('all')">全部 <span class="tab-count">34</span></button>
+    </div>
+
+    <div class="card" style="overflow:hidden">
+      <div class="table-wrap" style="border:none;border-radius:0">
+        <table class="data-table">
+          <thead><tr><th>申请人</th><th>真实姓名</th><th class="num-cell">学号</th><th>申请学校</th><th class="num-cell">申请时间</th><th>状态</th><th class="center">操作</th></tr></thead>
+          <tbody id="approvalTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PAGE 8: ADMIN CRAWLER ============ -->
+<section class="page" id="page-admin-crawler">
+  <div class="container">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><a onclick="navigate('home')">首页</a><span>/</span><a onclick="navigate('admin/dashboard')">管理后台</a><span>/</span><span>爬虫任务</span></div>
+        <h1 class="page-title">爬虫触发与重算</h1>
+        <p class="page-subtitle">手动触发数据采集任务，或重新计算积分</p>
+      </div>
+    </div>
+
+    <div class="grid" style="grid-template-columns:1fr 1.4fr;gap:var(--space-6)" id="crawlerGrid">
+      <!-- Trigger panel -->
+      <div class="card card-pad">
+        <div class="section-title" style="font-size:16px;margin-bottom:var(--space-4)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>触发爬取任务</div>
+        <div class="field">
+          <label class="field-label">选择平台</label>
+          <div style="display:flex;gap:var(--space-2);flex-wrap:wrap" id="crawlerPlatform">
+            <button class="seg-btn active" data-pf="cf" onclick="toggleCrawlerPf('cf')">Codeforces</button>
+            <button class="seg-btn active" data-pf="atcoder" onclick="toggleCrawlerPf('atcoder')">AtCoder</button>
+            <button class="seg-btn active" data-pf="nowcoder" onclick="toggleCrawlerPf('nowcoder')">牛客</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label">时间范围</label>
+          <select class="select" id="crawlerRange">
+            <option value="7">最近 7 天</option>
+            <option value="30" selected>最近 30 天</option>
+            <option value="90">最近 90 天</option>
+            <option value="all">全部历史</option>
+          </select>
+        </div>
+        <button class="btn btn-primary btn-block" style="margin-top:var(--space-2)" onclick="triggerCrawl()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l14 9-14 9V3z"/></svg>开始爬取</button>
+        <div class="divider"></div>
+        <div class="section-title" style="font-size:16px;margin-bottom:var(--space-4)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>积分重算</div>
+        <p class="body-sm text-tertiary" style="margin-bottom:var(--space-4)">重新计算所有学校与个人积分，适用于积分规则变更后。预计耗时 2-5 分钟。</p>
+        <button class="btn btn-secondary btn-block" onclick="triggerRecalc()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>执行积分重算</button>
+      </div>
+
+      <!-- Task history -->
+      <div class="card" style="overflow:hidden">
+        <div class="card-header">
+          <div class="card-title">任务历史</div>
+          <span class="caption text-tertiary">最近 20 条</span>
+        </div>
+        <div class="table-wrap" style="border:none;border-radius:0">
+          <table class="data-table">
+            <thead><tr><th>任务ID</th><th>平台</th><th>状态</th><th class="num-cell">开始时间</th><th class="num-cell">完成时间</th><th class="num-cell">采集记录</th></tr></thead>
+            <tbody id="crawlTaskBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PAGE 9: ADMIN RECORDS ============ -->
+<section class="page" id="page-admin-records">
+  <div class="container">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><a onclick="navigate('home')">首页</a><span>/</span><a onclick="navigate('admin/dashboard')">管理后台</a><span>/</span><span>参赛记录</span></div>
+        <h1 class="page-title">参赛记录管理</h1>
+        <p class="page-subtitle">审核与管理爬取的参赛成绩记录</p>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <select class="input" style="width:auto" onchange="renderRecordTable()">
+        <option value="">全部学校</option>
+        <option>清华大学</option><option>浙江大学</option><option>北京大学</option><option>上海交通大学</option>
+      </select>
+      <div class="segmented" id="recordPlatformFilter">
+        <button class="seg-btn active" data-pf="all" onclick="setRecordFilter('platform','all')">全部平台</button>
+        <button class="seg-btn" data-pf="cf" onclick="setRecordFilter('platform','cf')">CF</button>
+        <button class="seg-btn" data-pf="atcoder" onclick="setRecordFilter('platform','atcoder')">AtCoder</button>
+        <button class="seg-btn" data-pf="nowcoder" onclick="setRecordFilter('platform','nowcoder')">牛客</button>
+      </div>
+      <div class="segmented" id="recordStatusFilter">
+        <button class="seg-btn active" data-st="all" onclick="setRecordFilter('status','all')">全部</button>
+        <button class="seg-btn" data-st="normal" onclick="setRecordFilter('status','normal')">正常</button>
+        <button class="seg-btn" data-st="excluded" onclick="setRecordFilter('status','excluded')">已排除</button>
+      </div>
+      <span class="caption text-tertiary" style="margin-left:auto">共 <b class="num" id="recordTotal">28,934</b> 条</span>
+    </div>
+
+    <div class="card" style="overflow:hidden">
+      <div class="table-wrap" style="border:none;border-radius:0">
+        <table class="data-table">
+          <thead><tr><th>学生</th><th>学校</th><th>比赛</th><th>平台</th><th class="num-cell">排名</th><th class="num-cell">解题数</th><th class="num-cell">积分</th><th>状态</th><th class="num-cell">时间</th><th class="center">操作</th></tr></thead>
+          <tbody id="recordTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pagination" id="recordPagination"></div>
+  </div>
+</section>
+
+<!-- ============ PAGE 10: ADMIN MEMBERS ============ -->
+<section class="page" id="page-admin-members">
+  <div class="container">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><a onclick="navigate('home')">首页</a><span>/</span><a onclick="navigate('admin/dashboard')">管理后台</a><span>/</span><span>成员名单</span></div>
+        <h1 class="page-title">成员名单</h1>
+        <p class="page-subtitle">本校已注册并绑定平台账号的学生列表</p>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <div class="input-group" style="flex:1;max-width:320px">
+        <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="input" type="text" placeholder="搜索姓名 / 学号 / 平台账号…" id="memberSearch" oninput="renderMemberTable()">
+      </div>
+      <select class="input" style="width:auto" onchange="renderMemberTable()">
+        <option value="">全部绑定状态</option>
+        <option value="full">三平台已绑定</option>
+        <option value="partial">部分绑定</option>
+      </select>
+      <span class="caption text-tertiary" style="margin-left:auto">共 <b class="num" id="memberTotal">156</b> 人</span>
+    </div>
+
+    <div class="card" style="overflow:hidden">
+      <div class="table-wrap" style="border:none;border-radius:0">
+        <table class="data-table">
+          <thead><tr><th>学生</th><th class="num-cell">学号</th><th>绑定平台账号</th><th class="num-cell">总积分</th><th class="num-cell">参赛数</th><th class="num-cell">注册时间</th><th class="center">操作</th></tr></thead>
+          <tbody id="memberTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="pagination" id="memberPagination"></div>
+  </div>
+</section>
+
+<!-- ============ PAGE 11: AUTH LOGIN ============ -->
+<section class="page" id="page-auth-login">
+  <div class="auth-wrap" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:var(--space-8) var(--space-4);position:relative;overflow:hidden">
+    <div style="position:absolute;inset:0;background:var(--gradient-hero-glow);pointer-events:none"></div>
+    <div style="position:absolute;top:10%;left:50%;transform:translateX(-50%);width:600px;height:400px;background:radial-gradient(circle,rgba(99,102,241,.12),transparent 70%);pointer-events:none"></div>
+    <a onclick="navigate('home')" style="position:absolute;top:var(--space-8);left:var(--space-8);display:flex;align-items:center;gap:var(--space-3);font-weight:800;font-size:18px;z-index:2">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M3 17l4-4 4 4 4-8 4 8"/></svg></span>
+      <span>E-algo <span class="brand-accent">Rank</span></span>
+    </a>
+    <div class="auth-card" style="position:relative;width:100%;max-width:420px;background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur-strong);-webkit-backdrop-filter:var(--glass-blur-strong);border:var(--glass-border);border-radius:var(--radius-2xl);padding:var(--space-10) var(--space-8);box-shadow:var(--shadow-xl)">
+      <div style="text-align:center;margin-bottom:var(--space-8)">
+        <h1 class="h2" style="margin-bottom:var(--space-2)">欢迎来到 E-algo Rank</h1>
+        <p class="body-sm text-secondary">登录或注册，开启你的算法竞赛排名之旅</p>
+      </div>
+      <!-- Lotus Passport -->
+      <button class="btn btn-lg btn-block" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;margin-bottom:var(--space-5);height:52px" onclick="authLotus()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        使用 Lotus Passport 登录
+      </button>
+      <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-6)">
+        <div style="flex:1;height:1px;background:var(--color-divider)"></div>
+        <span class="caption text-tertiary">或使用本地账号</span>
+        <div style="flex:1;height:1px;background:var(--color-divider)"></div>
+      </div>
+      <!-- Login/Register tabs -->
+      <div class="segmented" style="display:flex;margin-bottom:var(--space-6);background:var(--color-bg-inset)">
+        <button class="seg-btn active" style="flex:1" id="loginTabBtn" onclick="switchAuthTab('login')">登录</button>
+        <button class="seg-btn" style="flex:1" id="registerTabBtn" onclick="switchAuthTab('register')">注册</button>
+      </div>
+      <form id="loginForm" onsubmit="event.preventDefault();doLogin()">
+        <div class="field"><label class="field-label">邮箱 / 学号</label><input class="input" type="text" placeholder="请输入邮箱或学号" value="zhangmingyuan@zju.edu.cn"></div>
+        <div class="field"><label class="field-label">密码</label><input class="input" type="password" placeholder="请输入密码" value="••••••••"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-5)">
+          <label style="display:flex;align-items:center;gap:var(--space-2);font-size:13px;color:var(--color-text-secondary);cursor:pointer"><input type="checkbox" checked style="accent-color:var(--color-primary)">记住我</label>
+          <a class="link caption">忘记密码？</a>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">登录</button>
+      </form>
+      <form id="registerForm" onsubmit="event.preventDefault();doRegister()" style="display:none">
+        <div class="field"><label class="field-label">邮箱</label><input class="input" type="email" placeholder="请输入邮箱"></div>
+        <div class="field"><label class="field-label">设置密码</label><input class="input" type="password" placeholder="至少 8 位字符"></div>
+        <div class="field"><label class="field-label">确认密码</label><input class="input" type="password" placeholder="再次输入密码"></div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top:var(--space-2)">注册并继续</button>
+      </form>
+      <p class="caption text-tertiary" style="text-align:center;margin-top:var(--space-6)">登录即表示同意 <a class="link">用户协议</a> 与 <a class="link">隐私政策</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PAGE 12: AUTH INFO ============ -->
+<section class="page" id="page-auth-info">
+  <div class="auth-wrap" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:var(--space-8) var(--space-4);position:relative;overflow:hidden">
+    <div style="position:absolute;inset:0;background:var(--gradient-hero-glow);pointer-events:none"></div>
+    <a onclick="navigate('home')" style="position:absolute;top:var(--space-8);left:var(--space-8);display:flex;align-items:center;gap:var(--space-3);font-weight:800;font-size:18px;z-index:2">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M3 17l4-4 4 4 4-8 4 8"/></svg></span>
+      <span>E-algo <span class="brand-accent">Rank</span></span>
+    </a>
+    <div class="auth-card" style="position:relative;width:100%;max-width:480px;background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur-strong);-webkit-backdrop-filter:var(--glass-blur-strong);border:var(--glass-border);border-radius:var(--radius-2xl);padding:var(--space-10) var(--space-8);box-shadow:var(--shadow-xl)">
+      <!-- Step indicator -->
+      <div style="display:flex;align-items:center;justify-content:center;gap:var(--space-2);margin-bottom:var(--space-8)" id="stepIndicator">
+        <div class="step-item active" data-step="1"><span class="step-num">1</span><span class="step-label">基础信息</span></div>
+        <div class="step-line"></div>
+        <div class="step-item" data-step="2"><span class="step-num">2</span><span class="step-label">平台账号</span></div>
+        <div class="step-line"></div>
+        <div class="step-item" data-step="3"><span class="step-num">3</span><span class="step-label">完成</span></div>
+      </div>
+
+      <!-- Step 1 -->
+      <div class="auth-step" id="authStep1">
+        <h2 class="h3" style="margin-bottom:var(--space-2)">填写基础信息</h2>
+        <p class="body-sm text-secondary" style="margin-bottom:var(--space-6)">请填写你的真实姓名与学号，用于身份核验</p>
+        <div class="field"><label class="field-label">真实姓名</label><input class="input" type="text" placeholder="请输入真实姓名" value="张明远"></div>
+        <div class="field"><label class="field-label">学号</label><input class="input" type="text" placeholder="请输入学号" value="3220100001"></div>
+        <div class="field-hint"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:-2px;margin-right:4px"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>姓名与学号需与学校教务系统一致</div>
+        <button class="btn btn-primary btn-block btn-lg" style="margin-top:var(--space-6)" onclick="goAuthStep(2)">下一步</button>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="auth-step" id="authStep2" style="display:none">
+        <h2 class="h3" style="margin-bottom:var(--space-2)">绑定平台账号</h2>
+        <p class="body-sm text-secondary" style="margin-bottom:var(--space-6)">绑定你的竞赛平台账号，至少绑定一个平台</p>
+        <div class="field">
+          <label class="field-label"><span class="platform-tag cf" style="margin-right:6px">CF</span>Codeforces Handle</label>
+          <input class="input" type="text" placeholder="如 tourist" value="tourist_zju">
+        </div>
+        <div class="field">
+          <label class="field-label"><span class="platform-tag atcoder" style="margin-right:6px">AtCoder</span>AtCoder User ID</label>
+          <input class="input" type="text" placeholder="如 tourist" value="zju_min">
+        </div>
+        <div class="field">
+          <label class="field-label"><span class="platform-tag nowcoder" style="margin-right:6px">牛客</span>牛客 UID</label>
+          <input class="input" type="text" placeholder="如 12345678" value="12345678">
+        </div>
+        <div style="display:flex;gap:var(--space-3);margin-top:var(--space-6)">
+          <button class="btn btn-secondary btn-lg" style="flex:1" onclick="goAuthStep(1)">上一步</button>
+          <button class="btn btn-primary btn-lg" style="flex:1" onclick="goAuthStep(3)">下一步</button>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="auth-step" id="authStep3" style="display:none;text-align:center">
+        <div style="width:64px;height:64px;border-radius:var(--radius-full);background:var(--color-success-subtle);display:flex;align-items:center;justify-content:center;margin:0 auto var(--space-5)"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></div>
+        <h2 class="h3" style="margin-bottom:var(--space-2)">信息填写完成</h2>
+        <p class="body-sm text-secondary" style="margin-bottom:var(--space-6)">接下来需要绑定你所在的学校，以纳入学校排名体系</p>
+        <button class="btn btn-primary btn-block btn-lg" onclick="navigate('auth/binding')">绑定学校</button>
+        <button class="btn btn-ghost btn-block" style="margin-top:var(--space-3)" onclick="navigate('home')">稍后再绑定</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PAGE 13: AUTH BINDING ============ -->
+<section class="page" id="page-auth-binding">
+  <div class="auth-wrap" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:var(--space-8) var(--space-4);position:relative;overflow:hidden">
+    <div style="position:absolute;inset:0;background:var(--gradient-hero-glow);pointer-events:none"></div>
+    <a onclick="navigate('home')" style="position:absolute;top:var(--space-8);left:var(--space-8);display:flex;align-items:center;gap:var(--space-3);font-weight:800;font-size:18px;z-index:2">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M3 17l4-4 4 4 4-8 4 8"/></svg></span>
+      <span>E-algo <span class="brand-accent">Rank</span></span>
+    </a>
+    <div class="auth-card" style="position:relative;width:100%;max-width:480px;background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur-strong);-webkit-backdrop-filter:var(--glass-blur-strong);border:var(--glass-border);border-radius:var(--radius-2xl);padding:var(--space-10) var(--space-8);box-shadow:var(--shadow-xl)">
+      <h2 class="h3" style="margin-bottom:var(--space-2)">补全学校绑定</h2>
+      <p class="body-sm text-secondary" style="margin-bottom:var(--space-6)">搜索并选择你所在的学校，绑定后即可纳入学校排名</p>
+      <div class="field">
+        <label class="field-label">搜索学校</label>
+        <div class="input-group">
+          <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input class="input" type="text" id="schoolBindSearch" placeholder="输入学校名称关键字，如 浙江大学 / ZJU" autocomplete="off" oninput="filterSchoolBind(this.value)">
+        </div>
+        <div id="schoolBindResults" style="margin-top:var(--space-2);max-height:280px;overflow-y:auto;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-bg-inset);display:none"></div>
+      </div>
+      <!-- Selected -->
+      <div id="schoolBindSelected" style="display:none;margin-bottom:var(--space-6)">
+        <label class="field-label">已选择学校</label>
+        <div class="card card-pad" style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-4)">
+          <div class="org-logo" id="bindSelectedLogo" style="width:36px;height:36px;font-size:13px">ZJ</div>
+          <div style="flex:1"><div class="h4" id="bindSelectedName">浙江大学</div><div class="caption text-tertiary num" id="bindSelectedCode">代码 10335</div></div>
+          <button class="btn btn-ghost btn-sm" onclick="clearSchoolBind()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" id="bindConfirmBtn" disabled onclick="confirmSchoolBind()">确认绑定</button>
+      <p class="caption text-tertiary" style="text-align:center;margin-top:var(--space-4)">找不到你的学校？<a class="link" onclick="navigate('auth/admin-apply')">申请添加学校</a></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PAGE 14: AUTH ADMIN APPLY ============ -->
+<section class="page" id="page-auth-admin-apply">
+  <div class="auth-wrap" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:var(--space-8) var(--space-4);position:relative;overflow:hidden">
+    <div style="position:absolute;inset:0;background:var(--gradient-hero-glow);pointer-events:none"></div>
+    <a onclick="navigate('home')" style="position:absolute;top:var(--space-8);left:var(--space-8);display:flex;align-items:center;gap:var(--space-3);font-weight:800;font-size:18px;z-index:2">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M3 17l4-4 4 4 4-8 4 8"/></svg></span>
+      <span>E-algo <span class="brand-accent">Rank</span></span>
+    </a>
+    <div class="auth-card" style="position:relative;width:100%;max-width:520px;background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur-strong);-webkit-backdrop-filter:var(--glass-blur-strong);border:var(--glass-border);border-radius:var(--radius-2xl);padding:var(--space-10) var(--space-8);box-shadow:var(--shadow-xl)">
+      <h2 class="h3" style="margin-bottom:var(--space-2)">申请成为学校管理员</h2>
+      <p class="body-sm text-secondary" style="margin-bottom:var(--space-6)">管理员可管理本校学生名单、审核参赛记录，申请需等待超级管理员审批</p>
+      <div id="adminApplyForm">
+        <div class="field">
+          <label class="field-label">选择学校</label>
+          <select class="select"><option>清华大学</option><option selected>浙江大学</option><option>北京大学</option><option>上海交通大学</option><option>复旦大学</option><option>中国科学技术大学</option></select>
+        </div>
+        <div class="field">
+          <label class="field-label">申请理由</label>
+          <textarea class="textarea" placeholder="请简述你申请管理员的原因，如：我是校 ACM 集训队队长，负责组织校内竞赛……">我是浙江大学 ACM 集训队队长，负责组织校内竞赛与训练，希望管理本校排名数据与学生名单。</textarea>
+        </div>
+        <div class="field">
+          <label class="field-label">上传证明材料</label>
+          <div style="border:1.5px dashed var(--color-border-strong);border-radius:var(--radius-md);padding:var(--space-8);text-align:center;cursor:pointer;transition:all var(--duration-base)" onclick="toast('演示环境暂不支持上传','info')">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.5" style="margin:0 auto var(--space-3)"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></svg>
+            <div class="body-sm text-secondary">点击或拖拽上传文件</div>
+            <div class="caption text-tertiary" style="margin-top:var(--space-1)">支持学生证、社团证明等 · JPG/PDF · 最大 5MB</div>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-block btn-lg" style="margin-top:var(--space-2)" onclick="submitAdminApply()">提交申请</button>
+      </div>
+      <div id="adminApplySuccess" style="display:none;text-align:center;padding:var(--space-6) 0">
+        <div style="width:64px;height:64px;border-radius:var(--radius-full);background:var(--color-warning-subtle);display:flex;align-items:center;justify-content:center;margin:0 auto var(--space-5)"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+        <h3 class="h3" style="margin-bottom:var(--space-2)">申请已提交</h3>
+        <p class="body-sm text-secondary" style="margin-bottom:var(--space-6)">你的管理员申请已提交，请等待超级管理员审批。<br>审批结果将通过站内消息通知你。</p>
+        <button class="btn btn-primary btn-block btn-lg" onclick="navigate('home')">返回首页</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PAGE 15: AUTH CALLBACK ============ -->
+<section class="page" id="page-auth-callback">
+  <div class="auth-wrap" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:var(--space-8) var(--space-4);position:relative;overflow:hidden">
+    <div style="position:absolute;inset:0;background:var(--gradient-hero-glow);pointer-events:none"></div>
+    <a onclick="navigate('home')" style="position:absolute;top:var(--space-8);left:var(--space-8);display:flex;align-items:center;gap:var(--space-3);font-weight:800;font-size:18px;z-index:2">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M3 17l4-4 4 4 4-8 4 8"/></svg></span>
+      <span>E-algo <span class="brand-accent">Rank</span></span>
+    </a>
+    <div class="auth-card" style="position:relative;width:100%;max-width:440px;background:var(--glass-bg-strong);backdrop-filter:var(--glass-blur-strong);-webkit-backdrop-filter:var(--glass-blur-strong);border:var(--glass-border);border-radius:var(--radius-2xl);padding:var(--space-12) var(--space-8);box-shadow:var(--shadow-xl);text-align:center">
+      <div id="callbackLoading">
+        <div style="width:56px;height:56px;border:3px solid var(--color-primary-subtle);border-top-color:var(--color-primary);border-radius:var(--radius-full);margin:0 auto var(--space-6);animation:spin .8s linear infinite"></div>
+        <h2 class="h3" style="margin-bottom:var(--space-2)">正在处理认证回调</h2>
+        <p class="body-sm text-secondary">正在与 Lotus Passport 完成身份验证，请稍候…</p>
+      </div>
+      <div id="callbackSuccess" style="display:none">
+        <div style="width:64px;height:64px;border-radius:var(--radius-full);background:var(--color-success-subtle);display:flex;align-items:center;justify-content:center;margin:0 auto var(--space-5)"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></div>
+        <h2 class="h3" style="margin-bottom:var(--space-2)">认证成功</h2>
+        <p class="body-sm text-secondary" style="margin-bottom:var(--space-6)">已通过 Lotus Passport 完成身份验证，即将跳转…</p>
+        <button class="btn btn-primary btn-block btn-lg" onclick="navigate('home')">进入首页</button>
+      </div>
+      <div id="callbackFail" style="display:none">
+        <div style="width:64px;height:64px;border-radius:var(--radius-full);background:var(--color-danger-subtle);display:flex;align-items:center;justify-content:center;margin:0 auto var(--space-5)"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg></div>
+        <h2 class="h3" style="margin-bottom:var(--space-2)">认证失败</h2>
+        <p class="body-sm text-secondary" style="margin-bottom:var(--space-6)">授权回调异常，可能是授权已过期或被拒绝。请重新尝试登录。</p>
+        <button class="btn btn-primary btn-block btn-lg" onclick="navigate('auth/login')">重新登录</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ===== Modal container ===== -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModalOnBackdrop(event)">
+  <div class="modal" id="modal" onclick="event.stopPropagation()"></div>
+</div>
+
+<!-- ===== Toast container ===== -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+/* ===================== E-algo Rank · Prototype JS ===================== */
+/* 设计系统: Dark Tech Indigo · 15 页面 SPA · hash 路由 */
+
+/* ---------- Mock Data ---------- */
+const SCHOOLS = [
+  {rank:1,name:'清华大学',short:'THU',code:'10003',score:12847,members:89,admins:3,trend:+2,color:'#8b5cf6'},
+  {rank:2,name:'浙江大学',short:'ZJU',code:'10335',score:11592,members:76,admins:2,trend:0,color:'#06b6d4'},
+  {rank:3,name:'北京大学',short:'PKU',code:'10001',score:11203,members:82,admins:2,trend:-1,color:'#ef4444'},
+  {rank:4,name:'上海交通大学',short:'SJTU',code:'10248',score:10486,members:71,admins:2,trend:+3,color:'#10b981'},
+  {rank:5,name:'复旦大学',short:'FDU',code:'10246',score:9734,members:65,admins:1,trend:+1,color:'#f59e0b'},
+  {rank:6,name:'中国科学技术大学',short:'USTC',code:'10358',score:9128,members:58,admins:2,trend:-2,color:'#3b82f6'},
+  {rank:7,name:'南京大学',short:'NJU',code:'10284',score:8456,members:52,admins:1,trend:0,color:'#8b5cf6'},
+  {rank:8,name:'中山大学',short:'SYSU',code:'10558',score:7892,members:49,admins:1,trend:+4,color:'#06b6d4'},
+  {rank:9,name:'华中科技大学',short:'HUST',code:'10487',score:7341,members:47,admins:1,trend:-1,color:'#10b981'},
+  {rank:10,name:'武汉大学',short:'WHU',code:'10486',score:6982,members:44,admins:1,trend:+2,color:'#ef4444'},
+  {rank:11,name:'哈尔滨工业大学',short:'HIT',code:'10213',score:6541,members:41,admins:1,trend:+1,color:'#f59e0b'},
+  {rank:12,name:'西安交通大学',short:'XJTU',code:'10698',score:6187,members:38,admins:1,trend:-1,color:'#3b82f6'},
+];
+const STUDENTS = [
+  {rank:1,name:'张明远',school:'浙江大学',short:'ZJU',score:2847,contests:87,trend:+3,color:'#06b6d4'},
+  {rank:2,name:'李思远',school:'清华大学',short:'THU',score:2734,contests:92,trend:+1,color:'#8b5cf6'},
+  {rank:3,name:'王浩然',school:'北京大学',short:'PKU',score:2651,contests:78,trend:-1,color:'#ef4444'},
+  {rank:4,name:'陈宇轩',school:'上海交通大学',short:'SJTU',score:2589,contests:71,trend:+2,color:'#10b981'},
+  {rank:5,name:'刘子涵',school:'复旦大学',short:'FDU',score:2473,contests:65,trend:0,color:'#f59e0b'},
+  {rank:6,name:'赵天明',school:'中国科学技术大学',short:'USTC',score:2398,contests:58,trend:+4,color:'#3b82f6'},
+  {rank:7,name:'孙若涵',school:'南京大学',short:'NJU',score:2312,contests:54,trend:-2,color:'#8b5cf6'},
+  {rank:8,name:'周梓睿',school:'清华大学',short:'THU',score:2256,contests:69,trend:+1,color:'#8b5cf6'},
+  {rank:9,name:'吴雨桐',school:'中山大学',short:'SYSU',score:2187,contests:49,trend:+3,color:'#06b6d4'},
+  {rank:10,name:'郑晨曦',school:'华中科技大学',short:'HUST',score:2098,contests:47,trend:-1,color:'#10b981'},
+];
+const COMPETITIONS = [
+  {name:'Codeforces Round 938 (Div. 2)',platform:'cf',time:'2026-01-15 17:35',rated:true,difficulty:1.2,participants:12834},
+  {name:'AtCoder Beginner Contest 389',platform:'atcoder',time:'2026-01-12 20:00',rated:true,difficulty:1.0,participants:8721},
+  {name:'牛客寒假算法基础集训营 1',platform:'nowcoder',time:'2026-01-10 13:00',rated:true,difficulty:1.5,participants:5432},
+  {name:'Codeforces Round 937 (Div. 3)',platform:'cf',time:'2026-01-08 22:35',rated:true,difficulty:0.8,participants:15678},
+  {name:'AtCoder Regular Contest 187',platform:'atcoder',time:'2026-01-05 21:00',rated:true,difficulty:1.8,participants:3214},
+  {name:'牛客多校训练赛 #1',platform:'nowcoder',time:'2026-01-03 12:00',rated:false,difficulty:1.3,participants:2890},
+  {name:'Codeforces Round 936 (Div. 2)',platform:'cf',time:'2025-12-28 17:35',rated:true,difficulty:1.1,participants:11209},
+  {name:'AtCoder Beginner Contest 388',platform:'atcoder',time:'2025-12-25 20:00',rated:true,difficulty:1.0,participants:9012},
+  {name:'牛客寒假算法基础集训营 2',platform:'nowcoder',time:'2025-12-20 13:00',rated:true,difficulty:1.4,participants:4987},
+  {name:'Codeforces Round 935 (Div. 2)',platform:'cf',time:'2025-12-15 17:35',rated:true,difficulty:1.2,participants:12045},
+  {name:'AtCoder Regular Contest 186',platform:'atcoder',time:'2025-12-08 21:00',rated:true,difficulty:1.7,participants:3456},
+  {name:'牛客月赛 78',platform:'nowcoder',time:'2025-12-05 19:00',rated:false,difficulty:1.1,participants:6734},
+];
+const PF_LABEL={cf:'Codeforces',atcoder:'AtCoder',nowcoder:'牛客'};
+const RATING_DATA={
+  cf:[{date:'24/03',rating:1200},{date:'24/06',rating:1380},{date:'24/09',rating:1520},{date:'24/12',rating:1710},{date:'25/03',rating:1850},{date:'25/06',rating:1980},{date:'25/09',rating:2120},{date:'25/11',rating:2240},{date:'25/12',rating:2350},{date:'26/01',rating:2410},{date:'26/01',rating:2456}],
+  atcoder:[{date:'24/04',rating:800},{date:'24/07',rating:980},{date:'24/10',rating:1150},{date:'25/01',rating:1320},{date:'25/04',rating:1480},{date:'25/07',rating:1620},{date:'25/10',rating:1750},{date:'26/01',rating:1820}],
+  nowcoder:[{date:'24/05',rating:1500},{date:'24/08',rating:1680},{date:'24/11',rating:1820},{date:'25/02',rating:1950},{date:'25/05',rating:2080},{date:'25/08',rating:2180},{date:'25/11',rating:2250},{date:'26/01',rating:2310}]
+};
+const PROFILE_CONTESTS=[
+  {name:'Codeforces Round 938 (Div. 2)',platform:'cf',time:'2026-01-15',rank:142,solved:5,delta:'+86',score:412},
+  {name:'AtCoder Beginner Contest 389',platform:'atcoder',time:'2026-01-12',rank:89,solved:6,delta:'+54',score:387},
+  {name:'牛客寒假算法基础集训营 1',platform:'nowcoder',time:'2026-01-10',rank:34,solved:7,delta:'+42',score:356},
+  {name:'Codeforces Round 937 (Div. 3)',platform:'cf',time:'2026-01-08',rank:78,solved:6,delta:'+38',score:298},
+  {name:'AtCoder Regular Contest 187',platform:'atcoder',time:'2026-01-05',rank:156,solved:4,delta:'-12',score:271},
+  {name:'牛客多校训练赛 #1',platform:'nowcoder',time:'2026-01-03',rank:21,solved:8,delta:'—',score:0},
+  {name:'Codeforces Round 936 (Div. 2)',platform:'cf',time:'2025-12-28',rank:203,solved:4,delta:'+45',score:334},
+  {name:'AtCoder Beginner Contest 388',platform:'atcoder',time:'2025-12-25',rank:67,solved:6,delta:'+61',score:392},
+  {name:'牛客寒假集训营 2',platform:'nowcoder',time:'2025-12-20',rank:28,solved:7,delta:'+35',score:341},
+  {name:'Codeforces Round 935 (Div. 2)',platform:'cf',time:'2025-12-15',rank:167,solved:5,delta:'+52',score:367},
+];
+const ADMIN_APPROVALS=[
+  {user:'skywalker',name:'陈天行',sid:'3230100042',school:'浙江大学',time:'2026-01-15 14:23',status:'pending'},
+  {user:'code_master',name:'林逸飞',sid:'2230101156',school:'清华大学',time:'2026-01-15 11:08',status:'pending'},
+  {user:'alice_w',name:'王雅琪',sid:'2130103078',school:'北京大学',time:'2026-01-14 19:45',status:'pending'},
+  {user:'bob_solver',name:'赵明轩',sid:'3220110089',school:'上海交通大学',time:'2026-01-14 16:30',status:'pending'},
+  {user:'cf_lover',name:'周雨欣',sid:'3230120034',school:'复旦大学',time:'2026-01-14 10:12',status:'pending'},
+  {user:'algo_king',name:'吴启航',sid:'2230105678',school:'中国科学技术大学',time:'2026-01-13 22:18',status:'pending'},
+  {user:'night_owl',name:'郑思源',sid:'3230130021',school:'南京大学',time:'2026-01-13 15:50',status:'pending'},
+  {user:'fast_coder',name:'黄俊杰',sid:'2130109988',school:'浙江大学',time:'2026-01-10 09:33',status:'approved'},
+  {user:'zero_one',name:'李梦琪',sid:'2230102233',school:'清华大学',time:'2026-01-08 14:20',status:'approved'},
+  {user:'binary_tree',name:'孙浩宇',sid:'3230114456',school:'北京大学',time:'2026-01-05 11:45',status:'rejected'},
+];
+const CRAWL_TASKS=[
+  {id:'CRW-2026-0042',platform:'cf',status:'running',start:'2026-01-15 14:00',end:'—',records:0},
+  {id:'CRW-2026-0041',platform:'atcoder',status:'running',start:'2026-01-15 13:30',end:'—',records:0},
+  {id:'CRW-2026-0040',platform:'nowcoder',status:'queued',start:'—',end:'—',records:0},
+  {id:'CRW-2026-0039',platform:'cf',status:'done',start:'2026-01-15 08:00',end:'2026-01-15 08:12',records:142},
+  {id:'CRW-2026-0038',platform:'atcoder',status:'done',start:'2026-01-15 06:00',end:'2026-01-15 06:08',records:87},
+  {id:'CRW-2026-0037',platform:'nowcoder',status:'failed',start:'2026-01-14 22:00',end:'2026-01-14 22:03',records:0},
+  {id:'CRW-2026-0036',platform:'cf',status:'done',start:'2026-01-14 14:00',end:'2026-01-14 14:15',records:198},
+  {id:'CRW-2026-0035',platform:'atcoder',status:'done',start:'2026-01-14 06:00',end:'2026-01-14 06:07',records:76},
+];
+const RECORDS=[
+  {student:'张明远',school:'浙江大学',contest:'Codeforces Round 938',platform:'cf',rank:142,solved:5,score:412,status:'normal',time:'2026-01-15'},
+  {student:'李思远',school:'清华大学',contest:'Codeforces Round 938',platform:'cf',rank:23,solved:7,score:587,status:'normal',time:'2026-01-15'},
+  {student:'王浩然',school:'北京大学',contest:'AtCoder ABC 389',platform:'atcoder',rank:45,solved:6,score:498,status:'normal',time:'2026-01-12'},
+  {student:'陈宇轩',school:'上海交通大学',contest:'牛客寒假集训营 1',platform:'nowcoder',rank:12,solved:8,score:612,status:'normal',time:'2026-01-10'},
+  {student:'刘子涵',school:'复旦大学',contest:'Codeforces Round 937',platform:'cf',rank:342,solved:4,score:234,status:'excluded',time:'2026-01-08'},
+  {student:'赵天明',school:'中国科学技术大学',contest:'AtCoder ARC 187',platform:'atcoder',rank:89,solved:5,score:421,status:'normal',time:'2026-01-05'},
+  {student:'孙若涵',school:'南京大学',contest:'牛客多校训练赛 #1',platform:'nowcoder',rank:156,solved:5,score:298,status:'normal',time:'2026-01-03'},
+  {student:'周梓睿',school:'清华大学',contest:'Codeforces Round 936',platform:'cf',rank:67,solved:6,score:456,status:'normal',time:'2025-12-28'},
+  {student:'吴雨桐',school:'中山大学',contest:'AtCoder ABC 388',platform:'atcoder',rank:112,solved:5,score:367,status:'excluded',time:'2025-12-25'},
+  {student:'郑晨曦',school:'华中科技大学',contest:'牛客寒假集训营 2',platform:'nowcoder',rank:45,solved:6,score:389,status:'normal',time:'2025-12-20'},
+];
+const MEMBERS=[
+  {name:'张明远',sid:'3220100001',cf:'tourist_zju',atcoder:'zju_min',nowcoder:'12345678',score:2847,contests:87,reg:'2024-03-15'},
+  {name:'李文博',sid:'3220100023',cf:'wenbo_li',atcoder:'zju_wb',nowcoder:'23456789',score:2310,contests:64,reg:'2024-03-16'},
+  {name:'王思琪',sid:'3220100045',cf:'siqi_wang',atcoder:'',nowcoder:'34567890',score:2187,contests:52,reg:'2024-04-02'},
+  {name:'赵宇辰',sid:'3220100078',cf:'yuchen_zhao',atcoder:'zju_yc',nowcoder:'',score:1986,contests:43,reg:'2024-04-10'},
+  {name:'陈晓琳',sid:'3220100102',cf:'',atcoder:'zju_xl',nowcoder:'45678901',score:1754,contests:38,reg:'2024-05-08'},
+  {name:'刘哲翰',sid:'3220100156',cf:'zhehan_liu',atcoder:'zju_zh',nowcoder:'56789012',score:2489,contests:71,reg:'2024-03-20'},
+  {name:'黄子豪',sid:'3220100189',cf:'zihao_h',atcoder:'',nowcoder:'',score:1567,contests:29,reg:'2024-06-15'},
+  {name:'林佳颖',sid:'3220100211',cf:'jiaying_l',atcoder:'zju_jy',nowcoder:'67890123',score:2098,contests:48,reg:'2024-04-25'},
+];
+const DASH_RECORDS=[
+  {student:'张明远',school:'浙江大学',contest:'CF Round 938',platform:'cf',rank:142,score:412,time:'2026-01-15'},
+  {student:'李思远',school:'清华大学',contest:'CF Round 938',platform:'cf',rank:23,score:587,time:'2026-01-15'},
+  {student:'王浩然',school:'北京大学',contest:'ABC 389',platform:'atcoder',rank:45,score:498,time:'2026-01-12'},
+  {student:'陈宇轩',school:'上海交通大学',contest:'牛客寒假 1',platform:'nowcoder',rank:12,score:612,time:'2026-01-10'},
+  {student:'刘子涵',school:'复旦大学',contest:'CF Round 937',platform:'cf',rank:342,score:234,time:'2026-01-08'},
+];
+
+/* ---------- State ---------- */
+const state={rankTab:'school',rankTime:'all',rankPage:1,rankSchool:'',
+  compFilter:{platform:'all',rated:'all'},compPage:1,
+  approvalTab:'pending',recordFilter:{platform:'all',status:'all'},
+  schoolPage:1,memberPage:1,crawlerPf:{cf:true,atcoder:true,nowcoder:true},
+  chartPf:'cf',schoolBind:null};
+
+/* ---------- Utils ---------- */
+function $(id){return document.getElementById(id)}
+function el(tag,cls,html){const e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e}
+function platformTag(pf){return '<span class="platform-tag '+pf+'">'+(pf==='cf'?'CF':pf==='atcoder'?'AtCoder':'牛客')+'</span>'}
+function trendHTML(t){if(t>0)return '<span class="trend up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 17l5-5 5 5"/><path d="M7 7h10v10"/></svg>'+t+'</span>';if(t<0)return '<span class="trend down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 7l5 5 5-5"/><path d="M7 17h10V7"/></svg>'+(-t)+'</span>';return '<span class="trend flat">—</span>'}
+function statusBadge(s){const m={running:'<span class="badge badge-info"><span class="dot dot-pulse"></span>Running</span>',queued:'<span class="badge badge-primary"><span class="dot dot-pulse"></span>Queued</span>',done:'<span class="badge badge-success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>Done</span>',failed:'<span class="badge badge-danger">Failed</span>',pending:'<span class="badge badge-warning"><span class="dot"></span>Pending</span>',approved:'<span class="badge badge-success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>Approved</span>',rejected:'<span class="badge badge-danger">Rejected</span>',normal:'<span class="badge badge-success">正常</span>',excluded:'<span class="badge badge-muted">已排除</span>'};return m[s]||s}
+function fmtNum(n){return n.toLocaleString('en-US')}
+function toast(msg,type='success'){const c=$('toastContainer');const icons={success:'<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/>',error:'<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>',info:'<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>'};const t=el('div','toast '+type,'<svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">'+icons[type]+'</svg><span class="toast-msg">'+msg+'</span>');c.appendChild(t);setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(40px)';t.style.transition='all .3s';setTimeout(()=>t.remove(),300)},2800)}
+function rankBadge(rank){if(rank===1)return '<span class="rank-badge gold">1</span>';if(rank===2)return '<span class="rank-badge silver">2</span>';if(rank===3)return '<span class="rank-badge bronze">3</span>';return '<span class="rank-badge normal">'+rank+'</span>'}
+function medalClass(rank){if(rank===1)return 'medal-row gold';if(rank===2)return 'medal-row silver';if(rank===3)return 'medal-row bronze';return ''}
+
+/* ---------- Router ---------- */
+const ROUTES={
+  'home':{page:'page-home',layout:'user',nav:'home'},
+  'rankings':{page:'page-rankings',layout:'user',nav:'rankings'},
+  'profile':{page:'page-profile',layout:'user',nav:'profile'},
+  'competitions':{page:'page-competitions',layout:'user',nav:'competitions'},
+  'admin/dashboard':{page:'page-admin-dashboard',layout:'admin',nav:'admin',sub:'dashboard'},
+  'admin/schools':{page:'page-admin-schools',layout:'admin',nav:'admin',sub:'schools'},
+  'admin/approvals':{page:'page-admin-approvals',layout:'admin',nav:'admin',sub:'approvals'},
+  'admin/crawler':{page:'page-admin-crawler',layout:'admin',nav:'admin',sub:'crawler'},
+  'admin/records':{page:'page-admin-records',layout:'admin',nav:'admin',sub:'records'},
+  'admin/members':{page:'page-admin-members',layout:'admin',nav:'admin',sub:'members'},
+  'auth/login':{page:'page-auth-login',layout:'auth',nav:''},
+  'auth/info':{page:'page-auth-info',layout:'auth',nav:''},
+  'auth/binding':{page:'page-auth-binding',layout:'auth',nav:''},
+  'auth/admin-apply':{page:'page-auth-admin-apply',layout:'auth',nav:''},
+  'auth/callback':{page:'page-auth-callback',layout:'auth',nav:''},
+};
+function navigate(path){location.hash='#/'+path}
+function router(){
+  const hash=location.hash.replace(/^#\//,'')||'home';
+  const r=ROUTES[hash]||ROUTES['home'];
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  const page=$(r.page);if(page)page.classList.add('active');
+  document.body.classList.remove('layout-user','layout-admin','layout-auth');
+  document.body.classList.add('layout-'+r.layout);
+  // nav active
+  document.querySelectorAll('#navLinks a').forEach(a=>a.classList.toggle('active',a.dataset.route===r.nav||(r.nav==='admin'&&a.dataset.route==='admin')));
+  document.querySelectorAll('.sidebar-link').forEach(a=>a.classList.toggle('active',a.dataset.admin===r.sub));
+  // close mobile drawer
+  $('mobileDrawer').classList.remove('open');
+  document.body.classList.remove('sidebar-open');
+  window.scrollTo(0,0);
+  // page init
+  initPage(hash);
+}
+window.addEventListener('hashchange',router);
+
+function initPage(hash){
+  switch(hash){
+    case'home':renderHomeTop5();break;
+    case'rankings':renderRankTable();break;
+    case'profile':renderProfileContests();setTimeout(()=>renderRatingChart(state.chartPf),50);break;
+    case'competitions':renderCompList();break;
+    case'admin/dashboard':renderDashboard();break;
+    case'admin/schools':renderSchoolTable();break;
+    case'admin/approvals':renderApprovalTable();break;
+    case'admin/crawler':renderCrawlTasks();break;
+    case'admin/records':renderRecordTable();break;
+    case'admin/members':renderMemberTable();break;
+    case'auth/callback':runCallback();break;
+  }
+}
+/* ---------- Home Top5 ---------- */
+function renderHomeTop5(){
+  const b=$('homeTop5Body');b.innerHTML='';
+  SCHOOLS.slice(0,5).forEach(s=>{
+    const tr=el('tr',medalClass(s.rank));
+    tr.innerHTML='<td>'+rankBadge(s.rank)+'</td>'+
+      '<td><div class="cell-org"><span class="org-logo" style="background:'+s.color+'">'+s.short+'</span><span>'+s.name+'</span></div></td>'+
+      '<td class="num-cell">'+fmtNum(s.score)+'</td>'+
+      '<td class="num-cell hide-mobile">'+s.members+'</td>'+
+      '<td class="num-cell">'+trendHTML(s.trend)+'</td>';
+    b.appendChild(tr);
+  });
+}
+
+/* ---------- Rankings ---------- */
+function switchRankTab(tab){
+  state.rankTab=tab;state.rankPage=1;
+  document.querySelectorAll('#rankTabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.ranktab===tab));
+  $('rankSchoolFilter').style.display=tab==='student'?'block':'none';
+  $('rankSchoolFilterAlt').style.display=tab==='school'?'block':'none';
+  renderRankTable();
+}
+function setRankTime(t){
+  state.rankTime=t;state.rankPage=1;
+  document.querySelectorAll('#rankTimeFilter .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.time===t));
+  renderRankTable();
+}
+function renderRankTable(){
+  const isSchool=state.rankTab==='school';
+  // populate school filter for student tab
+  if(!isSchool){const sel=$('rankSchoolSelect');if(sel.options.length<=1){SCHOOLS.forEach(s=>{const o=el('option');o.value=s.name;o.textContent=s.name;sel.appendChild(o)})}}
+  const head=$('rankTableHead');const body=$('rankTableBody');
+  if(isSchool){
+    head.innerHTML='<th style="width:64px">排名</th><th>学校</th><th class="num-cell">积分</th><th class="num-cell">参赛人数</th><th class="num-cell">趋势</th><th class="num-cell hide-mobile">代码</th>';
+    const q=($('rankSearch')?$('rankSearch').value:'').toLowerCase();
+    let data=SCHOOLS.filter(s=>!q||s.name.toLowerCase().includes(q)||s.short.toLowerCase().includes(q));
+    // mock time filter effect
+    if(state.rankTime!=='all')data=data.map(s=>({...s,score:Math.round(s.score*(state.rankTime==='2026'?0.42:0.58))}));
+    body.innerHTML='';
+    data.forEach(s=>{
+      const tr=el('tr',medalClass(s.rank)+' row-expand');
+      tr.onclick=()=>toggleRowExpand(tr,s,isSchool);
+      tr.innerHTML='<td>'+rankBadge(s.rank)+'</td>'+
+        '<td><div class="cell-org"><span class="org-logo" style="background:'+s.color+'">'+s.short+'</span><span style="font-weight:500">'+s.name+'</span></div></td>'+
+        '<td class="num-cell" style="font-weight:600">'+fmtNum(s.score)+'</td>'+
+        '<td class="num-cell">'+s.members+'</td>'+
+        '<td class="num-cell">'+trendHTML(s.trend)+'</td>'+
+        '<td class="num-cell hide-mobile text-tertiary">'+s.code+'</td>';
+      body.appendChild(tr);
+    });
+    $('schoolCount').textContent=data.length;
+  }else{
+    head.innerHTML='<th style="width:64px">排名</th><th>学生</th><th>学校</th><th class="num-cell">积分</th><th class="num-cell">参赛数</th><th class="num-cell">趋势</th>';
+    const schoolF=$('rankSchoolSelect')?$('rankSchoolSelect').value:'';
+    let data=STUDENTS.filter(s=>!schoolF||s.school===schoolF);
+    if(state.rankTime!=='all')data=data.map(s=>({...s,score:Math.round(s.score*(state.rankTime==='2026'?0.45:0.6))}));
+    body.innerHTML='';
+    data.forEach(s=>{
+      const tr=el('tr',medalClass(s.rank)+' row-expand');
+      tr.onclick=()=>toggleRowExpand(tr,s,isSchool);
+      tr.innerHTML='<td>'+rankBadge(s.rank)+'</td>'+
+        '<td><div class="cell-user"><span class="avatar">'+s.name[0]+'</span><span style="font-weight:500">'+s.name+'</span></div></td>'+
+        '<td><div class="cell-org"><span class="org-logo" style="background:'+s.color+';width:24px;height:24px;font-size:10px">'+s.short+'</span><span class="text-secondary">'+s.school+'</span></div></td>'+
+        '<td class="num-cell" style="font-weight:600">'+fmtNum(s.score)+'</td>'+
+        '<td class="num-cell">'+s.contests+'</td>'+
+        '<td class="num-cell">'+trendHTML(s.trend)+'</td>';
+      body.appendChild(tr);
+    });
+    $('studentCount').textContent=data.length;
+  }
+  renderPagination('rankPagination',state.rankPage,3, p=>{state.rankPage=p;renderRankTable()});
+}
+function toggleRowExpand(tr,item,isSchool){
+  const next=tr.nextElementSibling;
+  if(next&&next.classList.contains('expand-row')){next.remove();tr.classList.remove('expanded');return}
+  document.querySelectorAll('.expand-row').forEach(r=>r.remove());
+  document.querySelectorAll('.row-expand').forEach(r=>r.classList.remove('expanded'));
+  tr.classList.add('expanded');
+  const detail=isSchool?
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:var(--space-4)">'+
+    '<div><div class="caption text-tertiary">学校代码</div><div class="num" style="font-weight:600;margin-top:2px">'+item.code+'</div></div>'+
+    '<div><div class="caption text-tertiary">在册学生</div><div class="num" style="font-weight:600;margin-top:2px">'+item.members+' 人</div></div>'+
+    '<div><div class="caption text-tertiary">管理员</div><div class="num" style="font-weight:600;margin-top:2px">'+item.admins+' 人</div></div>'+
+    '<div><div class="caption text-tertiary">总积分</div><div class="num text-primary-c" style="font-weight:600;margin-top:2px">'+fmtNum(item.score)+'</div></div></div>'+
+    '<div style="margin-top:var(--space-4)"><button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();navigate(\'profile\')">查看本校详情</button></div>'
+    :
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:var(--space-4)">'+
+    '<div><div class="caption text-tertiary">所属学校</div><div style="font-weight:600;margin-top:2px">'+item.school+'</div></div>'+
+    '<div><div class="caption text-tertiary">总参赛数</div><div class="num" style="font-weight:600;margin-top:2px">'+item.contests+' 场</div></div>'+
+    '<div><div class="caption text-tertiary">总积分</div><div class="num text-primary-c" style="font-weight:600;margin-top:2px">'+fmtNum(item.score)+'</div></div>'+
+    '<div><div class="caption text-tertiary">近期趋势</div><div style="margin-top:2px">'+trendHTML(item.trend)+'</div></div></div>'+
+    '<div style="margin-top:var(--space-4)"><button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();navigate(\'profile\')">查看个人成绩</button></div>';
+  const row=el('tr','expand-row');const td=el('td');td.colSpan=tr.children.length;
+  td.innerHTML='<div class="expand-content">'+detail+'</div>';row.appendChild(td);
+  tr.after(row);
+}
+
+/* ---------- Profile ---------- */
+function renderProfileContests(){
+  const b=$('profileContestBody');b.innerHTML='';
+  PROFILE_CONTESTS.forEach(c=>{
+    const deltaCls=c.delta.startsWith('+')?'text-success':c.delta.startsWith('-')?'text-danger':'text-tertiary';
+    const tr=el('tr');
+    tr.innerHTML='<td style="font-weight:500">'+c.name+'</td>'+
+      '<td>'+platformTag(c.platform)+'</td>'+
+      '<td class="num-cell text-tertiary">'+c.time+'</td>'+
+      '<td class="num-cell" style="font-weight:600">'+c.rank+'</td>'+
+      '<td class="num-cell hide-mobile">'+c.solved+'</td>'+
+      '<td class="num-cell"><span class="'+deltaCls+'" style="font-weight:600">'+c.delta+'</span></td>'+
+      '<td class="num-cell text-primary-c" style="font-weight:600">'+(c.score||'—')+'</td>';
+    b.appendChild(tr);
+  });
+}
+function switchChartPlatform(pf){
+  state.chartPf=pf;
+  document.querySelectorAll('#chartPlatformTabs .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.pf===pf));
+  renderRatingChart(pf);
+}
+function renderRatingChart(pf){
+  const data=RATING_DATA[pf]||RATING_DATA.cf;
+  const container=$('ratingChart');
+  const W=760,H=300,padL=48,padR=20,padT=20,padB=36;
+  const innerW=W-padL-padR,innerH=H-padT-padB;
+  const ratings=data.map(d=>d.rating);
+  const minY=Math.floor(Math.min(...ratings)/100)*100-100;
+  const maxY=Math.ceil(Math.max(...ratings)/100)*100+100;
+  const xScale=i=>padL+(innerW*(i/(data.length-1)));
+  const yScale=v=>padT+innerH-((v-minY)/(maxY-minY))*innerH;
+  let pathD=data.map((d,i)=>(i?'L':'M')+xScale(i)+' '+yScale(d.rating)).join(' ');
+  let areaD=pathD+' L '+xScale(data.length-1)+' '+(padT+innerH)+' L '+padL+' '+(padT+innerH)+' Z';
+  // grid lines
+  let grid='',yLabels='';
+  const steps=5;
+  for(let i=0;i<=steps;i++){
+    const val=minY+(maxY-minY)*i/steps;
+    const y=yScale(val);
+    grid+='<line x1="'+padL+'" y1="'+y+'" x2="'+(W-padR)+'" y2="'+y+'" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>';
+    yLabels+='<text x="'+(padL-8)+'" y="'+(y+4)+'" text-anchor="end" fill="#9b9ba3" font-size="11" font-family="JetBrains Mono">'+Math.round(val)+'</text>';
+  }
+  // x labels
+  let xLabels='';
+  data.forEach((d,i)=>{
+    if(i%2===0||i===data.length-1)xLabels+='<text x="'+xScale(i)+'" y="'+(H-12)+'" text-anchor="middle" fill="#9b9ba3" font-size="11" font-family="JetBrains Mono">'+d.date+'</text>';
+  });
+  // dots
+  let dots='';
+  data.forEach((d,i)=>{
+    dots+='<circle cx="'+xScale(i)+'" cy="'+yScale(d.rating)+'" r="4" fill="#0a0a0f" stroke="#06b6d4" stroke-width="2" class="chart-dot" data-date="'+d.date+'" data-rating="'+d.rating+'" style="cursor:pointer;transition:r .15s"/>';
+  });
+  container.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;min-width:560px" id="ratingSvg">'+
+    '<defs><linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">'+
+    '<stop offset="0%" stop-color="#06b6d4" stop-opacity="0.25"/>'+
+    '<stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>'+
+    '</linearGradient></defs>'+
+    grid+yLabels+xLabels+
+    '<path d="'+areaD+'" fill="url(#areaGrad)"/>'+
+    '<path d="'+pathD+'" fill="none" stroke="#06b6d4" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>'+
+    dots+'</svg>';
+  // hover
+  const tooltip=$('chartTooltip');
+  container.querySelectorAll('.chart-dot').forEach(dot=>{
+    dot.addEventListener('mouseenter',e=>{
+      dot.setAttribute('r','6');
+      const rect=container.getBoundingClientRect();
+      const svgRect=$('ratingSvg').getBoundingClientRect();
+      const scaleX=svgRect.width/W,scaleY=svgRect.height/H;
+      const cx=parseFloat(dot.getAttribute('cx'))*scaleX;
+      const cy=parseFloat(dot.getAttribute('cy'))*scaleY;
+      tooltip.innerHTML='<div style="color:#9b9ba3">'+dot.dataset.date+'</div><div class="num" style="color:#06b6d4;font-weight:600;font-size:14px">Rating '+dot.dataset.rating+'</div>';
+      tooltip.style.left=(cx+12)+'px';
+      tooltip.style.top=(cy-20)+'px';
+      tooltip.classList.add('show');
+    });
+    dot.addEventListener('mouseleave',e=>{dot.setAttribute('r','4');tooltip.classList.remove('show')});
+  });
+  // stats
+  $('chartCurrent').textContent=ratings[ratings.length-1];
+  $('chartPeak').textContent=Math.max(...ratings);
+  $('chartCount').textContent=data.length;
+}
+
+/* ---------- Competitions ---------- */
+function setCompFilter(key,val){
+  state.compFilter[key]=val;state.compPage=1;
+  if(key==='platform')document.querySelectorAll('#compPlatformFilter .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.pf===val));
+  if(key==='rated')document.querySelectorAll('#compRatedFilter .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.rated===val));
+  renderCompList();
+}
+function renderCompList(){
+  const q=($('compSearch')?$('compSearch').value:'').toLowerCase();
+  const f=state.compFilter;
+  let data=COMPETITIONS.filter(c=>{
+    if(f.platform!=='all'&&c.platform!==f.platform)return false;
+    if(f.rated==='yes'&&!c.rated)return false;
+    if(f.rated==='no'&&c.rated)return false;
+    if(q&&!c.name.toLowerCase().includes(q))return false;
+    return true;
+  });
+  const sort=$('compSort')?$('compSort').value:'time';
+  if(sort==='difficulty')data=[...data].sort((a,b)=>b.difficulty-a.difficulty);
+  else if(sort==='participants')data=[...data].sort((a,b)=>b.participants-a.participants);
+  // paginate (6 per page)
+  const perPage=6;const total=Math.ceil(data.length/perPage);
+  const page=Math.min(state.compPage,total||1);
+  const slice=data.slice((page-1)*perPage,page*perPage);
+  const list=$('compList');list.innerHTML='';
+  if(slice.length===0){list.innerHTML='<div class="empty-state" style="grid-column:1/-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><p>没有符合条件的比赛</p></div>'}
+  slice.forEach(c=>{
+    const card=el('div','comp-card');
+    const diffLabel=c.difficulty>=1.5?'<span class="badge badge-danger">高难度</span>':c.difficulty>=1.1?'<span class="badge badge-warning">中等</span>':'<span class="badge badge-success">入门</span>';
+    card.innerHTML=
+      '<div class="comp-head"><div style="flex:1"><div class="body-sm text-tertiary" style="margin-bottom:4px">'+platformTag(c.platform)+' '+(c.rated?'<span class="badge badge-primary" style="padding:1px 6px;font-size:10px">Rated</span>':'<span class="badge badge-muted" style="padding:1px 6px;font-size:10px">Unrated</span>')+'</div><div class="h4" style="font-size:16px;line-height:1.35">'+c.name+'</div></div>'+diffLabel+'</div>'+
+      '<div style="display:flex;gap:var(--space-6);margin-top:var(--space-4);flex-wrap:wrap">'+
+      '<div><div class="caption text-tertiary">比赛时间</div><div class="num body-sm" style="margin-top:2px">'+c.time+'</div></div>'+
+      '<div><div class="caption text-tertiary">难度系数</div><div class="num body-sm" style="margin-top:2px;color:var(--color-warning);font-weight:600">×'+c.difficulty.toFixed(1)+'</div></div>'+
+      '<div><div class="caption text-tertiary">参与人数</div><div class="num body-sm" style="margin-top:2px">'+fmtNum(c.participants)+'</div></div></div>';
+    card.onclick=()=>toast('查看比赛详情：'+c.name,'info');
+    list.appendChild(card);
+  });
+  renderPagination('compPagination',page,total,p=>{state.compPage=p;renderCompList()});
+}
+
+/* ---------- Pagination helper ---------- */
+function renderPagination(id,cur,total,cb){
+  const c=$(id);if(!c)return;c.innerHTML='';
+  if(total<=1)return;
+  const mk=(label,active,disabled,page)=>{
+    const b=el('button','page-btn'+(active?' active':''),label);if(disabled)b.disabled=true;
+    b.onclick=()=>{if(!disabled&&page!==cur){cb(page)}};return b;
+  };
+  c.appendChild(mk('‹',false,cur<=1,cur-1));
+  for(let i=1;i<=total;i++)c.appendChild(mk(i,i===cur,false,i));
+  c.appendChild(mk('›',false,cur>=total,cur+1));
+}
+/* ---------- Admin Dashboard ---------- */
+function renderDashboard(){
+  const ab=$('dashApprovalBody');ab.innerHTML='';
+  ADMIN_APPROVALS.filter(a=>a.status==='pending').slice(0,4).forEach(a=>{
+    const tr=el('tr');
+    tr.innerHTML='<td><div class="cell-user"><span class="avatar" style="width:26px;height:26px;font-size:11px">'+a.name[0]+'</span><span>'+a.name+'<div class="caption text-tertiary">@'+a.user+'</div></span></div></td>'+
+      '<td class="text-secondary">'+a.school+'</td>'+
+      '<td class="num-cell text-tertiary">'+a.time+'</td>'+
+      '<td class="center"><button class="row-action approve" onclick="quickApprove(\''+a.user+'\')">通过</button></td>';
+    ab.appendChild(tr);
+  });
+  const cb=$('dashCrawlBody');cb.innerHTML='';
+  CRAWL_TASKS.slice(0,5).forEach(t=>{
+    const tr=el('tr');
+    tr.innerHTML='<td class="num text-tertiary" style="font-size:12px">'+t.id+'</td>'+
+      '<td>'+platformTag(t.platform)+'</td>'+
+      '<td>'+statusBadge(t.status)+'</td>'+
+      '<td class="num-cell">'+(t.records||'—')+'</td>';
+    cb.appendChild(tr);
+  });
+  const rb=$('dashRecordBody');rb.innerHTML='';
+  DASH_RECORDS.forEach(r=>{
+    const tr=el('tr');
+    tr.innerHTML='<td><div class="cell-user"><span class="avatar" style="width:26px;height:26px;font-size:11px">'+r.student[0]+'</span><span style="font-weight:500">'+r.student+'</span></div></td>'+
+      '<td class="text-secondary">'+r.school+'</td>'+
+      '<td class="text-secondary">'+r.contest+'</td>'+
+      '<td>'+platformTag(r.platform)+'</td>'+
+      '<td class="num-cell" style="font-weight:600">'+r.rank+'</td>'+
+      '<td class="num-cell text-primary-c" style="font-weight:600">'+r.score+'</td>'+
+      '<td class="num-cell text-tertiary">'+r.time+'</td>';
+    rb.appendChild(tr);
+  });
+}
+function quickApprove(user){toast('已通过 @'+user+' 的管理员申请','success')}
+
+/* ---------- School Management ---------- */
+function renderSchoolTable(){
+  const q=($('schoolSearch')?$('schoolSearch').value:'').toLowerCase();
+  const data=SCHOOLS.filter(s=>!q||s.name.toLowerCase().includes(q)||s.short.toLowerCase().includes(q)||s.code.includes(q));
+  const b=$('schoolTableBody');b.innerHTML='';
+  data.forEach(s=>{
+    const tr=el('tr');
+    tr.innerHTML='<td><div class="cell-org"><span class="org-logo" style="background:'+s.color+'">'+s.short+'</span><span style="font-weight:500">'+s.name+'</span></div></td>'+
+      '<td class="text-secondary num">'+s.short+'</td>'+
+      '<td class="num-cell text-tertiary">'+s.code+'</td>'+
+      '<td class="num-cell">'+s.members+'</td>'+
+      '<td class="num-cell">'+s.admins+'</td>'+
+      '<td class="center"><button class="row-action edit" onclick="openSchoolModal(\''+s.short+'\')">编辑</button> <button class="row-action reject" onclick="deleteSchool(\''+s.name+'\')">删除</button></td>';
+    b.appendChild(tr);
+  });
+  $('schoolTotal').textContent=data.length;
+  renderPagination('schoolPagination',1,2,p=>{});
+}
+function openSchoolModal(short){
+  const s=short?SCHOOLS.find(x=>x.short===short):null;
+  openModal(
+    (s?'编辑学校':'新增学校'),
+    '<div class="field"><label class="field-label">学校名称</label><input class="input" id="m_schoolName" value="'+(s?s.name:'')+'" placeholder="如 浙江大学"></div>'+
+    '<div class="grid grid-2"><div class="field"><label class="field-label">简称</label><input class="input" id="m_schoolShort" value="'+(s?s.short:'')+'" placeholder="如 ZJU"></div>'+
+    '<div class="field"><label class="field-label">学校代码</label><input class="input" id="m_schoolCode" value="'+(s?s.code:'')+'" placeholder="如 10335"></div></div>'+
+    '<div class="field"><label class="field-label">学校 Logo</label><div style="border:1.5px dashed var(--color-border-strong);border-radius:var(--radius-md);padding:var(--space-6);text-align:center;cursor:pointer" onclick="toast(\'演示环境暂不支持上传\',\'info\')"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.5" style="margin:0 auto 8px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg><div class="caption text-tertiary">点击上传 Logo（SVG/PNG）</div></div></div>',
+    s?'保存修改':'确认新增',
+    ()=>toast(s?'学校信息已更新':'学校已新增','success')
+  );
+}
+function deleteSchool(name){
+  openModal('确认删除','<p class="body-sm" style="margin-bottom:var(--space-2)">确定要删除学校 <b>'+name+'</b> 吗？</p><p class="caption text-tertiary">删除后该校所有参赛记录将解除关联，且不可恢复。</p>','确认删除',()=>toast('学校 '+name+' 已删除','success'),'danger');
+}
+
+/* ---------- Approvals ---------- */
+function switchApprovalTab(tab){
+  state.approvalTab=tab;
+  document.querySelectorAll('#approvalTabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.status===tab));
+  renderApprovalTable();
+}
+function renderApprovalTable(){
+  const tab=state.approvalTab;
+  let data=ADMIN_APPROVALS.filter(a=>tab==='all'||a.status===tab);
+  const b=$('approvalTableBody');b.innerHTML='';
+  data.forEach(a=>{
+    const tr=el('tr');
+    let action='<span class="caption text-tertiary">—</span>';
+    if(a.status==='pending')action='<button class="row-action approve" onclick="approveApp(\''+a.user+'\')">通过</button> <button class="row-action reject" onclick="rejectApp(\''+a.user+'\')">驳回</button>';
+    tr.innerHTML='<td><div class="cell-user"><span class="avatar" style="width:26px;height:26px;font-size:11px">'+a.name[0]+'</span><span>@'+a.user+'</span></div></td>'+
+      '<td style="font-weight:500">'+a.name+'</td>'+
+      '<td class="num-cell text-tertiary">'+a.sid+'</td>'+
+      '<td class="text-secondary">'+a.school+'</td>'+
+      '<td class="num-cell text-tertiary">'+a.time+'</td>'+
+      '<td>'+statusBadge(a.status)+'</td>'+
+      '<td class="center">'+action+'</td>';
+    b.appendChild(tr);
+  });
+}
+function approveApp(user){toast('已通过 @'+user+' 的申请','success');renderApprovalTable()}
+function rejectApp(user){
+  openModal('驳回申请','<p class="body-sm" style="margin-bottom:var(--space-4)">驳回 <b>@'+user+'</b> 的管理员申请，请填写驳回理由：</p><textarea class="textarea" id="m_rejectReason" placeholder="如：证明材料不充分，请补充学生证扫描件…"></textarea>','确认驳回',()=>{toast('已驳回 @'+user+' 的申请','success');renderApprovalTable()},'danger');
+}
+
+/* ---------- Crawler ---------- */
+function toggleCrawlerPf(pf){
+  state.crawlerPf[pf]=!state.crawlerPf[pf];
+  document.querySelectorAll('#crawlerPlatform .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.pf===pf&&state.crawlerPf[pf]));
+  if(!state.crawlerPf[pf])document.querySelector('#crawlerPlatform .seg-btn[data-pf="'+pf+'"]').classList.remove('active');
+}
+function triggerCrawl(){
+  const pfs=Object.keys(state.crawlerPf).filter(k=>state.crawlerPf[k]);
+  if(pfs.length===0){toast('请至少选择一个平台','error');return}
+  toast('已触发 '+pfs.map(p=>PF_LABEL[p]).join('、')+' 爬取任务','success');
+  // prepend a new running task visually
+  CRAWL_TASKS.unshift({id:'CRW-2026-00'+(43+Math.floor(Math.random()*9)),platform:pfs[0],status:'running',start:'刚刚',end:'—',records:0});
+  renderCrawlTasks();
+}
+function triggerRecalc(){toast('积分重算任务已提交，预计 3 分钟后完成','info')}
+function renderCrawlTasks(){
+  const b=$('crawlTaskBody');b.innerHTML='';
+  CRAWL_TASKS.forEach(t=>{
+    const tr=el('tr');
+    tr.innerHTML='<td class="num text-tertiary" style="font-size:12px">'+t.id+'</td>'+
+      '<td>'+platformTag(t.platform)+'</td>'+
+      '<td>'+statusBadge(t.status)+'</td>'+
+      '<td class="num-cell text-tertiary">'+t.start+'</td>'+
+      '<td class="num-cell text-tertiary">'+t.end+'</td>'+
+      '<td class="num-cell">'+(t.records||'—')+'</td>';
+    b.appendChild(tr);
+  });
+}
+
+/* ---------- Records ---------- */
+function setRecordFilter(key,val){
+  state.recordFilter[key]=val;state.recordPage=1;
+  if(key==='platform')document.querySelectorAll('#recordPlatformFilter .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.pf===val));
+  if(key==='status')document.querySelectorAll('#recordStatusFilter .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.st===val));
+  renderRecordTable();
+}
+function renderRecordTable(){
+  const f=state.recordFilter;
+  let data=RECORDS.filter(r=>{
+    if(f.platform!=='all'&&r.platform!==f.platform)return false;
+    if(f.status!=='all'&&r.status!==f.status)return false;
+    return true;
+  });
+  const b=$('recordTableBody');b.innerHTML='';
+  data.forEach(r=>{
+    const tr=el('tr');
+    let action=r.status==='normal'?
+      '<button class="row-action reject" onclick="excludeRecord(\''+r.student+'\',\''+r.contest+'\')">排除</button>':
+      '<button class="row-action approve" onclick="restoreRecord(\''+r.student+'\',\''+r.contest+'\')">恢复</button>';
+    tr.innerHTML='<td><div class="cell-user"><span class="avatar" style="width:26px;height:26px;font-size:11px">'+r.student[0]+'</span><span style="font-weight:500">'+r.student+'</span></div></td>'+
+      '<td class="text-secondary">'+r.school+'</td>'+
+      '<td class="text-secondary">'+r.contest+'</td>'+
+      '<td>'+platformTag(r.platform)+'</td>'+
+      '<td class="num-cell" style="font-weight:600">'+r.rank+'</td>'+
+      '<td class="num-cell">'+r.solved+'</td>'+
+      '<td class="num-cell text-primary-c" style="font-weight:600">'+(r.score||'—')+'</td>'+
+      '<td>'+statusBadge(r.status)+'</td>'+
+      '<td class="num-cell text-tertiary">'+r.time+'</td>'+
+      '<td class="center">'+action+'</td>';
+    b.appendChild(tr);
+  });
+  $('recordTotal').textContent=fmtNum(data.length);
+  renderPagination('recordPagination',1,3,p=>{});
+}
+function excludeRecord(student,contest){
+  openModal('排除参赛记录','<p class="body-sm" style="margin-bottom:var(--space-4)">排除 <b>'+student+'</b> 在 <b>'+contest+'</b> 的记录，请填写排除原因：</p><textarea class="textarea" id="m_excludeReason" placeholder="如：该比赛存在数据异常 / 选手作弊嫌疑…"></textarea>','确认排除',()=>toast('记录已排除','success'),'danger');
+}
+function restoreRecord(student,contest){toast('已恢复 '+student+' 的参赛记录','success')}
+
+/* ---------- Members ---------- */
+function renderMemberTable(){
+  const q=($('memberSearch')?$('memberSearch').value:'').toLowerCase();
+  let data=MEMBERS.filter(m=>!q||m.name.toLowerCase().includes(q)||m.sid.includes(q)||m.cf.toLowerCase().includes(q));
+  const b=$('memberTableBody');b.innerHTML='';
+  data.forEach(m=>{
+    const bound=(m.cf?1:0)+(m.atcoder?1:0)+(m.nowcoder?1:0);
+    const bindHTML='<div style="display:flex;gap:4px;flex-wrap:wrap">'+
+      (m.cf?'<span class="platform-tag cf">CF</span>':'<span class="platform-tag" style="opacity:.3">CF</span>')+
+      (m.atcoder?'<span class="platform-tag atcoder">AC</span>':'<span class="platform-tag" style="opacity:.3">AC</span>')+
+      (m.nowcoder?'<span class="platform-tag nowcoder">牛</span>':'<span class="platform-tag" style="opacity:.3">牛</span>')+
+      '</div>';
+    const tr=el('tr');
+    tr.innerHTML='<td><div class="cell-user"><span class="avatar">'+m.name[0]+'</span><span style="font-weight:500">'+m.name+'</span></div></td>'+
+      '<td class="num-cell text-tertiary">'+m.sid+'</td>'+
+      '<td>'+bindHTML+'</td>'+
+      '<td class="num-cell text-primary-c" style="font-weight:600">'+fmtNum(m.score)+'</td>'+
+      '<td class="num-cell">'+m.contests+'</td>'+
+      '<td class="num-cell text-tertiary">'+m.reg+'</td>'+
+      '<td class="center"><button class="row-action neutral" onclick="navigate(\'profile\')">查看</button></td>';
+    b.appendChild(tr);
+  });
+  $('memberTotal').textContent=156;
+  renderPagination('memberPagination',1,4,p=>{});
+}
+
+/* ---------- Auth ---------- */
+function switchAuthTab(tab){
+  const isLogin=tab==='login';
+  $('loginTabBtn').classList.toggle('active',isLogin);
+  $('registerTabBtn').classList.toggle('active',!isLogin);
+  $('loginForm').style.display=isLogin?'block':'none';
+  $('registerForm').style.display=isLogin?'none':'block';
+}
+function authLotus(){navigate('auth/callback')}
+function doLogin(){toast('登录成功，欢迎回来！','success');setTimeout(()=>navigate('home'),600)}
+function doRegister(){toast('注册成功，请完善个人信息','success');setTimeout(()=>navigate('auth/info'),600)}
+function goAuthStep(step){
+  document.querySelectorAll('.auth-step').forEach(s=>s.style.display='none');
+  $('authStep'+step).style.display='block';
+  document.querySelectorAll('#stepIndicator .step-item').forEach(item=>{
+    const n=parseInt(item.dataset.step);
+    item.classList.toggle('active',n===step);
+    item.classList.toggle('done',n<step);
+  });
+  document.querySelectorAll('#stepIndicator .step-line').forEach((line,i)=>{line.style.background=i<step-1?'var(--color-primary)':'var(--color-border)'});
+}
+function filterSchoolBind(q){
+  state.schoolBind=null;$('bindConfirmBtn').disabled=true;$('schoolBindSelected').style.display='none';
+  const box=$('schoolBindResults');
+  if(!q||q.length<1){box.style.display='none';return}
+  const data=SCHOOLS.filter(s=>s.name.toLowerCase().includes(q.toLowerCase())||s.short.toLowerCase().includes(q.toLowerCase())||s.code.includes(q));
+  box.style.display='block';
+  if(data.length===0){box.innerHTML='<div class="empty-state" style="padding:var(--space-6)"><p class="caption text-tertiary">未找到匹配学校</p></div>';return}
+  box.innerHTML='';
+  data.forEach(s=>{
+    const item=el('div','bind-item');
+    item.innerHTML='<span class="org-logo" style="background:'+s.color+'">'+s.short+'</span><div style="flex:1"><div style="font-weight:500">'+s.name+'</div><div class="caption text-tertiary num">代码 '+s.code+' · '+s.members+' 人</div></div>';
+    item.onclick=()=>selectSchoolBind(s);
+    box.appendChild(item);
+  });
+}
+function selectSchoolBind(s){
+  state.schoolBind=s;
+  $('schoolBindSearch').value=s.name;
+  $('schoolBindResults').style.display='none';
+  $('bindSelectedName').textContent=s.name;
+  $('bindSelectedCode').textContent='代码 '+s.code+' · '+s.members+' 名学生';
+  $('bindSelectedLogo').textContent=s.short;
+  $('bindSelectedLogo').style.background=s.color;
+  $('schoolBindSelected').style.display='block';
+  $('bindConfirmBtn').disabled=false;
+}
+function clearSchoolBind(){
+  state.schoolBind=null;
+  $('schoolBindSearch').value='';
+  $('schoolBindSelected').style.display='none';
+  $('bindConfirmBtn').disabled=true;
+}
+function confirmSchoolBind(){toast('已成功绑定 '+state.schoolBind.name+'！','success');setTimeout(()=>navigate('profile'),800)}
+function submitAdminApply(){
+  $('adminApplyForm').style.display='none';
+  $('adminApplySuccess').style.display='block';
+  toast('管理员申请已提交','success');
+}
+function runCallback(){
+  $('callbackLoading').style.display='block';
+  $('callbackSuccess').style.display='none';
+  $('callbackFail').style.display='none';
+  setTimeout(()=>{
+    $('callbackLoading').style.display='none';
+    if(Math.random()>0.15){$('callbackSuccess').style.display='block'}
+    else{$('callbackFail').style.display='block'}
+  },1800);
+}
+
+/* ---------- Mobile nav & Sidebar ---------- */
+function toggleMobileNav(){$('mobileDrawer').classList.toggle('open')}
+function closeSidebar(){document.body.classList.remove('sidebar-open')}
+
+/* ---------- Modal ---------- */
+function openModal(title,body,confirmText,confirmCb,variant){
+  const m=$('modal');
+  m.className='modal'+(variant==='danger'?'':'');
+  m.innerHTML='<div class="modal-header"><div class="modal-title">'+title+'</div><button class="modal-close" onclick="closeModal()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>'+
+    '<div class="modal-body">'+body+'</div>'+
+    '<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">取消</button><button class="btn '+(variant==='danger'?'btn-danger':'btn-primary')+'" id="modalConfirmBtn">'+confirmText+'</button></div>';
+  $('modalOverlay').classList.add('show');
+  $('modalConfirmBtn').onclick=()=>{closeModal();if(confirmCb)confirmCb()};
+}
+function closeModal(){$('modalOverlay').classList.remove('show')}
+function closeModalOnBackdrop(e){if(e.target.id==='modalOverlay')closeModal()}
+
+/* ---------- Init ---------- */
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
+if(!location.hash)location.hash='#/home';
+router();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# 直接依赖。传递依赖由 pip 自行解析，不锁死以便安全更新。
+Django==5.2.17
+djangorestframework==3.17.1
+djangorestframework-simplejwt==5.5.1
+django-cors-headers==4.9.0
+django-filter==26.1
+drf-spectacular==0.30.0
+celery==5.6.3
+django-celery-beat==2.9.0
+redis==8.1.0
+python-dotenv==1.2.2
+requests==2.34.2
+Pillow==12.3.0
+
+# 生产环境额外需要（按需取消注释）
+# psycopg[binary]==3.2.*
+# gunicorn==23.*
+
+# 统一认证中心 JWT 验签 SDK（RS256 + JWKS，离线验签）
+# 开发期从本地 ../lotus-passport-sdk 可编辑安装：
+#   pip install -e ../lotus-passport-sdk[drf]
+lotus-passport-sdk[drf]>=1.0.0

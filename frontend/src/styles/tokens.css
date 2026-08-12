@@ -1,0 +1,212 @@
+/**
+ * 设计令牌 · Dark Tech Indigo
+ * 来源：prototype design for rank/DESIGN.md + prototype.html :root
+ * 原则：这里只放变量，不放任何选择器规则，方便被任意页面引用。
+ *
+ * 注意：本设计系统为「纯深色」，原型未定义浅色模式。
+ */
+:root {
+  /* ===== Color · 背景层级 ===== */
+  --color-bg-base: #0a0a0f;
+  --color-bg-surface: #13131a;
+  --color-bg-elevated: #1a1a24;
+  --color-bg-overlay: #20202c;
+  --color-bg-inset: #08080d;
+
+  /* ===== Color · 主色（靛蓝 → 紫渐变） ===== */
+  --color-primary: #6366f1;
+  --color-primary-hover: #5558e0;
+  --color-primary-active: #4f46e5;
+  --color-primary-subtle: rgba(99, 102, 241, 0.12);
+  --color-primary-border: rgba(99, 102, 241, 0.4);
+  --color-secondary: #8b5cf6;
+  --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --gradient-primary-soft: linear-gradient(
+    135deg,
+    rgba(99, 102, 241, 0.15),
+    rgba(139, 92, 246, 0.15)
+  );
+  --gradient-hero-glow: radial-gradient(
+    ellipse at top,
+    rgba(99, 102, 241, 0.18),
+    transparent 60%
+  );
+
+  /* ===== Color · 强调 / 语义 ===== */
+  --color-accent-cyan: #06b6d4;
+  --color-accent-cyan-subtle: rgba(6, 182, 212, 0.12);
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+  --color-success-subtle: rgba(16, 185, 129, 0.12);
+  --color-warning-subtle: rgba(245, 158, 11, 0.12);
+  --color-danger-subtle: rgba(239, 68, 68, 0.12);
+  --color-info-subtle: rgba(59, 130, 246, 0.12);
+
+  /* ===== Color · 文字 ===== */
+  --color-text-primary: #f4f4f5;
+  --color-text-secondary: #a1a1aa;
+  --color-text-tertiary: #9b9ba3;
+  --color-text-disabled: #52525b;
+  --color-text-inverse: #0a0a0f;
+
+  /* ===== Color · 描边 ===== */
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-border-focus: rgba(99, 102, 241, 0.5);
+  --color-divider: rgba(255, 255, 255, 0.06);
+
+  /* ===== Color · 奖牌 ===== */
+  --color-medal-gold: #fbbf24;
+  --color-medal-silver: #cbd5e1;
+  --color-medal-bronze: #d97706;
+  --gradient-gold: linear-gradient(135deg, #fbbf24, #f59e0b);
+
+  /* ===== Typography ===== */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Microsoft YaHei', 'Source Han Sans CN', 'Noto Sans SC',
+    sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'SF Mono', Menlo,
+    Consolas, monospace;
+
+  /* ===== Spacing（4px 阶梯，12 级） ===== */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ===== Radius ===== */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  /* ===== Shadow ===== */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 8px 32px rgba(99, 102, 241, 0.15);
+  --shadow-glow-strong: 0 0 24px rgba(99, 102, 241, 0.25);
+
+  /* ===== Glass ===== */
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-bg-strong: rgba(255, 255, 255, 0.05);
+  --glass-border-color: rgba(255, 255, 255, 0.08);
+  --glass-blur: blur(12px);
+  --glass-blur-strong: blur(20px);
+
+  /* ===== Motion ===== */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.6, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+  --duration-slower: 400ms;
+
+  /* ===== Layout ===== */
+  --container-max: 1280px;
+  --container-wide: 1440px;
+  --container-narrow: 720px;
+  --grid-gutter: 24px;
+  --page-padding-x: 32px;
+  --nav-height: 64px;
+  --sidebar-width: 240px;
+  --sidebar-collapsed: 64px;
+  --control-height: 36px;
+  --control-height-sm: 30px;
+  --control-height-lg: 44px;
+  --table-row-h: 44px;
+  --avatar-size: 32px;
+
+  /* ===== Z-index ===== */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-sidebar: 300;
+  --z-nav: 400;
+  --z-modal: 1000;
+  --z-drawer: 1050;
+  --z-toast: 1100;
+  --z-tooltip: 1200;
+}
+
+/**
+ * ===== Legacy bridge =====
+ * 尚未迁移到本设计系统的页面仍在用旧令牌（--bg / --brand / --text-dim ...）。
+ * 这里把旧名映射到新值，保证迁移期间它们不会出现浅底 + 深色混排的撕裂感。
+ * 全部页面迁移完成后可整块删除。
+ */
+:root {
+  --bg: var(--color-bg-base);
+  --bg-elev: var(--color-bg-surface);
+  --bg-soft: var(--color-bg-elevated);
+  --text: var(--color-text-primary);
+  --text-dim: var(--color-text-secondary);
+  --border: var(--color-border);
+  --brand: var(--color-primary);
+  --brand-2: var(--color-secondary);
+  --brand-soft: var(--color-primary-subtle);
+  --good: var(--color-success);
+  --bad: var(--color-danger);
+  --shadow: var(--shadow-lg);
+}
+
+/**
+ * ===== Light theme =====
+ * 纯深色设计系统之上的浅色覆盖集。只重映射「颜色 + 阴影 + 玻璃」类令牌，
+ * 间距 / 圆角 / 字号 / 布局令牌保持不动。语义色（success/danger…）保持原值，
+ * 仅把 subtle 底色调淡以适配浅底。
+ */
+:root[data-theme='light'] {
+  --color-bg-base: #f5f6f8;
+  --color-bg-surface: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: #eceef3;
+  --color-bg-inset: #f1f2f6;
+
+  --color-text-primary: #18191c;
+  --color-text-secondary: #4b5563;
+  --color-text-tertiary: #6b7280;
+  --color-text-disabled: #b0b5bd;
+  --color-text-inverse: #ffffff;
+
+  --color-border: rgba(15, 23, 42, 0.1);
+  --color-border-strong: rgba(15, 23, 42, 0.16);
+  --color-border-focus: rgba(99, 102, 241, 0.5);
+  --color-divider: rgba(15, 23, 42, 0.07);
+
+  --color-primary-subtle: rgba(99, 102, 241, 0.1);
+  --color-success-subtle: rgba(16, 185, 129, 0.12);
+  --color-warning-subtle: rgba(245, 158, 11, 0.14);
+  --color-danger-subtle: rgba(239, 68, 68, 0.1);
+  --color-info-subtle: rgba(59, 130, 246, 0.12);
+
+  --gradient-hero-glow: radial-gradient(ellipse at top, rgba(99, 102, 241, 0.1), transparent 60%);
+
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-bg-strong: rgba(255, 255, 255, 0.78);
+  --glass-border-color: rgba(15, 23, 42, 0.08);
+  --glass-blur: blur(12px);
+  --glass-blur-strong: blur(20px);
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 4px 24px rgba(15, 23, 42, 0.1);
+  --shadow-xl: 0 8px 32px rgba(15, 23, 42, 0.14);
+  --shadow-glow: 0 8px 32px rgba(99, 102, 241, 0.16);
+  --shadow-glow-strong: 0 0 24px rgba(99, 102, 241, 0.22);
+}
