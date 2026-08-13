@@ -1,4 +1,5 @@
 """schools 序列化器。"""
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.accounts.models import User as AccountUser
@@ -92,14 +93,32 @@ class SchoolAdminApplicationCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
         school = attrs.get("school")
-        if request and getattr(request, "user", None) and school:
-            exists = SchoolAdminApplication.objects.filter(
-                applicant=request.user,
+
+        # 已是管理员（校管/超管）禁止再次申请
+        if user and (user.is_school_admin or user.is_super_admin):
+            raise serializers.ValidationError(
+                {"school": "你已是管理员，无需再次申请"})
+
+        # 每月仅限申请一次（跨学校也受此约束）
+        if user:
+            now = timezone.now()
+            if SchoolAdminApplication.objects.filter(
+                applicant=user,
+                created_at__year=now.year,
+                created_at__month=now.month,
+            ).exists():
+                raise serializers.ValidationError(
+                    {"school": "你本月已提交过申请，请下月再试"})
+
+        # 该校已存在待审申请，禁止重复提交
+        if user and school:
+            if SchoolAdminApplication.objects.filter(
+                applicant=user,
                 school=school,
                 status=AdminApplicationStatus.PENDING,
-            ).exists()
-            if exists:
+            ).exists():
                 raise serializers.ValidationError(
                     {"school": "你已经有一条该学校的待审申请，请勿重复提交"})
         return attrs
