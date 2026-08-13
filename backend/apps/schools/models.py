@@ -79,16 +79,9 @@ class SchoolAdminApplication(TimeStampedModel):
 
 class ScoreConfig(TimeStampedModel):
     """
-    学校自定义的积分系数。
-    最终积分 = 基础分 × 平台难度系数 × 比赛难度系数 × 学校权重。
-    每所学校一份，缺失时用全局默认（school=None 的那条）。
+    全局唯一的积分系数配置（超管统一设置，不分学校）。
+    最终积分 = 基础分 × (平台系数权重×平台系数 + 比赛系数权重×比赛难度系数)。
     """
-
-    school = models.OneToOneField("schools.School", verbose_name="学校",
-                                  null=True, blank=True,
-                                  on_delete=models.CASCADE,
-                                  related_name="score_config",
-                                  help_text="留空表示全局默认配置")
 
     cf_factor = models.DecimalField("Codeforces 平台系数", max_digits=6,
                                     decimal_places=3, default=1.000)
@@ -106,7 +99,7 @@ class ScoreConfig(TimeStampedModel):
     contest_weight = models.DecimalField("比赛系数权重", max_digits=4,
                                          decimal_places=3, default=0.500)
 
-    # 只统计每个平台最近 N 场，避免老账号靠场次堆积
+    # 只统计每个平台最近 N 场，避免老账号靠场次堆积（0 表示不限制）
     recent_contest_limit = models.PositiveIntegerField("计分场次上限", default=0,
                                                        help_text="0 表示不限制")
 
@@ -115,7 +108,23 @@ class ScoreConfig(TimeStampedModel):
         verbose_name_plural = verbose_name
 
     def __str__(self):
-        return f"{self.school or '全局默认'} 的积分配置"
+        return "全局积分配置"
+
+    @classmethod
+    def get_config(cls):
+        """返回全局唯一配置；缺失则以默认参数创建。"""
+        obj, _ = cls.objects.get_or_create(
+            defaults={
+                "cf_factor": 1.000,
+                "atcoder_factor": 1.000,
+                "nowcoder_factor": 0.800,
+                "default_contest_factor": 1.000,
+                "platform_weight": 0.500,
+                "contest_weight": 0.500,
+                "recent_contest_limit": 0,
+            }
+        )
+        return obj
 
     def platform_factor(self, platform):
         return {

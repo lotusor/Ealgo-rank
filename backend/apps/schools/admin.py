@@ -59,4 +59,3 @@ class SchoolAdminApplicationAdmin(admin.ModelAdmin):
 class ScoreConfigAdmin(admin.ModelAdmin):
     list_display = ("__str__", "cf_factor", "atcoder_factor", "nowcoder_factor",
                     "platform_weight", "contest_weight", "recent_contest_limit")
-    list_filter = ("school",)

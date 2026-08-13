@@ -8,7 +8,7 @@
 - 最终积分 final = base * combined
 - recent_contest_limit：仅个人榜取各平台最近 N 场求和；学校榜仍汇总成员全部有效场次。
 - 周期 period：'all' + 当前年份；触发方式见 management 命令 / Celery 任务。
-- 学校无专属 ScoreConfig 时回退全局默认（school=None 那条）。
+- 积分系数为全局统一配置（超管设置），不分学校。
 """
 from collections import defaultdict
 from datetime import datetime
@@ -24,13 +24,9 @@ from apps.schools.models import ScoreConfig, School
 ALL_PERIODS = ["all", str(timezone.now().year)]
 
 
-def get_school_config(school):
-    """取学校的积分配置，缺失时回退全局默认（school=None）。"""
-    if school is not None:
-        cfg = ScoreConfig.objects.filter(school=school).first()
-        if cfg is not None:
-            return cfg
-    return ScoreConfig.objects.filter(school__isnull=True).first()
+def get_config():
+    """返回全局唯一的积分配置（超管统一设置，不分学校）。"""
+    return ScoreConfig.get_config()
 
 
 def compute_base_score(participation):
@@ -82,10 +78,10 @@ def recompute_score_records():
     deleted, _ = ScoreRecord.objects.exclude(
         participation_id__in=countable_ids).delete()
 
+    config = ScoreConfig.get_config()
     created = updated = 0
     for p in countable:
         school = p.platform_account.school
-        config = get_school_config(school)
         base = compute_base_score(p)
         pf, cf, combined = compute_factors(p, config)
         final = round(base * combined, 4)
@@ -155,11 +151,11 @@ def _build_student_rows(period):
     # 预取各用户当前学校的配置，取各平台最近 N 场
     schools = {s.id: s for s in School.objects.filter(id__in=school_ids)}
 
+    config = get_config()
+    limit = config.recent_contest_limit if config else 0
     rows = []
     for uid, recs in by_user.items():
         user = users.get(uid)
-        config = get_school_config(user.school if user else None)
-        limit = config.recent_contest_limit if config else 0
         if limit:
             by_plat = defaultdict(list)
             for r in recs:

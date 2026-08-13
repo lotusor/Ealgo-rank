@@ -77,7 +77,6 @@ export interface School {
 
 export interface ScoreConfig {
   id: number
-  school: number | null
   cf_factor: string
   atcoder_factor: string
   nowcoder_factor: string

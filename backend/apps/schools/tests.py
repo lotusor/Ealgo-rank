@@ -206,56 +206,40 @@ SC_DETAIL = lambda pk: f"{BASE}/score-configs/{pk}/"
 
 
 class ScoreConfigPermissionTests(APITestCase):
-    """#5 权限：超管可读写全部（含全局默认）；校管仅可读本校，写操作一律 403。"""
+    """#5 权限：积分系数为全局单例，仅超级管理员可读写；校管一律 403。"""
 
     def setUp(self):
         self.school_a = School.objects.create(
             name="A大学", code="a", short_name="A")
-        self.school_b = School.objects.create(
-            name="B大学", code="b", short_name="B")
         self.admin_a = make_user("adminA", role=UserRole.SCHOOL_ADMIN,
                                  school=self.school_a)
         self.super = make_user("super", role=UserRole.SUPER_ADMIN)
-        self.cfg_a = ScoreConfig.objects.create(school=self.school_a,
-                                                cf_factor=1.1)
-        self.cfg_b = ScoreConfig.objects.create(school=self.school_b,
-                                                cf_factor=2.2)
-        ScoreConfig.objects.create(school=None, cf_factor=0.9)
+        # 全局唯一配置
+        ScoreConfig.objects.create(cf_factor=1.1)
 
-    def test_admin_reads_only_own_school(self):
+    def test_admin_read_forbidden(self):
         self.client.force_authenticate(self.admin_a)
         resp = self.client.get(SC_LIST)
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.data["count"], 1)
-        self.assertEqual(resp.data["results"][0]["school"], self.school_a.id)
+        self.assertEqual(resp.status_code, 403)
 
     def test_admin_write_forbidden(self):
-        # 校管创建（即便填本校系数）也一律 403，调整权归超管
+        self.client.force_authenticate(self.admin_a)
+        resp = self.client.patch(SC_DETAIL(1), {"cf_factor": "9.9"},
+                                 format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_create_forbidden(self):
         self.client.force_authenticate(self.admin_a)
         resp = self.client.post(SC_LIST, {"cf_factor": "1.5"}, format="json")
         self.assertEqual(resp.status_code, 403)
 
-    def test_admin_edit_forbidden(self):
-        # 改本校配置同样 403
-        self.client.force_authenticate(self.admin_a)
-        resp = self.client.patch(SC_DETAIL(self.cfg_a.id),
-                                 {"cf_factor": "9.9"}, format="json")
-        self.assertEqual(resp.status_code, 403)
-
-    def test_admin_delete_forbidden(self):
-        self.client.force_authenticate(self.admin_a)
-        resp = self.client.delete(SC_DETAIL(self.cfg_a.id))
-        self.assertEqual(resp.status_code, 403)
-
-    def test_super_sees_all_including_global_default(self):
+    def test_super_can_read_and_update(self):
         self.client.force_authenticate(self.super)
         resp = self.client.get(SC_LIST)
-        # A 校 + B 校 + 全局默认
-        self.assertEqual(resp.data["count"], 3)
-
-    def test_super_can_create_global_default(self):
-        self.client.force_authenticate(self.super)
-        resp = self.client.post(SC_LIST, {"school": None, "cf_factor": "0.5"},
-                                 format="json")
-        self.assertEqual(resp.status_code, 201, resp.content)
-        self.assertIsNone(ScoreConfig.objects.get(id=resp.data["id"]).school)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["count"], 1)
+        cfg_id = resp.data["results"][0]["id"]
+        resp2 = self.client.patch(SC_DETAIL(cfg_id), {"cf_factor": "2.5"},
+                                  format="json")
+        self.assertEqual(resp2.status_code, 200, resp2.content)
+        self.assertEqual(float(ScoreConfig.objects.get(id=cfg_id).cf_factor), 2.5)

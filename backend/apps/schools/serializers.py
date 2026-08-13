@@ -60,12 +60,12 @@ class SchoolAdminApplicationSerializer(serializers.ModelSerializer):
 
 
 class ScoreConfigSerializer(serializers.ModelSerializer):
-    """学校积分系数配置（全局默认配置的 school 为 null）。"""
+    """全局唯一的积分系数配置。"""
 
     class Meta:
         model = ScoreConfig
         fields = [
-            "id", "school", "cf_factor", "atcoder_factor", "nowcoder_factor",
+            "id", "cf_factor", "atcoder_factor", "nowcoder_factor",
             "default_contest_factor", "platform_weight", "contest_weight",
             "recent_contest_limit", "created_at", "updated_at",
         ]

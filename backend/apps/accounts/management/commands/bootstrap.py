@@ -67,16 +67,5 @@ class Command(BaseCommand):
         else:
             self.stdout.write(f"超级管理员 {username} 已存在，跳过")
 
-        config, cfg_created = ScoreConfig.objects.get_or_create(
-            school=None,
-            defaults={
-                "cf_factor": 1.000,
-                "atcoder_factor": 1.000,
-                "nowcoder_factor": 0.800,
-                "default_contest_factor": 1.000,
-                "platform_weight": 0.500,
-                "contest_weight": 0.500,
-            },
-        )
-        self.stdout.write(self.style.SUCCESS(
-            f"全局积分配置{'已创建' if cfg_created else '已存在'}: {config}"))
+        config = ScoreConfig.get_config()
+        self.stdout.write(self.style.SUCCESS(f"全局积分配置已就绪: {config}"))

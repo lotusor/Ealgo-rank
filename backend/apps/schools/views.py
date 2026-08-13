@@ -20,7 +20,7 @@ from apps.accounts.models import (
     UserRole,
     notify,
 )
-from apps.common.permissions import IsSuperAdmin, IsSchoolAdmin
+from apps.common.permissions import IsSuperAdmin
 from apps.schools.models import (
     AdminApplicationStatus,
     School,
@@ -200,26 +200,22 @@ class SchoolAdminApplicationViewSet(viewsets.ModelViewSet):
 
 class ScoreConfigViewSet(viewsets.ModelViewSet):
     """
-    积分系数配置。每校一份（school 非空），外加一条 school=None 的全局默认。
-    - 超管：可读/写全部（含全局默认）
-    - 校管：仅可读本校配置，不可修改（调整权归超级管理员）
+    全局唯一的积分系数配置，仅超级管理员可读写。
+    - 设计为单例：列表只含一条全局配置；POST 改为 upsert（已存在则更新）。
+    - 调整积分系数（含 recent_contest_limit）的权限仅归超级管理员。
     """
     serializer_class = ScoreConfigSerializer
-    queryset = ScoreConfig.objects.select_related("school").all()
+    permission_classes = [IsSuperAdmin]
+    queryset = ScoreConfig.objects.all()
 
-    def get_permissions(self):
-        # 读：校管 + 超管；写（调整系数）：仅超管
-        if self.request.method in SAFE_METHODS:
-            return [IsSchoolAdmin()]
-        return [IsSuperAdmin()]
+    def get_object(self):
+        # 单例：忽略 pk，始终返回唯一配置（缺失则建默认）
+        return ScoreConfig.get_config()
 
-    def get_queryset(self):
-        qs = ScoreConfig.objects.select_related("school").all()
-        user = self.request.user
-        if not user.is_super_admin:
-            qs = qs.filter(school_id=user.school_id)
-        return qs
-
-    def perform_create(self, serializer):
-        # 仅超管可创建（可指定 school，留空=全局默认）
+    def create(self, request, *args, **kwargs):
+        # 单例：已存在则更新，不新建第二份
+        cfg = ScoreConfig.get_config()
+        serializer = self.get_serializer(cfg, data=request.data)
+        serializer.is_valid(raise_exception=True)
         serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)

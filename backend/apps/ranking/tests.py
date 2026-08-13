@@ -16,29 +16,19 @@ from apps.ranking.models import RankSnapshot, ScoreRecord
 from apps.schools.models import ScoreConfig, School
 
 
-def make_global_config():
+def make_config(recent_limit=0):
+    """全局唯一积分配置（超管统一设置，不分学校）。"""
     return ScoreConfig.objects.create(
         cf_factor=1.0, atcoder_factor=1.0, nowcoder_factor=0.8,
         default_contest_factor=1.0, platform_weight=0.5,
-        contest_weight=0.5, recent_contest_limit=0)
-
-
-def make_school_config(school, recent_limit):
-    return ScoreConfig.objects.create(
-        school=school, cf_factor=1.0, atcoder_factor=1.0,
-        nowcoder_factor=0.8, default_contest_factor=1.0,
-        platform_weight=0.5, contest_weight=0.5,
-        recent_contest_limit=recent_limit)
+        contest_weight=0.5, recent_contest_limit=recent_limit)
 
 
 class EngineTests(TestCase):
     def setUp(self):
-        make_global_config()
+        make_config(recent_limit=1)  # 全局统一配置：个人榜每平台最近 1 场
         self.school_a = School.objects.create(name="A大学", code="a")
         self.school_b = School.objects.create(name="B大学", code="b")
-        # School A 限制个人榜每平台最近 1 场；School B 不限制
-        make_school_config(self.school_a, recent_limit=1)
-        make_school_config(self.school_b, recent_limit=0)
 
         self.ua = User.objects.create_user(username="ua", school=self.school_a)
         self.ub = User.objects.create_user(username="ub", school=self.school_a)
@@ -140,7 +130,7 @@ class EngineTests(TestCase):
         self.assertEqual(n, 3)
         ua = RankSnapshot.objects.get(scope="student", period="all",
                                       user=self.ua)
-        # School A limit=1：每平台取最新一场。cf 最新为 c2(50)，nc 为 c3(92) -> 142
+        # 全局 limit=1：每平台取最新一场。cf 最新为 c2(50)，nc 为 c3(92) -> 142
         self.assertAlmostEqual(float(ua.total_score), 142.0)
         self.assertEqual(ua.contest_count, 2)
         ub = RankSnapshot.objects.get(scope="student", period="all",
