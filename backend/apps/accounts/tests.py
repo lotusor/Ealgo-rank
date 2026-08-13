@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
+from apps.accounts.models import UserRole
 from apps.schools.models import School
 
 User = get_user_model()
@@ -86,3 +87,44 @@ class AccountsApiTests(APITestCase):
             "name": "甲大学", "code": "jia", "short_name": "甲"})
         self.assertEqual(r.status_code, 201)
         self.assertEqual(School.objects.filter(code="jia").count(), 1)
+
+
+class SchoolAdminRosterIsolationTests(APITestCase):
+    """#4 校管成员名单仅可见本校，不可跨校。"""
+
+    def setUp(self):
+        self.school_a = School.objects.create(
+            name="A大学", code="a", short_name="A")
+        self.school_b = School.objects.create(
+            name="B大学", code="b", short_name="B")
+        self.admin_a = User.objects.create_user(
+            username="adminA", password="Test1234!",
+            role=UserRole.SCHOOL_ADMIN, school=self.school_a)
+        self.admin_b = User.objects.create_user(
+            username="adminB", password="Test1234!",
+            role=UserRole.SCHOOL_ADMIN, school=self.school_b)
+        User.objects.create_user(username="userA1", password="x",
+                                 school=self.school_a)
+        User.objects.create_user(username="userA2", password="x",
+                                 school=self.school_a)
+        User.objects.create_user(username="userB1", password="x",
+                                 school=self.school_b)
+
+    def test_admin_sees_only_own_school(self):
+        self.client.force_authenticate(self.admin_a)
+        r = self.client.get("/api/v1/users/")
+        self.assertEqual(r.status_code, 200)
+        # A 校共 3 人：adminA + userA1 + userA2
+        self.assertEqual(r.data["count"], 3)
+        names = {u["username"] for u in r.data["results"]}
+        self.assertIn("userA1", names)
+        self.assertIn("userA2", names)
+        self.assertNotIn("userB1", names)
+        self.assertNotIn("adminB", names)
+
+    def test_other_school_admin_cannot_see_this_school(self):
+        self.client.force_authenticate(self.admin_b)
+        r = self.client.get("/api/v1/users/")
+        names = {u["username"] for u in r.data["results"]}
+        self.assertNotIn("userA1", names)
+        self.assertEqual(r.data["count"], 2)  # adminB + userB1

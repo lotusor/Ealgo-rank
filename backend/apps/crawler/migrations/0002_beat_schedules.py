@@ -84,7 +84,10 @@ def remove_schedules(apps, schema_editor):
 class Migration(migrations.Migration):
     dependencies = [
         ("crawler", "0001_initial"),
-        ("django_celery_beat", "0001_initial"),
+        # 必须在 django_celery_beat 的 timezone 列（CrontabSchedule）建立之后，
+        # 否则全新测试库 migrate 时本迁移的 get_or_create(timezone=...) 会因
+        # 列不存在而失败（开发库因 beat 早已全量迁移而幸免）。
+        ("django_celery_beat", "0019_alter_periodictasks_options"),
     ]
 
     operations = [
