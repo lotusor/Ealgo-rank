@@ -239,3 +239,16 @@ class NotificationSerializer(serializers.ModelSerializer):
         fields = ["id", "type", "type_display", "title", "message", "link",
                   "is_read", "created_at"]
         read_only_fields = fields
+
+
+class NotificationPublishSerializer(serializers.Serializer):
+    """超级管理员主动发布站内信：可指定接收人，省略则全站广播。"""
+
+    title = serializers.CharField(max_length=120, help_text="站内信标题")
+    message = serializers.CharField(required=False, allow_blank=True, default="",
+                                    help_text="正文内容")
+    link = serializers.CharField(required=False, allow_blank=True, max_length=255,
+                                 default="", help_text="可选跳转链接（前端路由）")
+    user_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, allow_empty=True,
+        help_text="接收用户 ID 列表；省略或为空表示全站广播")

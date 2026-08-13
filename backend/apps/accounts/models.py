@@ -138,6 +138,7 @@ class NotificationType(models.TextChoices):
     SYSTEM = "system", "系统通知"
     APPLICATION_RECEIVED = "application_received", "管理员申请已提交"
     APPLICATION_REVIEWED = "application_reviewed", "管理员申请结果"
+    ADMIN_MESSAGE = "admin_message", "管理员消息"
 
 
 class Notification(TimeStampedModel):

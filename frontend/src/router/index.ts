@@ -112,6 +112,12 @@ const router = createRouter({
           name: 'members',
           component: () => import('@/views/admin/MembersView.vue'),
         },
+        {
+          path: 'notifications',
+          name: 'notifications',
+          component: () => import('@/views/admin/NotificationsView.vue'),
+          meta: { superOnly: true },
+        },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: { name: 'rankings' } },

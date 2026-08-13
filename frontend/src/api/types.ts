@@ -264,3 +264,21 @@ export interface Announcement {
   created_at: string
   updated_at: string
 }
+
+// 站内信（#1 超管发布 + 用户端收件箱）
+export type NotificationType =
+  | 'system'
+  | 'application_received'
+  | 'application_reviewed'
+  | 'admin_message'
+
+export interface AppNotification {
+  id: number
+  type: NotificationType
+  type_display: string
+  title: string
+  message: string
+  link: string
+  is_read: boolean
+  created_at: string
+}

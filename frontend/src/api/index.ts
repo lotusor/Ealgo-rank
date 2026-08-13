@@ -15,6 +15,7 @@ import type {
   SchoolAdminApplicationCreate,
   UsernameAvailability,
   Announcement,
+  AppNotification,
 } from './types'
 
 // ---------- Auth ----------
@@ -293,4 +294,41 @@ export async function updateAnnouncement(
 
 export async function deleteAnnouncement(id: number) {
   await client.delete(`/announcements/${id}/`)
+}
+
+// ---------- 站内信（#1） ----------
+// 当前登录用户的收件箱（本人只读）
+export async function fetchNotifications(params: PageQuery = {}) {
+  const { data } = await client.get<Paginated<AppNotification>>('/notifications/', {
+    params,
+  })
+  return data
+}
+
+// 标记单条已读
+export async function markNotificationRead(id: number) {
+  const { data } = await client.post<AppNotification>(
+    `/notifications/${id}/read/`,
+  )
+  return data
+}
+
+// 全部已读
+export async function markAllNotificationsRead() {
+  const { data } = await client.post('/notifications/read_all/')
+  return data
+}
+
+// 超级管理员发布站内信（可指定 user_ids，省略则全站广播）
+export async function publishNotification(payload: {
+  title: string
+  message?: string
+  link?: string
+  user_ids?: number[]
+}) {
+  const { data } = await client.post<{ count: number }>(
+    '/notifications/publish/',
+    payload,
+  )
+  return data
 }

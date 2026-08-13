@@ -18,9 +18,15 @@ from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.accounts.models import Notification, PlatformAccount, User
+from apps.accounts.models import (
+    Notification,
+    NotificationType,
+    PlatformAccount,
+    User,
+)
 from apps.accounts.serializers import (
     ChangePasswordSerializer,
+    NotificationPublishSerializer,
     NotificationSerializer,
     PlatformAccountSerializer,
     RegisterSerializer,
@@ -29,7 +35,7 @@ from apps.accounts.serializers import (
     UserUpdateSerializer,
 )
 from apps.accounts.validators import first_error_message, validate_username
-from apps.common.permissions import IsSchoolAdmin
+from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin
 from config.pagination import StandardPagination
 
 
@@ -146,6 +152,29 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         self.get_queryset().filter(is_read=False).update(
             is_read=True, read_at=timezone.now())
         return Response({"detail": "已全部标记为已读"})
+
+    @action(detail=False, methods=["post"], permission_classes=[IsSuperAdmin])
+    def publish(self, request):
+        """超级管理员主动发布站内信：可指定接收人，省略则全站广播。"""
+        ser = NotificationPublishSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+        user_ids = data.get("user_ids") or []
+        qs = User.objects.all()
+        if user_ids:
+            qs = qs.filter(id__in=user_ids)
+        notes = [
+            Notification(
+                user=u,
+                type=NotificationType.ADMIN_MESSAGE,
+                title=data["title"],
+                message=data.get("message", ""),
+                link=data.get("link", ""),
+            )
+            for u in qs
+        ]
+        created = Notification.objects.bulk_create(notes)
+        return Response({"count": len(created)}, status=status.HTTP_201_CREATED)
 
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
