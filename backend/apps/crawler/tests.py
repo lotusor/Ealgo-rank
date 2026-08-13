@@ -4,7 +4,7 @@
 
 from django.test import TestCase
 
-from apps.accounts.models import PlatformAccount, User
+from apps.accounts.models import PlatformAccount, User, UserRole
 from apps.common.models import ExcludeReason, Platform
 from apps.contests.models import Contest, Participation
 from apps.crawler.ingest import (detect_cheater, ingest_contest,
@@ -182,3 +182,50 @@ class SchoolBindingTests(TestCase):
         acc = PlatformAccount.objects.create(
             user=user, platform=Platform.CODEFORCES, handle="TourIST")
         self.assertEqual(acc.handle_lower, "tourist")
+
+
+from rest_framework.test import APITestCase
+
+from apps.crawler.models import CrawlJob
+
+BASE = "/api/v1"
+CRAWL_LIST = f"{BASE}/crawl-jobs/"
+CRAWL_TRIGGER = f"{BASE}/crawl-jobs/trigger/"
+
+
+def _make_crawl_user(username, role=UserRole.USER, school=None, password="Test1234!"):
+    return User.objects.create_user(
+        username=username, password=password, role=role, school=school)
+
+
+class CrawlerPermissionTests(APITestCase):
+    """#3 爬虫权限：爬虫属系统底层信息，仅超级管理员可访问与操作。"""
+
+    def setUp(self):
+        self.admin = _make_crawl_user("crawl_admin", role=UserRole.SCHOOL_ADMIN)
+        self.super = _make_crawl_user("crawl_super", role=UserRole.SUPER_ADMIN)
+        CrawlJob.objects.create(platform=Platform.CODEFORCES,
+                                triggered_by=self.super)
+
+    def test_admin_list_forbidden(self):
+        self.client.force_authenticate(self.admin)
+        resp = self.client.get(CRAWL_LIST)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_trigger_forbidden(self):
+        self.client.force_authenticate(self.admin)
+        resp = self.client.post(CRAWL_TRIGGER, {"platform": "codeforces"},
+                                format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_super_list_ok(self):
+        self.client.force_authenticate(self.super)
+        resp = self.client.get(CRAWL_LIST)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_super_trigger_ok(self):
+        self.client.force_authenticate(self.super)
+        resp = self.client.post(CRAWL_TRIGGER, {"platform": "codeforces"},
+                                format="json")
+        # 触发接口立即返回 201（后台派发，broker 不可达不影响返回）
+        self.assertEqual(resp.status_code, 201, resp.content)

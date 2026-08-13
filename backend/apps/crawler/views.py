@@ -2,7 +2,7 @@
 爬虫相关视图：
 - CrawlJob 列表 / 详情（只读，支持 platform / status 过滤）
 - trigger 动作：手动触发一次爬取（建 CrawlJob 并派发 Celery 任务）
-权限：学校管理员 / 超级管理员（IsSchoolAdmin 已含超管）。
+权限：仅超级管理员（IsSuperAdmin）。属系统底层信息，学校管理员不可访问或操作。
 """
 import socket
 import threading
@@ -15,7 +15,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.common.models import Platform
-from apps.common.permissions import IsSchoolAdmin
+from apps.common.permissions import IsSuperAdmin
 from apps.crawler.models import CrawlJob
 from apps.crawler.serializers import CrawlJobSerializer, CrawlTriggerSerializer
 from apps.crawler.tasks import (
@@ -72,7 +72,7 @@ def _dispatch_crawl(task, job_id, params):
 
 class CrawlJobViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CrawlJobSerializer
-    permission_classes = [IsSchoolAdmin]
+    permission_classes = [IsSuperAdmin]
     pagination_class = StandardPagination
     queryset = CrawlJob.objects.all()
     ordering = ["-created_at"]
@@ -88,7 +88,7 @@ class CrawlJobViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
     @action(detail=False, methods=["post"],
-            permission_classes=[IsSchoolAdmin])
+            permission_classes=[IsSuperAdmin])
     def trigger(self, request):
         """手动触发一次爬取：建 CrawlJob 并（后台）派发 Celery 任务。
 

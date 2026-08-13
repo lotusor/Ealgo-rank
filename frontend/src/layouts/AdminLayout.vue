@@ -28,7 +28,7 @@ const groups = computed(() => {
       label: '运营',
       links: [
         { label: '申请审批', name: 'applications', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11' },
-        { label: '爬虫任务', name: 'crawl', icon: 'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M12 12a3 3 0 1 0 0 0' },
+        { label: '爬虫任务', name: 'crawl', icon: 'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M12 12a3 3 0 1 0 0 0', superOnly: true },
       ],
     },
   ]

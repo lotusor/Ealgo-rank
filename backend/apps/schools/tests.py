@@ -205,8 +205,8 @@ SC_LIST = f"{BASE}/score-configs/"
 SC_DETAIL = lambda pk: f"{BASE}/score-configs/{pk}/"
 
 
-class ScoreConfigIsolationTests(APITestCase):
-    """#4 数据隔离：校管仅能读写本校积分系数，不可动全局默认。"""
+class ScoreConfigPermissionTests(APITestCase):
+    """#5 权限：超管可读写全部（含全局默认）；校管仅可读本校，写操作一律 403。"""
 
     def setUp(self):
         self.school_a = School.objects.create(
@@ -216,39 +216,42 @@ class ScoreConfigIsolationTests(APITestCase):
         self.admin_a = make_user("adminA", role=UserRole.SCHOOL_ADMIN,
                                  school=self.school_a)
         self.super = make_user("super", role=UserRole.SUPER_ADMIN)
-        # B 校、全局默认 各一份（A 校留空，避免 OneToOne 冲突，创建测试内另建）
+        self.cfg_a = ScoreConfig.objects.create(school=self.school_a,
+                                                cf_factor=1.1)
         self.cfg_b = ScoreConfig.objects.create(school=self.school_b,
                                                 cf_factor=2.2)
         ScoreConfig.objects.create(school=None, cf_factor=0.9)
 
-    def test_admin_sees_only_own_school(self):
-        ScoreConfig.objects.create(school=self.school_a, cf_factor=1.1)
+    def test_admin_reads_only_own_school(self):
         self.client.force_authenticate(self.admin_a)
         resp = self.client.get(SC_LIST)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["count"], 1)
         self.assertEqual(resp.data["results"][0]["school"], self.school_a.id)
 
-    def test_admin_cannot_create_global_default(self):
-        # 校管创建时 school 被强制绑为本校，无法写全局默认
+    def test_admin_write_forbidden(self):
+        # 校管创建（即便填本校系数）也一律 403，调整权归超管
         self.client.force_authenticate(self.admin_a)
         resp = self.client.post(SC_LIST, {"cf_factor": "1.5"}, format="json")
-        self.assertEqual(resp.status_code, 201, resp.content)
-        created = ScoreConfig.objects.get(id=resp.data["id"])
-        self.assertEqual(created.school_id, self.school_a.id)
+        self.assertEqual(resp.status_code, 403)
 
-    def test_admin_cannot_edit_other_school(self):
+    def test_admin_edit_forbidden(self):
+        # 改本校配置同样 403
         self.client.force_authenticate(self.admin_a)
-        # 越权改 B 校配置 → 404（get_queryset 已隔离）
-        resp = self.client.patch(SC_DETAIL(self.cfg_b.id),
-                                  {"cf_factor": "9.9"}, format="json")
-        self.assertEqual(resp.status_code, 404)
+        resp = self.client.patch(SC_DETAIL(self.cfg_a.id),
+                                 {"cf_factor": "9.9"}, format="json")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_admin_delete_forbidden(self):
+        self.client.force_authenticate(self.admin_a)
+        resp = self.client.delete(SC_DETAIL(self.cfg_a.id))
+        self.assertEqual(resp.status_code, 403)
 
     def test_super_sees_all_including_global_default(self):
         self.client.force_authenticate(self.super)
         resp = self.client.get(SC_LIST)
-        # B 校配置 + 全局默认
-        self.assertEqual(resp.data["count"], 2)
+        # A 校 + B 校 + 全局默认
+        self.assertEqual(resp.data["count"], 3)
 
     def test_super_can_create_global_default(self):
         self.client.force_authenticate(self.super)

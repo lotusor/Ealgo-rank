@@ -202,11 +202,16 @@ class ScoreConfigViewSet(viewsets.ModelViewSet):
     """
     积分系数配置。每校一份（school 非空），外加一条 school=None 的全局默认。
     - 超管：可读/写全部（含全局默认）
-    - 校管：仅可读/写本校配置，不能动全局默认
+    - 校管：仅可读本校配置，不可修改（调整权归超级管理员）
     """
     serializer_class = ScoreConfigSerializer
-    permission_classes = [IsSchoolAdmin]
     queryset = ScoreConfig.objects.select_related("school").all()
+
+    def get_permissions(self):
+        # 读：校管 + 超管；写（调整系数）：仅超管
+        if self.request.method in SAFE_METHODS:
+            return [IsSchoolAdmin()]
+        return [IsSuperAdmin()]
 
     def get_queryset(self):
         qs = ScoreConfig.objects.select_related("school").all()
@@ -216,8 +221,5 @@ class ScoreConfigViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        # 校管创建时强制绑定本校；超管可自由指定 school（含留空=全局默认）
-        if not self.request.user.is_super_admin:
-            serializer.save(school=self.request.user.school)
-        else:
-            serializer.save()
+        # 仅超管可创建（可指定 school，留空=全局默认）
+        serializer.save()

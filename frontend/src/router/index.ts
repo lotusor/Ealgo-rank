@@ -101,6 +101,7 @@ const router = createRouter({
           path: 'crawl',
           name: 'crawl',
           component: () => import('@/views/admin/CrawlView.vue'),
+          meta: { superOnly: true },
         },
         {
           path: 'participations',
