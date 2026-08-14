@@ -7,10 +7,15 @@ const PASSPORT_URL = import.meta.env.VITE_PASSPORT_URL as string | undefined
 
 async function goPassport() {
   if (!PASSPORT_URL) {
-    router.push({
-      name: 'auth-callback',
-      query: { mock: '1', passport_user_id: 'dev_demo', username: 'dev_passport_user' },
-    })
+    // 仅开发模式回退到 mock；生产环境不应存在通行证地址缺失的情况
+    if (import.meta.env.DEV) {
+      router.push({
+        name: 'auth-callback',
+        query: { mock: '1', passport_user_id: 'dev_demo', username: 'dev_passport_user' },
+      })
+      return
+    }
+    window.alert('未配置通行证地址（VITE_PASSPORT_URL），无法发起登录')
     return
   }
   const cb = `${window.location.origin}/auth/callback`

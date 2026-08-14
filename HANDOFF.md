@@ -418,3 +418,27 @@ manage.py shell -c "from apps.crawler.tasks import auto_crawl_task; print(auto_c
 ---
 
 *最后更新：2026-08-14。合并自历史文档 `overview.md`(爬虫层总结)、`BACKEND_HANDOFF.md`(后端 API 审查)、`crawlers/VERIFICATION.md`(爬虫与作弊验证)，并据 2026-08-14 已完成工作（公告落地、积分系数单例超管、爬虫仅超管、测试账户命令）校正。后续设计变更请同步更新本文件。*
+
+---
+
+## 1.8 本地联调测试（关闭开发者模式，2026-08-14）
+
+目标：验证「关闭开发者模式」后整体功能仍可用。说明：本地唯一可运行配置是 `dev.py`（SQLite+LocMem+宽松 CORS）；`prod.py` 硬编码 PostgreSQL+Redis+SSL 且有 `SECRET_KEY`/`ALLOWED_HOSTS` 强校验，本机未部署 PG/Redis 故无法切 `DJANGO_ENV=prod`。因此后端层「关开发者模式」以「真实密码鉴权链路（非 mock）」等价验证；纯配置切 prod 属 H1 部署任务，待用户确认环境后执行。
+
+前端「开发者模式」= Vite `import.meta.env.DEV`（控制 `[DEV] 模拟通行证登录` 按钮显隐）；生产构建后 `DEV=false`，按钮与 mock 分支被剔除。
+
+### 修复的异常（真实「关开发者模式」漏洞）
+- `frontend/src/views/auth/AuthCallbackView.vue`：`if (q.mock)` → `if (import.meta.env.DEV && q.mock)`。原写法生产构建仍可凭 `/auth/callback?mock=1` 伪造用户登录（`auth.token='mock'`）。
+- `frontend/src/views/auth/RegisterEntryView.vue`：未配置 `VITE_PASSPORT_URL` 时的 mock 回退改为仅 DEV 触发；生产缺失 passport 地址时给出明确提示而非静默 mock。
+- 验证：`npm run build` 后 `grep` 产物已无 `dev_passport_user`/`模拟通行证登录`/`mock` 残留；`npm run typecheck` 通过。
+
+### 验证结果
+- **前端**：生产构建 ✅（无 mock 残留）、typecheck ✅。
+- **后端全量测试** `manage.py test`：**77 tests OK**（22s），覆盖 accounts/schools/contests/crawler/ranking/announcements 全模块与边界（权限 403 / 校验 400 / 错误密码 401）。
+- **运行时冒烟**（真实密码登录 `/api/v1/auth/token/`，非 mock；账号来自 `create_test_users`+`bootstrap`+`seed_demo`，6 校/120 生/36 比赛/榜单快照已生成）：
+  - 三角色登录 ✅：test_user / test_school_admin / test_super 均凭密码取得 JWT（233 字符）。
+  - `/me/` ✅ 200（username/role/school 正确）。
+  - `/rankings/`、`/schools/`、`/contests/` ✅ 200；榜单 `user_name`/`total_score` 填充正常。
+  - 权限边界 ✅：普通用户 & 校管访问 `/score-configs/` → 403，超管 → 200；错误密码 → 401；校管可读本校 `/applications/` → 200。
+
+> 误报说明：首轮冒烟脚本误用 `/users/me/`（应为 `/me/`）与字段 `username`（应为 `user_name`），导致 403 与 `None` 假异常；复核确认端点与数据均正常，非代码缺陷。

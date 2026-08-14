@@ -22,7 +22,8 @@ function goTarget() {
 onMounted(async () => {
   const q = route.query as Record<string, string>
 
-  if (q.mock) {
+  // 仅开发模式允许 mock 登录；生产构建（import.meta.env.DEV=false）下该分支被剔除
+  if (import.meta.env.DEV && q.mock) {
     const fake: UserMe = {
       id: -1,
       username: q.username || 'dev_passport_user',
