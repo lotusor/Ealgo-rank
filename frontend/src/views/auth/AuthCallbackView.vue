@@ -29,7 +29,7 @@ onMounted(async () => {
       email: '',
       real_name: '',
       student_no: '',
-      role: 'normal',
+      role: 'user',
       role_display: '普通用户',
       school: null,
       school_bound_at: null,

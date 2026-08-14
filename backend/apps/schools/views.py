@@ -207,6 +207,7 @@ class ScoreConfigViewSet(viewsets.ModelViewSet):
     serializer_class = ScoreConfigSerializer
     permission_classes = [IsSuperAdmin]
     queryset = ScoreConfig.objects.all()
+    ordering = ["-updated_at"]
 
     def get_object(self):
         # 单例：忽略 pk，始终返回唯一配置（缺失则建默认）

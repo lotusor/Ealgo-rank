@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { listMyParticipations } from '@/api'
+import { listMyParticipations, listRankings } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import type { MyParticipation, ContestPlatform } from '@/api/types'
+import type { MyParticipation, ContestPlatform, RankSnapshot } from '@/api/types'
 import RatingLineChart from '@/components/RatingLineChart.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
@@ -30,8 +30,29 @@ function load() {
     .catch(() => {})
     .finally(() => (loading.value = false))
 }
-onMounted(load)
+onMounted(() => {
+  load()
+  loadRank()
+})
 watch(platform, () => load())
+
+const myRank = ref<RankSnapshot | null>(null)
+const rankLoading = ref(false)
+
+function loadRank() {
+  const uid = me.value?.id
+  if (!uid) return
+  rankLoading.value = true
+  listRankings({ scope: 'student', period: 'all', user: uid, page_size: 50 })
+    .then(({ results }) => {
+      myRank.value =
+        results.find((r) => r.user === uid && r.period === 'all') ||
+        results[0] ||
+        null
+    })
+    .catch(() => {})
+    .finally(() => (rankLoading.value = false))
+}
 
 const me = computed(() => auth.user)
 
@@ -112,6 +133,22 @@ function accountTag(p: string) {
           <div v-if="!accounts.length" class="caption text-tertiary">尚未绑定平台账号</div>
         </div>
       </div>
+    </div>
+
+    <!-- My ranking on student leaderboard -->
+    <div v-if="myRank" class="card card-pad rank-card">
+      <div class="rank-card-head">
+        <span class="card-title">我的学生榜排名</span>
+        <router-link :to="{ name: 'rankings', query: { scope: 'student' } }" class="caption link">查看完整榜单 →</router-link>
+      </div>
+      <div class="grid grid-3 rank-metrics">
+        <div><div class="stat-label">学生榜名次</div><div class="stat-value num text-cyan">#{{ myRank.rank }}</div></div>
+        <div><div class="stat-label">总积分</div><div class="stat-value num">{{ fmtCount(myRank.total_score) }}</div></div>
+        <div><div class="stat-label">计入场次</div><div class="stat-value num">{{ myRank.contest_count }}</div></div>
+      </div>
+    </div>
+    <div v-else-if="!rankLoading" class="card card-pad rank-card rank-empty">
+      <span class="caption text-tertiary">你还没有进入学生榜（需有计入积分的参赛记录）。</span>
     </div>
 
     <!-- Summary metrics -->
@@ -244,4 +281,15 @@ function accountTag(p: string) {
 .down { color: var(--color-danger); font-weight: 600; }
 .excluded-row { opacity: 0.5; }
 .metrics-row { margin-bottom: var(--space-6); }
+.rank-card { margin-bottom: var(--space-6); }
+.rank-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+.link { color: var(--color-primary); cursor: pointer; }
+.link:hover { text-decoration: underline; }
+.rank-metrics { gap: var(--space-4); }
+.rank-empty { text-align: center; }
 </style>

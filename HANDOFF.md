@@ -52,7 +52,7 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 
 ## 1.3 进行中任务
 
-**当前无进行中开发任务。** 最近一轮（2026-08-14）修复了三项验收问题并已提交、全量验证通过（后端 **63 tests OK**，前端 typecheck 通过）：
+**低难度批次（2026-08-14 晚）已完成 4 项，全量验证通过（后端 67 tests OK，前端 typecheck 通过），尚未提交。** 详见 §1.6。最近一轮（2026-08-14）修复的三项验收问题已提交、验证通过（后端 63 tests OK，前端 typecheck 通过）：
 - **#1 积分系数设置后台入口**：新增超管专属「积分系数设置」页（`/admin/score-config`，`superOnly`），读取/保存全局 `ScoreConfig` 单例。
 - **#2 定时自动激活爬虫**：新增 `CrawlConfig` 单例（超管设置启用开关/各平台抓取范围/触发小时）；`auto_crawl_task` 由 Celery Beat 每日调度，读取 `CrawlConfig` 派发三平台；`CrawlConfig` 变更经 signal 同步 beat crontab；爬虫页「自动爬取设置」卡片可配置。
 - **#3 爬虫防重复爬取**：任务级去重（同平台+同参数在 1h 窗口内已有进行中任务则不重复派发，Python 归一化比较，不依赖 JSON 列精确匹配）；比赛级已由 `Contest(platform, external_id)` 唯一约束 + `update_or_create` 保证幂等。
@@ -73,15 +73,32 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 | --- | --- | --- |
 | **生产依赖未装** | 🟠 | `psycopg` / `gunicorn` 在 `requirements.txt` 中注释；prod 部署前需取消注释并安装 |
 | **dev 用 SQLite** | 🟠 | 生产必须切 PostgreSQL（`dev.py` 已预留 `DEV_DB_ENGINE=postgres` 切换） |
-| **`UserRole` 前后端枚举潜在不一致** | 🟡 | 后端 `UserRole.USER="user"`，旧文档曾报前端 `types.ts` 用 `'normal'`。当前前端主要依赖 `is_super_admin`/`is_school_admin` 布尔，**暂未爆**；新增用 `role` 字符串判断的逻辑前务必先对齐 |
-| **`ScoreConfig` 系数无和校验** | 🟡 | `platform_weight + contest_weight` 未强制 =1，依赖人工/前端保证；Decimal 系数序列化后为字符串（前端已按 `string` 处理） |
+| **`UserRole` 前后端枚举潜在不一致** | ✅ 已修复 | 后端 `UserRole.USER="user"`，前端 `types.ts` 曾声明 `'normal'`（仅 dev mock 用到，运行时靠布尔未爆）；已统一为 `'user'` 并同步 `AuthCallbackView` mock（2026-08-14 晚低难度批次） |
+| **`ScoreConfig` 系数无和校验** | ✅ 已修复 | `platform_weight + contest_weight` 已强制 =1，且系数非负、`recent_contest_limit` 非负；`ScoreConfigSerializer.validate()` + 4 条测试覆盖（2026-08-14 晚低难度批次） |
 | **`proposed_school_name` 未启用** | 🟡 | 申请只能绑"已存在学校"，无法申请系统里还没有的学校 |
 | **`PlatformAccount.handle` 不可改** | 🟡 | 防止归属唯一性被破坏；改学校走 `sync_platform_accounts_school()` |
-| **`UnorderedObjectListWarning`** | ⚪ | `ScoreConfig` 分页无 `ordering`，良性告警，不影响功能 |
-| **Dead code：权限类** | ⚪ | `common/permissions.py` 中 `IsOwnSchoolAdmin` / `ReadOnlyOrSchoolAdmin` 已定义但未被任何视图引用；清理或接入前勿误用 |
+| **`UnorderedObjectListWarning`** | ✅ 已修复 | `ScoreConfig` 分页无 `ordering`；已在 `ScoreConfigViewSet` 加 `ordering=["-updated_at"]` 消除告警（2026-08-14 晚低难度批次） |
+| **Dead code：权限类** | ⚪ | `common/permissions.py` 中 `IsOwnSchoolAdmin` / `ReadOnlyOrSchoolAdmin` 已定义但未被任何视图引用；清理或接入前勿误用（低难度批次**未处理**，留待决定保留或接入口径） |
 | **本地无 Redis** | 🟠 | 见 §2.9 环境坑：Celery 触发接口已用后台线程 + socket 探测规避阻塞，但真跑 worker 需先 `redis-server` 或设 `CELERY_TASK_ALWAYS_EAGER=1` |
 
 ---
+
+## 1.6 任务分级与执行进度（2026-08-14 晚）
+
+按 `低 → 中 → 高` 推进；涉及**架构调整 / 技术选型 / 范围变更 / 资源调配**的决策点，执行前须向用户确认并等待明确指示。
+
+| 难度 | 任务 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| 低 | 修复 `ScoreConfig` 分页无序告警 | ✅ 已完成 | `ScoreConfigViewSet` 加 `ordering=["-updated_at"]` |
+| 低 | 前端 `UserRole` 枚举对齐（`'normal'`→`'user'`） | ✅ 已完成 | `types.ts` + `AuthCallbackView` mock |
+| 低 | `ScoreConfig` 系数和校验 | ✅ 已完成 | `validate()`（权重和=1 / 系数非负 / 上限非负）+ 4 测试 |
+| 低 | 个人成绩页「我的排名」入口 | ✅ 已完成 | 调 `listRankings({scope:'student', user:me.id})` 展示学生榜名次 |
+| 中 | 启用 `proposed_school_name`（申请系统里还没有的学校） | ⏳ 待确认 | 范围变更：需用户拍板是否开放未建档学校申请 |
+| 中 | AtCoder 学校别名归一化 | ⏳ 待确认 | 新功能：别名表 + 聚合归一，提升按校聚合准确度 |
+| 高 | 生产化部署（PostgreSQL / Gunicorn / Nginx） | ⏳ 待确认 | 架构+资源：须用户提供部署环境与域名等信息 |
+| 高 | 真实 GitHub OAuth 浏览器联调 | ⏳ 待确认 | 环境/范围：受 OAuth 单 callback 限制，须决策 dev App 或沿用 mock |
+
+> 低难度批次已通过验证（后端 **67 tests OK** / 前端 typecheck 通过），**尚未提交**（待统一 commit）。中/高难度项涉及范围或架构决策，须用户确认后方可执行。
 
 # 第二部分：需要记忆的关键信息
 

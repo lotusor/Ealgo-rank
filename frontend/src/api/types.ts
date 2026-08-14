@@ -15,7 +15,7 @@ export interface PageQuery {
 }
 
 // 用户 / 角色
-export type UserRole = 'normal' | 'school_admin' | 'super_admin'
+export type UserRole = 'user' | 'school_admin' | 'super_admin'
 
 export interface UserMe {
   id: number

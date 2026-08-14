@@ -243,3 +243,42 @@ class ScoreConfigPermissionTests(APITestCase):
                                   format="json")
         self.assertEqual(resp2.status_code, 200, resp2.content)
         self.assertEqual(float(ScoreConfig.objects.get(id=cfg_id).cf_factor), 2.5)
+
+
+class ScoreConfigValidationTests(APITestCase):
+    """L3 系数校验：平台/比赛权重之和必须为 1，系数非负，场次上限非负。"""
+
+    def setUp(self):
+        self.super = make_user("super", role=UserRole.SUPER_ADMIN)
+        self.cfg = ScoreConfig.get_config()
+
+    def test_weights_sum_to_one_accepted(self):
+        self.client.force_authenticate(self.super)
+        resp = self.client.patch(
+            SC_DETAIL(self.cfg.id),
+            {"platform_weight": "0.300", "contest_weight": "0.700"},
+            format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.cfg.refresh_from_db()
+        self.assertEqual(float(self.cfg.platform_weight), 0.3)
+        self.assertEqual(float(self.cfg.contest_weight), 0.7)
+
+    def test_weights_not_summing_to_one_rejected(self):
+        self.client.force_authenticate(self.super)
+        resp = self.client.patch(
+            SC_DETAIL(self.cfg.id),
+            {"platform_weight": "0.600", "contest_weight": "0.600"},
+            format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_negative_coefficient_rejected(self):
+        self.client.force_authenticate(self.super)
+        resp = self.client.patch(
+            SC_DETAIL(self.cfg.id), {"cf_factor": "-1.000"}, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_negative_recent_limit_rejected(self):
+        self.client.force_authenticate(self.super)
+        resp = self.client.patch(
+            SC_DETAIL(self.cfg.id), {"recent_contest_limit": -1}, format="json")
+        self.assertEqual(resp.status_code, 400)

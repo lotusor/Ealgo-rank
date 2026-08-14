@@ -1,4 +1,6 @@
 """schools 序列化器。"""
+from decimal import Decimal
+
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -70,6 +72,27 @@ class ScoreConfigSerializer(serializers.ModelSerializer):
             "recent_contest_limit", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        # 各系数非负
+        for field in (
+            "cf_factor", "atcoder_factor", "nowcoder_factor",
+            "default_contest_factor", "platform_weight", "contest_weight",
+        ):
+            val = attrs.get(field)
+            if val is not None and val < 0:
+                raise serializers.ValidationError({field: "系数不能为负"})
+        # 平台权重 + 比赛权重之和必须为 1
+        pw = attrs.get("platform_weight")
+        cw = attrs.get("contest_weight")
+        if pw is not None and cw is not None and (pw + cw) != Decimal("1"):
+            raise serializers.ValidationError(
+                {"platform_weight": "平台权重与比赛权重之和必须等于 1"})
+        rcl = attrs.get("recent_contest_limit")
+        if rcl is not None and rcl < 0:
+            raise serializers.ValidationError(
+                {"recent_contest_limit": "计分场次上限不能为负"})
+        return attrs
 
 
 class SchoolAdminApplicationCreateSerializer(serializers.ModelSerializer):
