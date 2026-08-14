@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { listCrawlJobs, triggerCrawl, recomputeRanking } from '@/api'
-import type { CrawlJob } from '@/api/types'
+import { listCrawlJobs, triggerCrawl, recomputeRanking, getCrawlConfig, saveCrawlConfig } from '@/api'
+import type { CrawlJob, CrawlConfig } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import { fmtDate } from '@/utils/format'
@@ -75,7 +75,46 @@ function openLog(r: CrawlJob) {
   showLog.value = true
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadCrawlConfig()
+})
+
+// ---------- 自动爬取配置（CrawlConfig 单例） ----------
+const crawlConfig = ref<CrawlConfig | null>(null)
+const loadingCfg = ref(false)
+const savingCfg = ref(false)
+
+async function loadCrawlConfig() {
+  loadingCfg.value = true
+  try {
+    crawlConfig.value = await getCrawlConfig()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail || '加载自动爬取配置失败')
+  } finally {
+    loadingCfg.value = false
+  }
+}
+
+async function onSaveCrawlConfig() {
+  if (!crawlConfig.value) return
+  savingCfg.value = true
+  try {
+    const payload = {
+      enabled: crawlConfig.value.enabled,
+      cf_count: Number(crawlConfig.value.cf_count) || 20,
+      atcoder_count: Number(crawlConfig.value.atcoder_count) || 20,
+      nowcoder_months_back: Number(crawlConfig.value.nowcoder_months_back) || 2,
+      auto_crawl_hour: Number(crawlConfig.value.auto_crawl_hour) || 2,
+    }
+    crawlConfig.value = await saveCrawlConfig(payload)
+    toast.success('自动爬取配置已保存（Beat 调度将自动同步）')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    savingCfg.value = false
+  }
+}
 </script>
 
 <template>
@@ -163,6 +202,52 @@ onMounted(load)
       </div>
     </div>
 
+    <!-- 自动爬取设置（CrawlConfig 单例，仅超管可见/可改） -->
+    <div v-if="auth.isSuperAdmin" class="card card-pad" style="margin-top: var(--space-6); max-width: 980px">
+      <div class="section-title" style="font-size: 16px; margin-bottom: var(--space-3)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+        自动爬取设置
+      </div>
+      <p class="body-sm text-tertiary" style="margin-bottom: var(--space-4)">
+        开启后，系统每日按设定时间自动触发三大平台爬取。各平台抓取范围与触发小时均可在此配置，保存后 Beat 调度自动同步。
+      </p>
+
+      <div v-if="loadingCfg" class="body-sm text-tertiary">加载中…</div>
+      <div v-else-if="crawlConfig">
+        <div class="field" style="max-width: 360px; margin-bottom: var(--space-4)">
+          <label class="field-label">启用定时自动爬取</label>
+          <label class="switch">
+            <input type="checkbox" v-model="crawlConfig.enabled" />
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-label">{{ crawlConfig.enabled ? '已启用' : '已停用' }}</span>
+          </label>
+        </div>
+
+        <div class="grid-3">
+          <div class="field">
+            <label class="field-label">Codeforces 场数</label>
+            <input v-model.number="crawlConfig.cf_count" class="input" type="number" min="1" max="200" />
+          </div>
+          <div class="field">
+            <label class="field-label">AtCoder 场数</label>
+            <input v-model.number="crawlConfig.atcoder_count" class="input" type="number" min="1" max="200" />
+          </div>
+          <div class="field">
+            <label class="field-label">牛客最近月数</label>
+            <input v-model.number="crawlConfig.nowcoder_months_back" class="input" type="number" min="1" max="12" />
+          </div>
+          <div class="field">
+            <label class="field-label">自动触发小时 (0-23)</label>
+            <input v-model.number="crawlConfig.auto_crawl_hour" class="input" type="number" min="0" max="23" />
+          </div>
+        </div>
+
+        <button class="btn btn-primary" style="margin-top: var(--space-4)" :disabled="savingCfg" @click="onSaveCrawlConfig">
+          {{ savingCfg ? '保存中…' : '保存自动爬取配置' }}
+        </button>
+      </div>
+    </div>
+
     <div v-if="showLog" class="modal-overlay" @click.self="showLog = false">
       <div class="modal" style="width: 640px">
         <div class="modal-header">执行日志</div>
@@ -193,4 +278,20 @@ onMounted(load)
   color: var(--color-text-secondary);
 }
 @media (max-width: 980px) { .grid { grid-template-columns: 1fr !important; } }
+.grid-3 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); }
+@media (max-width: 760px) { .grid-3 { grid-template-columns: 1fr 1fr; } }
+.switch { display: inline-flex; align-items: center; gap: var(--space-3); cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-track {
+  width: 42px; height: 24px; border-radius: 999px;
+  background: var(--color-border); position: relative; transition: background var(--duration-fast);
+  flex-shrink: 0;
+}
+.switch-thumb {
+  position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff; transition: transform var(--duration-fast);
+}
+.switch input:checked + .switch-track { background: var(--color-primary); }
+.switch input:checked + .switch-track .switch-thumb { transform: translateX(18px); }
+.switch-label { font-size: 14px; color: var(--color-text-secondary); }
 </style>

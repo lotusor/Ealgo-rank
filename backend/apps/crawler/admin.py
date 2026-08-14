@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import CrawlJob
+from .models import CrawlConfig, CrawlJob
 
 
 @admin.register(CrawlJob)
@@ -36,3 +36,9 @@ class CrawlJobAdmin(admin.ModelAdmin):
     def duration_display(self, obj):
         d = obj.duration_seconds
         return f"{d:.1f}s" if d is not None else "-"
+
+
+@admin.register(CrawlConfig)
+class CrawlConfigAdmin(admin.ModelAdmin):
+    list_display = ("id", "enabled", "cf_count", "atcoder_count",
+                    "nowcoder_months_back", "auto_crawl_hour", "updated_at")

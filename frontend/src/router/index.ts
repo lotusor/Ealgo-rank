@@ -119,6 +119,12 @@ const router = createRouter({
           component: () => import('@/views/admin/NotificationsView.vue'),
           meta: { superOnly: true },
         },
+        {
+          path: 'score-config',
+          name: 'score-config',
+          component: () => import('@/views/admin/ScoreConfigView.vue'),
+          meta: { superOnly: true },
+        },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: { name: 'rankings' } },

@@ -229,3 +229,73 @@ class CrawlerPermissionTests(APITestCase):
                                 format="json")
         # 触发接口立即返回 201（后台派发，broker 不可达不影响返回）
         self.assertEqual(resp.status_code, 201, resp.content)
+
+
+from apps.crawler.models import CrawlConfig
+from apps.crawler.tasks import (
+    auto_crawl_task,
+    create_crawl_job,
+    enqueue_crawl,
+)
+
+
+class CrawlDedupTests(TestCase):
+    """#3 防重复爬取：同一平台 + 相同参数在去重窗口内已有进行中任务时不再重复派发。"""
+
+    def test_dedup_skips_active_duplicate(self):
+        params = {"count": 20, "mode": "rating"}
+        j1, created1 = create_crawl_job(Platform.CODEFORCES, params)
+        self.assertTrue(created1)
+        j2, created2 = create_crawl_job(Platform.CODEFORCES, params)
+        self.assertFalse(created2)
+        self.assertEqual(j1.pk, j2.pk)
+        self.assertEqual(CrawlJob.objects.count(), 1)
+
+    def test_different_params_create_separate_jobs(self):
+        create_crawl_job(Platform.CODEFORCES, {"count": 20, "mode": "rating"})
+        create_crawl_job(Platform.CODEFORCES, {"count": 50, "mode": "rating"})
+        self.assertEqual(CrawlJob.objects.count(), 2)
+
+    def test_only_pending_running_blocked(self):
+        # 已失败的任务不阻断新的同参数爬取（允许重试）
+        j1, _ = create_crawl_job(Platform.ATCODER, {"count": 10})
+        CrawlJob.objects.filter(pk=j1.pk).update(status=CrawlJob.Status.FAILED)
+        j2, created2 = create_crawl_job(Platform.ATCODER, {"count": 10})
+        self.assertTrue(created2)
+        self.assertEqual(CrawlJob.objects.count(), 2)
+
+    def test_enqueue_creates_job(self):
+        before = CrawlJob.objects.count()
+        job = enqueue_crawl(Platform.CODEFORCES, {"count": 20, "mode": "rating"})
+        self.assertIsNotNone(job)
+        self.assertEqual(CrawlJob.objects.count(), before + 1)
+
+
+class AutoCrawlTaskTests(TestCase):
+    """#2 定时自动激活爬虫：读取 CrawlConfig，按配置为三平台派发。"""
+
+    def test_disabled_skips(self):
+        cfg = CrawlConfig.get_config()
+        cfg.enabled = False
+        cfg.save()
+        CrawlJob.objects.all().delete()
+        result = auto_crawl_task()
+        self.assertTrue(result.get("skipped"))
+        self.assertEqual(CrawlJob.objects.count(), 0)
+
+    def test_enabled_dispatches_all_platforms(self):
+        cfg = CrawlConfig.get_config()
+        cfg.enabled = True
+        cfg.cf_count = 5
+        cfg.atcoder_count = 5
+        cfg.nowcoder_months_back = 1
+        cfg.save()
+        CrawlJob.objects.all().delete()
+        result = auto_crawl_task()
+        self.assertIn("dispatched", result)
+        # 三大平台各一份爬取任务（broker 不可达时任务会被标记 failed，但已创建）
+        self.assertEqual(CrawlJob.objects.count(), 3)
+        self.assertEqual(
+            set(CrawlJob.objects.values_list("platform", flat=True)),
+            {Platform.CODEFORCES, Platform.ATCODER, Platform.NOWCODER},
+        )

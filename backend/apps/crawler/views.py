@@ -2,72 +2,23 @@
 爬虫相关视图：
 - CrawlJob 列表 / 详情（只读，支持 platform / status 过滤）
 - trigger 动作：手动触发一次爬取（建 CrawlJob 并派发 Celery 任务）
+- CrawlConfig：自动爬取配置（超管可读写）
 权限：仅超级管理员（IsSuperAdmin）。属系统底层信息，学校管理员不可访问或操作。
 """
-import socket
-import threading
-from urllib.parse import urlparse
-
-from django.conf import settings
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.common.models import Platform
 from apps.common.permissions import IsSuperAdmin
-from apps.crawler.models import CrawlJob
-from apps.crawler.serializers import CrawlJobSerializer, CrawlTriggerSerializer
-from apps.crawler.tasks import (
-    crawl_atcoder,
-    crawl_codeforces,
-    crawl_nowcoder,
+from apps.crawler.models import CrawlConfig, CrawlJob
+from apps.crawler.serializers import (
+    CrawlConfigSerializer,
+    CrawlJobSerializer,
+    CrawlTriggerSerializer,
 )
+from apps.crawler.tasks import TASK_MAP, enqueue_crawl
 from config.pagination import StandardPagination
-
-TASK_MAP = {
-    Platform.CODEFORCES: crawl_codeforces,
-    Platform.ATCODER: crawl_atcoder,
-    Platform.NOWCODER: crawl_nowcoder,
-}
-
-
-def _broker_reachable():
-    """快速探测 broker（Redis）是否可达。
-
-    本沙箱里连到未监听的本地端口会“黑洞”而非立即 refused，导致 Celery
-    的 .delay() 阻塞数十秒；这里用 2s 超时原生 socket 探测，快速判定。
-    """
-    raw = getattr(settings, "CELERY_BROKER_URL", "") or "redis://127.0.0.1:6379/0"
-    parsed = urlparse(raw)
-    host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 6379
-    try:
-        with socket.create_connection((host, port), timeout=2):
-            return True
-    except OSError:
-        return False
-
-
-def _dispatch_crawl(task, job_id, params):
-    """后台派发 Celery 任务。
-
-    broker 不可达（Redis 未启动等）时：先快速探测，不可达则直接标记 failed，
-    避免阻塞；可达则 dispatch（生产环境 Redis 在线时为瞬时操作）。
-    """
-    if not _broker_reachable():
-        CrawlJob.objects.filter(pk=job_id).update(
-            status=CrawlJob.Status.FAILED,
-            error_message="任务派发失败：无法连接消息队列，请确认 Redis / Celery worker 已启动",
-        )
-        return
-    try:
-        task.delay(job_id=job_id, **params)
-    except Exception as exc:  # noqa: BLE001 - 任何派发异常都标记失败
-        CrawlJob.objects.filter(pk=job_id).update(
-            status=CrawlJob.Status.FAILED,
-            error_message=f"任务派发失败：{exc}",
-        )
 
 
 class CrawlJobViewSet(viewsets.ReadOnlyModelViewSet):
@@ -92,14 +43,14 @@ class CrawlJobViewSet(viewsets.ReadOnlyModelViewSet):
     def trigger(self, request):
         """手动触发一次爬取：建 CrawlJob 并（后台）派发 Celery 任务。
 
-        worker 未起 / broker 不可达时，任务在后台线程尝试派发；若失败
-        CrawlJob 状态会变为 failed，接口本身立即返回 201，不阻塞、不 500。
+        走统一的 enqueue_crawl 入口，自带重复防护（同一平台 + 相同参数在
+        去重窗口内已有进行中任务时不再重复派发）。worker 未起 / broker
+        不可达时，CrawlJob 状态会变为 failed，接口立即返回 201，不阻塞、不 500。
         """
         ser = CrawlTriggerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
         platform = data["platform"]
-        task = TASK_MAP[platform]
 
         if platform == Platform.CODEFORCES:
             params = {"count": data.get("count", 20), "mode": "rating"}
@@ -112,12 +63,34 @@ class CrawlJobViewSet(viewsets.ReadOnlyModelViewSet):
             elif data.get("months_back"):
                 params["months_back"] = data["months_back"]
 
-        job = CrawlJob.objects.create(
-            platform=platform, triggered_by=request.user, params=params)
-        # 后台派发，避免 broker 不可达时阻塞请求线程
-        threading.Thread(
-            target=_dispatch_crawl, args=(task, job.pk, params),
-            daemon=True, name=f"dispatch-crawl-{job.pk}",
-        ).start()
+        job = enqueue_crawl(platform, params, triggered_by=request.user)
+        if job is None:
+            # 去重命中：返回 200 并提示已由既有任务覆盖
+            return Response(
+                {"detail": "相同参数的爬取任务正在进行中，已去重跳过"},
+                status=status.HTTP_200_OK,
+            )
         return Response(CrawlJobSerializer(job).data,
                         status=status.HTTP_201_CREATED)
+
+
+class CrawlConfigViewSet(viewsets.ModelViewSet):
+    """
+    自动爬取配置（CrawlConfig 单例），仅超级管理员可读写。
+    - 列表/详情始终返回唯一配置（缺失则建默认）。
+    - POST 改为 upsert（已存在则更新），不新建第二份。
+    """
+
+    serializer_class = CrawlConfigSerializer
+    permission_classes = [IsSuperAdmin]
+    queryset = CrawlConfig.objects.all()
+
+    def get_object(self):
+        return CrawlConfig.get_config()
+
+    def create(self, request, *args, **kwargs):
+        cfg = CrawlConfig.get_config()
+        serializer = self.get_serializer(cfg, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)

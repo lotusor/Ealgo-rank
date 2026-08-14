@@ -88,6 +88,18 @@ export interface ScoreConfig {
   updated_at: string
 }
 
+// 自动爬取配置（CrawlConfig 单例）
+export interface CrawlConfig {
+  id: number
+  enabled: boolean
+  cf_count: number
+  atcoder_count: number
+  nowcoder_months_back: number
+  auto_crawl_hour: number
+  created_at: string
+  updated_at: string
+}
+
 // 管理员申请
 export type ApplicationStatus =
   | 'pending'

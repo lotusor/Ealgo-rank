@@ -6,6 +6,7 @@ import type {
   UserRoster,
   School,
   ScoreConfig,
+  CrawlConfig,
   Application,
   CrawlJob,
   Participation,
@@ -95,6 +96,18 @@ export async function updateScoreConfig(
 
 export async function createScoreConfig(payload: Partial<ScoreConfig>) {
   const { data } = await client.post<ScoreConfig>('/score-configs/', payload)
+  return data
+}
+
+// ---------- Crawl config (自动爬取配置，单例) ----------
+export async function getCrawlConfig(): Promise<CrawlConfig> {
+  const { data } = await client.get<CrawlConfig>('/crawl-configs/')
+  return data
+}
+
+export async function saveCrawlConfig(payload: Partial<CrawlConfig>): Promise<CrawlConfig> {
+  // 后端 create() 为 upsert（忽略 pk，更新唯一配置），POST 即保存
+  const { data } = await client.post<CrawlConfig>('/crawl-configs/', payload)
   return data
 }
 

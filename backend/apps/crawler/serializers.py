@@ -1,8 +1,8 @@
-"""Crawler 相关序列化器：CrawlJob 只读展示 + 触发参数。"""
+"""Crawler 相关序列化器：CrawlJob 只读展示 + 触发参数 + 自动爬取配置。"""
 from rest_framework import serializers
 
-from apps.crawler.models import CrawlJob
 from apps.common.models import Platform
+from apps.crawler.models import CrawlConfig, CrawlJob
 
 
 class CrawlJobSerializer(serializers.ModelSerializer):
@@ -42,3 +42,16 @@ class CrawlTriggerSerializer(serializers.Serializer):
     months_back = serializers.IntegerField(
         required=False, min_value=1, max_value=12,
         help_text="牛客：自动取最近 N 个月（与 months 互斥，months 优先）")
+
+
+class CrawlConfigSerializer(serializers.ModelSerializer):
+    """自动爬取配置（CrawlConfig 单例）。"""
+
+    class Meta:
+        model = CrawlConfig
+        fields = [
+            "id", "enabled", "cf_count", "atcoder_count",
+            "nowcoder_months_back", "auto_crawl_hour",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]

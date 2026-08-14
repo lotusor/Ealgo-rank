@@ -7,5 +7,7 @@ app_name = "crawler"
 
 router = DefaultRouter()
 router.register("crawl-jobs", views.CrawlJobViewSet, basename="crawl-job")
+router.register("crawl-configs", views.CrawlConfigViewSet,
+                basename="crawl-config")
 
 urlpatterns = router.urls
