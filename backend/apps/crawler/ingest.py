@@ -233,6 +233,24 @@ def _ingest_ranks(contest, platform, ranks):
             },
         )
 
+    # 增量维护「参与比赛索引」：把本场 contest.external_id 记入每位命中账号，
+    # 供爬虫下次预筛（只抓有已关联平台ID用户参与的比赛）。未绑定的路人账号不记入。
+    if matched:
+        updates = {}
+        for r, handle, _display_name, _is_cheater, _raw in prepared:
+            account = account_map.get(handle.lower())
+            if account is not None:
+                updates.setdefault(account.id, set()).add(contest.external_id)
+        if updates:
+            accs = PlatformAccount.objects.in_bulk(updates.keys())
+            for aid, ext_ids in updates.items():
+                acc = accs.get(aid)
+                if acc is None:
+                    continue
+                merged = set(acc.participated_contests or []) | ext_ids
+                acc.participated_contests = list(merged)
+                acc.save(update_fields=["participated_contests", "updated_at"])
+
     return {"total": total, "cheaters": cheaters,
             "matched": matched, "countable": countable}
 

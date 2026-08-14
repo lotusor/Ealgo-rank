@@ -396,3 +396,145 @@ class AtCoderAffiliationNormalizationTests(TestCase):
         self.assertEqual(res["school_name"], "东京工业大学")
         self.assertIsNone(normalize_atcoder_affiliation(""))
         self.assertIsNone(normalize_atcoder_affiliation("No Such Org"))
+
+
+from unittest import mock  # noqa: E402
+
+from django.core.management import call_command  # noqa: E402
+
+import apps.crawler.tasks as tasks_mod  # noqa: E402
+import apps.crawler.management.commands.rebuild_participation_index as rebuild_mod  # noqa: E402
+from apps.crawler.tasks import crawl_codeforces  # noqa: E402
+
+
+class _FakeCF:
+    """替代 CodeforcesScraper：不联网，返回受控比赛列表与明细。"""
+
+    def fetch_contest_list(self):
+        return _FAKE_CF_LIST
+
+    def parse_contests(self, lst):
+        return lst
+
+    def filter_contests(self, contests, rated_only=True, exclude_paid=True):
+        return [c for c in contests if c.get("is_rated") and not c.get("is_paid")]
+
+    def scrape_contest_detail(self, contest_id, mode="rating", handles=None,
+                              cache_dir=None, cache_ttl_hours=168, **kwargs):
+        return {
+            "problems": [{"index": "A", "title": "t", "problem_id": f"{contest_id}-A"}],
+            "ranks": [{"rank": 1, "uid": "someone", "user_name": "someone",
+                       "is_cheater": False, "post_contest_append": False,
+                       "score_detail": [], "extra": {}}],
+            "rank_count": 1, "valid_rank_count": 1,
+            "rank_source": "ratingChanges", "crawled_at": "2026-08-14T00:00:00",
+        }
+
+
+_FAKE_CF_LIST = [
+    {"contest_id": 111, "real_contest_id": 111, "name": "CF 111",
+     "is_rated": True, "is_paid": False, "is_future": False},
+    {"contest_id": 222, "real_contest_id": 222, "name": "CF 222",
+     "is_rated": True, "is_paid": False, "is_future": False},
+]
+
+
+class RelevantContestFilterTests(TestCase):
+    """A：爬虫只抓「有已关联平台ID用户参与的比赛」，其余跳过。"""
+
+    def _make_cf_account(self, username, participated):
+        user = User.objects.create_user(username=username, password="pwd12345")
+        return PlatformAccount.objects.create(
+            user=user, platform=Platform.CODEFORCES, handle=username,
+            participated_contests=participated)
+
+    def test_only_relevant_contests_crawled(self):
+        self._make_cf_account("cfr1", ["111"])  # 仅 111 在索引内
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=_FakeCF()):
+            crawl_codeforces(count=10, mode="rating")
+        contests = Contest.objects.filter(platform=Platform.CODEFORCES)
+        self.assertEqual(contests.count(), 1)
+        self.assertEqual(contests.first().external_id, "111")
+
+    def test_force_crawls_all(self):
+        self._make_cf_account("cfr2", ["111"])
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=_FakeCF()):
+            crawl_codeforces(count=10, mode="rating", force=True)
+        self.assertEqual(
+            Contest.objects.filter(platform=Platform.CODEFORCES).count(), 2)
+
+
+class ParticipationIndexUpdateTests(TestCase):
+    """A：入库命中账号时，增量维护其参与比赛索引。"""
+
+    def test_ingest_updates_account_index(self):
+        school = School.objects.create(name="索引大学", code="idx-u")
+        user = User.objects.create_user(username="idx1", password="pwd12345",
+                                        school=school)
+        acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="idxhandle",
+            participated_contests=[])
+        meta = {"real_contest_id": 555111, "name": "牛客周赛 Round X",
+                "start_time": "2026-08-01 19:00:00",
+                "end_time": "2026-08-01 21:00:00", "duration_minutes": 120,
+                "is_rated": True, "is_paid": False}
+        detail = {"problems": [], "ranks": [
+            {"rank": 1, "uid": "idxhandle", "user_name": "idx",
+             "accepted_count": 1, "is_cheater": False,
+             "post_contest_append": False, "score_detail": [], "extra": {}},
+        ]}
+        ingest_contest(Platform.NOWCODER, meta, detail)
+        acc.refresh_from_db()
+        self.assertIn("555111", acc.participated_contests)
+
+
+class RebuildIndexCommandTests(TestCase):
+    """A：rebuild 命令 = 参与记录表回填 ∪ 官方个人历史接口补全。"""
+
+    def test_command_unions_participation_and_history(self):
+        user = User.objects.create_user(username="rb1", password="pwd12345")
+        acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.CODEFORCES, handle="rbhandle",
+            participated_contests=[])
+        # ① 参与记录表已有一条（external_id 999）
+        contest = Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id="999", name="c999",
+            is_rated=True, is_paid=False)
+        Participation.objects.create(
+            contest=contest, platform_account=acc, handle="rbhandle",
+            handle_lower="rbhandle")
+
+        fake_cf = mock.MagicMock()
+        fake_cf.user_rating_contest_ids.return_value = ["1000"]  # ② 历史接口
+        fake_atc = mock.MagicMock()
+
+        with mock.patch.object(rebuild_mod, "CodeforcesScraper",
+                               return_value=fake_cf), \
+                mock.patch.object(rebuild_mod, "AtCoderScraper",
+                                  return_value=fake_atc):
+            call_command("rebuild_participation_index", "--platform", "codeforces")
+
+        acc.refresh_from_db()
+        self.assertIn("999", acc.participated_contests)
+        self.assertIn("1000", acc.participated_contests)
+        fake_cf.user_rating_contest_ids.assert_called_once_with("rbhandle")
+
+
+class AtCoderHistoryParseTests(TestCase):
+    """A：AtCoder 个人历史接口对旧比赛返回子域名，需归一化对齐 external_id。"""
+
+    def test_history_normalizes_legacy_domain(self):
+        from atcoder_scraper import AtCoderScraper
+        sc = AtCoderScraper()
+        canned = [
+            {"ContestScreenName": "agc004.contest.atcoder.jp"},
+            {"ContestScreenName": "abc470"},
+            {"ContestScreenName": "arc061.contest.atcoder.jp"},
+        ]
+
+        class _Resp:
+            def json(self):
+                return canned
+        with mock.patch.object(sc, "_get", return_value=_Resp()):
+            ids = sc.user_history_contest_ids("someone")
+        self.assertEqual(ids, ["agc004", "abc470", "arc061"])

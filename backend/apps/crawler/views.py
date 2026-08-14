@@ -51,6 +51,7 @@ class CrawlJobViewSet(viewsets.ReadOnlyModelViewSet):
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
         platform = data["platform"]
+        force = bool(data.get("force", False))
 
         if platform == Platform.CODEFORCES:
             params = {"count": data.get("count", 20), "mode": "rating"}
@@ -62,6 +63,8 @@ class CrawlJobViewSet(viewsets.ReadOnlyModelViewSet):
                 params["months"] = data["months"]
             elif data.get("months_back"):
                 params["months_back"] = data["months_back"]
+        if force:
+            params["force"] = True
 
         job = enqueue_crawl(platform, params, triggered_by=request.user)
         if job is None:

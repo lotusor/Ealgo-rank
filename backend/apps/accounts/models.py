@@ -110,6 +110,14 @@ class PlatformAccount(TimeStampedModel):
     verified = models.BooleanField("已验证归属", default=False)
     verified_at = models.DateTimeField("验证时间", null=True, blank=True)
 
+    # 参与过的比赛 external_id 列表（按平台维度，因为 handle 已平台隔离）。
+    # 用于爬虫「只抓有已关联平台ID用户参与的比赛」预筛，避免下载无关全量榜单。
+    # 来源：① 入库时增量更新；② rebuild_participation_index 命令从参与记录表回填 +
+    #    CF/AT 官方「个人参赛历史」接口廉价补全（牛客无干净个人历史接口，仅依赖回填）。
+    # 注意：这里的「用户」指所有已关联竞赛平台ID的 PlatformAccount 持有者，不限学校。
+    participated_contests = models.JSONField("参与比赛索引", default=list, blank=True,
+                                             help_text="该账号参与过的比赛 external_id 列表")
+
     class Meta:
         verbose_name = "平台账号"
         verbose_name_plural = verbose_name

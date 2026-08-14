@@ -42,6 +42,10 @@ class CrawlTriggerSerializer(serializers.Serializer):
     months_back = serializers.IntegerField(
         required=False, min_value=1, max_value=12,
         help_text="牛客：自动取最近 N 个月（与 months 互斥，months 优先）")
+    force = serializers.BooleanField(
+        required=False, default=False,
+        help_text="跳过「只抓有已关联平台ID用户参与的比赛」预筛，"
+                  "对所有 rated 免费比赛全量抓取（冷启动 / 索引重建后首次全量引导用）")
 
 
 class CrawlConfigSerializer(serializers.ModelSerializer):

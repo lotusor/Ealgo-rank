@@ -95,10 +95,39 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 | 低 | 个人成绩页「我的排名」入口 | ✅ 已完成 | 调 `listRankings({scope:'student', user:me.id})` 展示学生榜名次 |
 | 中 | 启用 `proposed_school_name`（申请系统里还没有的学校） | ✅ 已完成 | 序列化器二选一（绑定已有/新建）+ 审批通过自动建档 + 前端双模式表单 + 5 测试 |
 | 中 | AtCoder 学校别名归一化 | ✅ 已完成 | 别名表 `AtCoderAffiliationAlias` + 入库归一化写入 `Participation.extra`（仅参考/核对，不动归属）；admin 注册 + 5 测试 |
+| 中 | A. 爬虫只抓「有已关联平台ID用户参与」的比赛 | ✅ 已完成 | `PlatformAccount.participated_contests` 索引 + `relevant_contest_ids` 预筛 + ingest 增量维护 + `rebuild_participation_index` 命令（CF/AT 个人历史接口廉价补全）；`crawl_*` 加 `force` 冷启动全量开关 |
+| 中 | B. 接 handles + 落盘缓存 | ✅ 已完成 | CF 生产路径传入本平台全部 handle（每题明细只下这些人）；三平台 `scrape_contest_detail` 加 `cache_dir`/`cache_ttl_hours` 命中跳过下载；`CRAWLER_CACHE_DIR`/`CRAWLER_CACHE_TTL_HOURS` 配置 |
 | 高 | 生产化部署（PostgreSQL / Gunicorn / Nginx） | ⏳ 待确认 | 架构+资源：须用户提供部署环境与域名等信息 |
 | 高 | 真实 GitHub OAuth 浏览器联调 | ⏳ 待确认 | 环境/范围：受 OAuth 单 callback 限制，须决策 dev App 或沿用 mock |
 
-> 低难度批次（4 项）已提交（commit `fb60235`，后端 67 tests OK）；M1 已提交（commit `1819c6b`，+5 测试）；M2 已验证（后端 **77 tests OK** / 前端 typecheck 通过），待提交。中/高难度项涉及范围或架构决策，须用户确认后方可执行。
+> 低难度批次（4 项）已提交（commit `fb60235`，后端 67 tests OK）；M1 已提交（commit `1819c6b`，+5 测试）；M2 已验证（后端 **77 tests OK** / 前端 typecheck 通过），任务 A/B 已验证（后端 **82 tests OK** / 迁移 `0005` 已落 dev 库），待提交。中/高难度项涉及范围或架构决策，须用户确认后方可执行。
+
+### 1.6.1 爬虫预筛逻辑：如何识别「没有任何已关联平台ID用户参与」的比赛
+
+> 术语校正（依用户 2026-08-14 指示）：爬虫功能归属**超级管理员**管理，作用范围是**平台全部用户**，而非「本校生」。此处「用户」的精确定义 = 在平台中已关联竞赛平台 ID 的 `PlatformAccount` 持有者（即 `accounts_platformaccount` 表中已存在 `handle` 记录的用户）。`PlatformAccount` 本身已按平台维度全局存储、不隔离学校，因此无需额外的学校过滤。
+
+**判定集合 `relevant_contest_ids(platform)`**
+每次执行 `crawl_codeforces / crawl_atcoder / crawl_nowcoder` 时，先聚合该平台下**所有** `PlatformAccount` 的 `participated_contests` 字段：
+
+```python
+def relevant_contest_ids(platform):
+    """该平台下「有已关联平台ID用户参与的比赛」的 external_id 集合。"""
+    ids = set()
+    for acc in PlatformAccount.objects.filter(platform=platform):
+        for cid in (acc.participated_contests or []):
+            ids.add(str(cid))
+    return ids
+```
+
+- 一个比赛 `external_id` **命中**该集合 ⇒ 至少有 1 位已关联平台ID的用户参加过 ⇒ **值得爬取**（需下载其完整榜单以便为这些用户抽取每题明细 / 排名）。
+- 一个比赛 `external_id` **未命中**该集合 ⇒ 没有任何已关联平台ID的用户参与 ⇒ **直接跳过**，**不下载完整榜单**，省流量与存储。
+
+**索引 `participated_contests` 的三种维护来源**
+1. **增量维护（ingest 时）**：`ingest.ingest_contest()` 在 `update_or_create` 循环后，凡 `handle` 命中某 `PlatformAccount` 的参与记录，就把本场 `contest.external_id` 并入该账号的 `participated_contests`（取并集后写回）。即「爬过一场、登记一场」。
+2. **冷启动 / 补录命令** `rebuild_participation_index`：一次性把索引补全为 =（Participation 表回溯的 `contest__external_id`）∪（Codeforces `user.rating` 接口返回的 `contestId`）∪（AtCoder `users/{handle}/history/json` 接口返回的 contest id，已归一化旧版 `*.contest.atcoder.jp` 域名格式）。这三个接口都**只取个人参赛历史列表、不下载任何完整榜单**，开销极低。NowCoder 无干净的个人历史接口，依赖 Participation 表回溯补录。支持 `--platform` / `--handle` 粒度。
+3. **冷启动兜底开关** `force=True`：在 `crawl_*` 入参或触发接口 `force` 字段置真时，**跳过预筛、全量抓取**该平台所有 rated 且未付费的比赛——用于首次部署、索引为空或需要重算排名时的全量扫描；日常调度不设 `force`。
+
+**效果**：日常自动爬取只触碰「平台里真人确实参加过的比赛」，完整榜单下载量从「全平台 rated 比赛」降到「本平台用户涉及的比赛」；配合任务 B 的 per-handle 抽取与落盘缓存，进一步把流量压到只取目标用户的每题明细，且 7 天内同场比赛不重复下载。
 
 ## 1.7 高难度任务实施方案（草案，待用户确认 — 2026-08-14）
 

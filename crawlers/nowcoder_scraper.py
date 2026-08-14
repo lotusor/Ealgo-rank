@@ -36,6 +36,8 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 
+from cache_util import load_cached_detail, save_cached_detail
+
 
 class NowCoderScraper:
     """牛客比赛信息爬虫"""
@@ -381,8 +383,17 @@ class NowCoderScraper:
 
     # ---------- 批量抓取 ----------
     def scrape_contest_detail(self, real_contest_id, max_rank_pages=None,
-                              filter_post_contest=False, exclude_cheaters=False):
-        """抓取单场比赛的题目与全部有效排名"""
+                              filter_post_contest=False, exclude_cheaters=False,
+                              handles=None, cache_dir=None, cache_ttl_hours=168):
+        """抓取单场比赛的题目与全部有效排名。
+
+        handles       预留参数（牛客整场 standings 已含每题明细，忽略）。
+        cache_dir     落盘缓存目录；命中则跳过下载。None 关闭缓存。
+        cache_ttl_hours 缓存有效期（小时），过期重新下载。
+        """
+        cached = load_cached_detail(cache_dir, real_contest_id, cache_ttl_hours)
+        if cached is not None:
+            return cached
         problems = self.parse_problems(self.fetch_problem_list(real_contest_id))
         rank_info = self.fetch_all_ranks(real_contest_id, max_pages=max_rank_pages)
         ranks = self.parse_ranks(rank_info, filter_post_contest=filter_post_contest,
@@ -391,7 +402,7 @@ class NowCoderScraper:
         # 可计入积分的记录：非赛后补交 且 非作弊
         valid_count = sum(1 for r in ranks
                           if not r.get("post_contest_append") and not r.get("is_cheater"))
-        return {
+        detail = {
             "problems": problems,
             "ranks": ranks,
             "rank_count": len(ranks),
@@ -399,6 +410,8 @@ class NowCoderScraper:
             "cheater_count": cheater_count,
             "crawled_at": datetime.now().isoformat(),
         }
+        save_cached_detail(cache_dir, real_contest_id, detail)
+        return detail
 
     def run(self, months=None, output_dir=None, max_rank_pages=None,
             skip_future=True, filter_post_contest=True,

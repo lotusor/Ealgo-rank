@@ -220,6 +220,12 @@ CORS_ALLOW_CREDENTIALS = True
 # 爬虫脚本目录，crawler app 直接复用已验证的三个爬虫
 CRAWLER_DIR = REPO_ROOT / "crawlers"
 
+# 爬虫原始数据落盘缓存目录（按平台分子目录，与 standalone run() 同源）。
+# 设为 None 可关闭缓存（每次都重新下载全量榜单）。重跑同场比赛命中本地文件，省带宽。
+CRAWLER_CACHE_DIR = CRAWLER_DIR / "data"
+# 缓存有效期（小时），过期自动重新下载。默认 7 天。
+CRAWLER_CACHE_TTL_HOURS = int(os.environ.get("CRAWLER_CACHE_TTL_HOURS", "168"))
+
 # 初始超级管理员（首次 migrate 后由 bootstrap 命令创建）
 ROOT_ADMIN_USERNAME = env("ROOT_ADMIN_USERNAME", "root")
 ROOT_ADMIN_EMAIL = env("ROOT_ADMIN_EMAIL", "root@e-algo-rank.local")

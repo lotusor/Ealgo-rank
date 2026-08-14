@@ -30,6 +30,8 @@ from pathlib import Path
 
 import requests
 
+from cache_util import load_cached_detail, save_cached_detail
+
 
 class CodeforcesScraper:
     """Codeforces 比赛信息爬虫"""
@@ -168,6 +170,17 @@ class CodeforcesScraper:
             "rated_source": "contest.ratingChanges",
             "rated_comment": comment if not ok else f"{len(result)} 条 rating 变化",
         }
+
+    def user_rating_contest_ids(self, handle):
+        """取某 handle 参加过的所有 rated 比赛 contestId（无需下载全量榜单）。
+
+        用于 rebuild_participation_index 廉价补全「参与比赛索引」。
+        """
+        url = f"{self.base}/user.rating?handle={handle}"
+        data = self._get_soft(url)
+        if data.get("status") != "OK":
+            return []
+        return [str(x.get("contestId")) for x in (data.get("result") or [])]
 
     @staticmethod
     def parse_rating_changes(rating_changes):
@@ -408,7 +421,8 @@ class CodeforcesScraper:
 
     # ---------- 批量抓取 ----------
     def scrape_contest_detail(self, contest_id, max_rank_pages=50,
-                              filter_post_contest=False, mode="rating"):
+                              filter_post_contest=False, mode="rating",
+                              handles=None, cache_dir=None, cache_ttl_hours=168):
         """
         抓取单场比赛的题目与排名。
 
@@ -418,7 +432,22 @@ class CodeforcesScraper:
         mode="standings"
             下载整场公开榜单，含每题明细，但大场次会丢 30%~40% 的人，
             仅在小场次或确需完整明细时使用。
+
+        handles       需要补齐每题明细的用户列表（本平台已关联平台ID用户），
+                      命中缓存后仍会为这些用户补齐（只发本平台用户的请求）。
+        cache_dir     落盘缓存目录；命中则跳过下载。None 关闭缓存。
+        cache_ttl_hours 缓存有效期（小时），过期重新下载。
         """
+        # B：命中本地缓存则跳过下载
+        cached = load_cached_detail(cache_dir, contest_id, cache_ttl_hours)
+        if cached is not None:
+            ranks = cached.get("ranks", [])
+            if handles:
+                ranks = self.enrich_ranks_with_details(contest_id, ranks, handles)
+                cached = {**cached, "ranks": ranks,
+                          "rank_source": cached.get("rank_source", "cached")}
+            return cached
+
         try:
             if mode == "standings":
                 problems = self.parse_problems(self.fetch_problem_list(contest_id))
@@ -434,11 +463,14 @@ class CodeforcesScraper:
                     raise RuntimeError(f"ratingChanges 不可用: {comment}")
                 ranks = self.parse_rating_changes(rc)
                 source = "ratingChanges"
+            # B：只为传入的本平台用户补齐每题明细（每人一次精准请求）
+            if handles:
+                ranks = self.enrich_ranks_with_details(contest_id, ranks, handles)
         finally:
             # 整场榜单占用可达数十 MB，抓完立刻释放
             self.clear_cache(contest_id)
         valid_count = sum(1 for r in ranks if not r.get("post_contest_append"))
-        return {
+        detail = {
             "problems": problems,
             "ranks": ranks,
             "rank_count": len(ranks),
@@ -446,6 +478,8 @@ class CodeforcesScraper:
             "rank_source": source,
             "crawled_at": datetime.now().isoformat(),
         }
+        save_cached_detail(cache_dir, contest_id, detail)
+        return detail
 
     def enrich_ranks_with_details(self, contest_id, ranks, handles):
         """

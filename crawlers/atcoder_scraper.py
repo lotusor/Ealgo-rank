@@ -28,6 +28,8 @@ from pathlib import Path
 
 import requests
 
+from cache_util import load_cached_detail, save_cached_detail
+
 
 class AtCoderScraper:
     """AtCoder 比赛信息爬虫"""
@@ -187,6 +189,32 @@ class AtCoderScraper:
             "submit_person_count": None,
         } for p in problems]
 
+    def user_history_contest_ids(self, handle):
+        """取某 handle 参加过的所有比赛 id（无需下载全量榜单）。
+
+        用于 rebuild_participation_index 廉价补全「参与比赛索引」。
+        旧比赛（如 agc004）的 ContestScreenName 是旧子域名
+        ``agc004.contest.atcoder.jp``，需剥离子域名前缀以对齐系统存的
+        external_id（contests.json 的 id 如 ``agc004``）；现代比赛直接是
+        ``abc470`` 这类，原样返回。
+        """
+        url = f"{self.base_atcoder}/users/{handle}/history/json"
+        try:
+            resp = self._get(url)
+        except Exception:
+            return []
+        rows = resp.json() or []
+        ids = []
+        for r in rows:
+            cid = r.get("ContestScreenName") or r.get("contest_id")
+            if not cid:
+                continue
+            cid = str(cid)
+            if ".contest.atcoder.jp" in cid:
+                cid = cid.split(".")[0]
+            ids.append(cid)
+        return ids
+
     # ---------- 排名数据 ----------
     def fetch_rank_page(self, contest_id, page=1):
         """
@@ -262,19 +290,30 @@ class AtCoderScraper:
 
     # ---------- 批量抓取 ----------
     def scrape_contest_detail(self, contest_id, max_rank_pages=50,
-                              filter_post_contest=False):
-        """抓取单场比赛的题目与全部有效排名"""
+                              filter_post_contest=False,
+                              handles=None, cache_dir=None, cache_ttl_hours=168):
+        """抓取单场比赛的题目与全部有效排名。
+
+        handles       预留参数（AtCoder 免登录端点无每题明细，忽略）。
+        cache_dir     落盘缓存目录；命中则跳过下载。None 关闭缓存。
+        cache_ttl_hours 缓存有效期（小时），过期重新下载。
+        """
+        cached = load_cached_detail(cache_dir, contest_id, cache_ttl_hours)
+        if cached is not None:
+            return cached
         problems = self.parse_problems(self.fetch_problem_list(contest_id))
         rank_info = self.fetch_all_ranks(contest_id, max_pages=max_rank_pages)
         ranks = self.parse_ranks(rank_info, filter_post_contest=filter_post_contest)
         valid_count = sum(1 for r in ranks if not r.get("post_contest_append"))
-        return {
+        detail = {
             "problems": problems,
             "ranks": ranks,
             "rank_count": len(ranks),
             "valid_rank_count": valid_count,
             "crawled_at": datetime.now().isoformat(),
         }
+        save_cached_detail(cache_dir, contest_id, detail)
+        return detail
 
     def run(self, months=None, output_dir=None, max_rank_pages=50,
             skip_future=True, filter_post_contest=True,
