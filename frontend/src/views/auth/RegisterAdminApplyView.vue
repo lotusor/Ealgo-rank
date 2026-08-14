@@ -11,8 +11,10 @@ const auth = useAuthStore()
 const toast = useToast()
 
 const choice = ref<'skip' | 'apply'>('skip')
+const applyMode = ref<'existing' | 'proposed'>('existing')
 const schools = ref<School[]>([])
 const schoolId = ref<number | null>(auth.user?.school?.id ?? null)
+const proposedName = ref('')
 const reason = ref('')
 const contact = ref('')
 const evidenceFile = ref<File | null>(null)
@@ -36,31 +38,41 @@ function onFile(e: Event) {
 }
 
 async function submitApply() {
-  if (!schoolId.value) {
-    toast.error('请选择要申请的学校')
-    return
+  const payload: Record<string, any> = {
+    reason: reason.value.trim(),
+    contact: contact.value.trim(),
+    evidence: evidenceFile.value ?? undefined,
   }
-  if (!reason.value.trim()) {
+  if (applyMode.value === 'existing') {
+    if (!schoolId.value) {
+      toast.error('请选择要申请的学校')
+      return
+    }
+    payload.school = schoolId.value
+  } else {
+    if (!proposedName.value.trim()) {
+      toast.error('请填写要新建的学校名称')
+      return
+    }
+    payload.proposed_school_name = proposedName.value.trim()
+  }
+  if (!payload.reason) {
     toast.error('请填写申请理由')
     return
   }
-  if (!contact.value.trim()) {
+  if (!payload.contact) {
     toast.error('请填写联系方式')
     return
   }
   loading.value = true
   try {
-    await createApplication({
-      school: schoolId.value,
-      reason: reason.value.trim(),
-      contact: contact.value.trim(),
-      evidence: evidenceFile.value ?? undefined,
-    })
+    await createApplication(payload as any)
     showDone.value = true
   } catch (e: any) {
     const d = e?.response?.data
     let msg = '提交失败，请稍后重试'
     if (d?.school) msg = `学校：${Array.isArray(d.school) ? d.school.join('；') : d.school}`
+    else if (d?.proposed_school_name) msg = `学校名称：${Array.isArray(d.proposed_school_name) ? d.proposed_school_name.join('；') : d.proposed_school_name}`
     else if (d?.detail) msg = d.detail
     else if (typeof d === 'string') msg = d
     toast.error(msg)
@@ -92,12 +104,21 @@ async function submitApply() {
           <div class="alert alert-warning" style="margin-bottom: var(--space-4)">
             申请将由超级管理员审核，结果在「系统公告」中发布；审核期间你仍可使用普通用户功能。
           </div>
-          <div class="field">
+          <div class="segmented" style="margin-bottom: var(--space-4); background: var(--color-bg-inset)">
+            <button class="seg-btn" :class="{ active: applyMode === 'existing' }" @click="applyMode = 'existing'">申请已有学校</button>
+            <button class="seg-btn" :class="{ active: applyMode === 'proposed' }" @click="applyMode = 'proposed'">学校未收录</button>
+          </div>
+          <div class="field" v-if="applyMode === 'existing'">
             <label class="field-label">选择学校</label>
             <select v-model="schoolId" class="select">
               <option :value="null" disabled>申请管理的学校</option>
               <option v-for="s in schoolOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
             </select>
+          </div>
+          <div class="field" v-else>
+            <label class="field-label">新建学校名称</label>
+            <input v-model="proposedName" class="input" placeholder="如：XX 大学" />
+            <div class="caption text-tertiary" style="margin-top: 4px">系统里还没有这所学校？填写后将由超管审批时自动建档。</div>
           </div>
           <div class="field">
             <label class="field-label">申请理由</label>

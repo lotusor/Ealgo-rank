@@ -264,7 +264,13 @@ export async function checkUsernameAvailable(
 // ---------- 管理员申请提交 ----------
 export async function createApplication(payload: SchoolAdminApplicationCreate) {
   const fd = new FormData()
-  fd.append('school', String(payload.school))
+  // 两种模式二选一：绑定已有学校，或申请系统里还没有的学校
+  if (payload.school != null) {
+    fd.append('school', String(payload.school))
+  }
+  if (payload.proposed_school_name) {
+    fd.append('proposed_school_name', payload.proposed_school_name)
+  }
   fd.append('reason', payload.reason)
   fd.append('contact', payload.contact)
   if (payload.evidence) fd.append('evidence', payload.evidence)

@@ -97,32 +97,60 @@ class ScoreConfigSerializer(serializers.ModelSerializer):
 
 class SchoolAdminApplicationCreateSerializer(serializers.ModelSerializer):
     """
-    提交申请用。
-    仅允许绑定系统已存在的学校（proposed_school_name 不启用）；
-    evidence 为可选证明材料。
+    提交申请用。两种模式二选一：
+      - 绑定系统已存在的学校（school）
+      - 申请系统里还没有的学校（proposed_school_name，审批通过时自动建档）
     """
 
     school = serializers.PrimaryKeyRelatedField(
-        queryset=School.objects.filter(is_active=True),
+        queryset=School.objects.filter(is_active=True), required=False,
+        allow_null=True,
         help_text="要申请管理的学校 ID（仅限已存在的学校）")
+    proposed_school_name = serializers.CharField(
+        required=False, allow_blank=True, max_length=100,
+        help_text="申请系统里还没有的学校时填写，审批通过会自动建档")
     evidence = serializers.FileField(required=False, allow_null=True,
                                      help_text="证明材料（可选）")
 
     class Meta:
         model = SchoolAdminApplication
-        fields = ["id", "school", "reason", "contact", "evidence",
-                  "status", "created_at"]
+        fields = ["id", "school", "proposed_school_name", "reason", "contact",
+                  "evidence", "status", "created_at"]
         read_only_fields = ["id", "status", "created_at"]
 
     def validate(self, attrs):
         request = self.context.get("request")
         user = getattr(request, "user", None) if request else None
         school = attrs.get("school")
+        proposed = (attrs.get("proposed_school_name") or "").strip()
 
         # 已是管理员（校管/超管）禁止再次申请
         if user and (user.is_school_admin or user.is_super_admin):
             raise serializers.ValidationError(
                 {"school": "你已是管理员，无需再次申请"})
+
+        # 二选一：要么绑定已有学校，要么提出新建学校
+        if not school and not proposed:
+            raise serializers.ValidationError(
+                {"school": "请选择已存在的学校，或填写要申请新建的学校名称"})
+
+        if school:
+            # 绑定已有学校时忽略 proposed_school_name
+            attrs["proposed_school_name"] = ""
+        else:
+            # 系统里已有同名学校则引导直接申请该校
+            if School.objects.filter(name=proposed, is_active=True).exists():
+                raise serializers.ValidationError(
+                    {"proposed_school_name":
+                     "该系统已存在同名学校，请直接申请该校"})
+            # 同一申请人对同一新建校名的待审申请去重（约束无法覆盖 NULL school）
+            if user and SchoolAdminApplication.objects.filter(
+                applicant=user, proposed_school_name=proposed,
+                status=AdminApplicationStatus.PENDING,
+            ).exists():
+                raise serializers.ValidationError(
+                    {"proposed_school_name":
+                     "你已有一条该新建学校的待审申请，请勿重复提交"})
 
         # 每月仅限申请一次（跨学校也受此约束）
         if user:
@@ -135,7 +163,7 @@ class SchoolAdminApplicationCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"school": "你本月已提交过申请，请下月再试"})
 
-        # 该校已存在待审申请，禁止重复提交
+        # 绑定已有学校时的待审去重
         if user and school:
             if SchoolAdminApplication.objects.filter(
                 applicant=user,

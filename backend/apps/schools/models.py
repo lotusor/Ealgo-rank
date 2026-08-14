@@ -41,7 +41,7 @@ class SchoolAdminApplication(TimeStampedModel):
                                   on_delete=models.CASCADE,
                                   related_name="admin_applications")
     school = models.ForeignKey("schools.School", verbose_name="申请学校",
-                               on_delete=models.CASCADE,
+                               null=True, blank=True, on_delete=models.CASCADE,
                                related_name="admin_applications")
     # 允许申请系统里还没有的学校，审批通过时再建档
     proposed_school_name = models.CharField("新建学校名称", max_length=100, blank=True)
@@ -74,7 +74,8 @@ class SchoolAdminApplication(TimeStampedModel):
         ]
 
     def __str__(self):
-        return f"{self.applicant} 申请 {self.school} 管理员 [{self.get_status_display()}]"
+        target = self.school or f"新建[{self.proposed_school_name}]"
+        return f"{self.applicant} 申请 {target} 管理员 [{self.get_status_display()}]"
 
 
 class ScoreConfig(TimeStampedModel):

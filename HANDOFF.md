@@ -75,7 +75,7 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 | **dev 用 SQLite** | 🟠 | 生产必须切 PostgreSQL（`dev.py` 已预留 `DEV_DB_ENGINE=postgres` 切换） |
 | **`UserRole` 前后端枚举潜在不一致** | ✅ 已修复 | 后端 `UserRole.USER="user"`，前端 `types.ts` 曾声明 `'normal'`（仅 dev mock 用到，运行时靠布尔未爆）；已统一为 `'user'` 并同步 `AuthCallbackView` mock（2026-08-14 晚低难度批次） |
 | **`ScoreConfig` 系数无和校验** | ✅ 已修复 | `platform_weight + contest_weight` 已强制 =1，且系数非负、`recent_contest_limit` 非负；`ScoreConfigSerializer.validate()` + 4 条测试覆盖（2026-08-14 晚低难度批次） |
-| **`proposed_school_name` 未启用** | 🟡 | 申请只能绑"已存在学校"，无法申请系统里还没有的学校 |
+| **`proposed_school_name` 未启用** | ✅ 已启用 | 申请支持"系统里还没有的学校"：`school` 可空 + `proposed_school_name` 二选一；审批通过时 `get_or_create` 自动建档（2026-08-14 晚 M1） |
 | **`PlatformAccount.handle` 不可改** | 🟡 | 防止归属唯一性被破坏；改学校走 `sync_platform_accounts_school()` |
 | **`UnorderedObjectListWarning`** | ✅ 已修复 | `ScoreConfig` 分页无 `ordering`；已在 `ScoreConfigViewSet` 加 `ordering=["-updated_at"]` 消除告警（2026-08-14 晚低难度批次） |
 | **Dead code：权限类** | ⚪ | `common/permissions.py` 中 `IsOwnSchoolAdmin` / `ReadOnlyOrSchoolAdmin` 已定义但未被任何视图引用；清理或接入前勿误用（低难度批次**未处理**，留待决定保留或接入口径） |
@@ -93,7 +93,7 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 | 低 | 前端 `UserRole` 枚举对齐（`'normal'`→`'user'`） | ✅ 已完成 | `types.ts` + `AuthCallbackView` mock |
 | 低 | `ScoreConfig` 系数和校验 | ✅ 已完成 | `validate()`（权重和=1 / 系数非负 / 上限非负）+ 4 测试 |
 | 低 | 个人成绩页「我的排名」入口 | ✅ 已完成 | 调 `listRankings({scope:'student', user:me.id})` 展示学生榜名次 |
-| 中 | 启用 `proposed_school_name`（申请系统里还没有的学校） | ⏳ 待确认 | 范围变更：需用户拍板是否开放未建档学校申请 |
+| 中 | 启用 `proposed_school_name`（申请系统里还没有的学校） | ✅ 已完成 | 序列化器二选一（绑定已有/新建）+ 审批通过自动建档 + 前端双模式表单 + 5 测试 |
 | 中 | AtCoder 学校别名归一化 | ⏳ 待确认 | 新功能：别名表 + 聚合归一，提升按校聚合准确度 |
 | 高 | 生产化部署（PostgreSQL / Gunicorn / Nginx） | ⏳ 待确认 | 架构+资源：须用户提供部署环境与域名等信息 |
 | 高 | 真实 GitHub OAuth 浏览器联调 | ⏳ 待确认 | 环境/范围：受 OAuth 单 callback 限制，须决策 dev App 或沿用 mock |

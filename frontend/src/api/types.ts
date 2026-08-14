@@ -255,7 +255,8 @@ export interface MyParticipation {
 
 // 提交学校管理员申请
 export interface SchoolAdminApplicationCreate {
-  school: number
+  school?: number | null
+  proposed_school_name?: string
   reason: string
   contact: string
   evidence?: File

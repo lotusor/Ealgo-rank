@@ -5,6 +5,7 @@ schools 视图：
 - 管理员申请 / 审批：见 SchoolAdminApplicationViewSet
 """
 from django.db.models import Count, Q
+from django.utils.text import slugify
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import (
@@ -35,6 +36,14 @@ from apps.schools.serializers import (
     SchoolSerializer,
 )
 from config.pagination import StandardPagination
+
+
+def _school_code(name: str) -> str:
+    """学校 code（SlugField 唯一）。中文名 slugify 为空时回退到短随机串。"""
+    import uuid
+
+    base = slugify(name)
+    return base or f"sch-{uuid.uuid4().hex[:8]}"
 
 
 class SchoolViewSet(viewsets.ModelViewSet):
@@ -101,7 +110,8 @@ class SchoolAdminApplicationViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         application = serializer.save(applicant=self.request.user)
         # 站内信通知所有超级管理员
-        school_name = application.school.name
+        school_name = application.school.name if application.school \
+            else application.proposed_school_name
         for sa in AccountUser.objects.filter(role=UserRole.SUPER_ADMIN):
             notify(
                 sa,
@@ -122,6 +132,21 @@ class SchoolAdminApplicationViewSet(viewsets.ModelViewSet):
             )
         applicant = application.applicant
         school = application.school
+        # 申请的是系统里还没有的学校：审批通过时自动建档
+        if school is None:
+            if not application.proposed_school_name:
+                return Response(
+                    {"detail": "该申请既未绑定学校也未填写新建校名"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            school, _ = School.objects.get_or_create(
+                name=application.proposed_school_name,
+                defaults={
+                    "code": _school_code(application.proposed_school_name),
+                    "short_name": application.proposed_school_name,
+                },
+            )
+            application.school = school
 
         # 副作用：更新申请人角色 + 归属学校 + 同步名下平台账号
         applicant.role = UserRole.SCHOOL_ADMIN
@@ -134,7 +159,8 @@ class SchoolAdminApplicationViewSet(viewsets.ModelViewSet):
         application.status = AdminApplicationStatus.APPROVED
         application.reviewer = request.user
         application.reviewed_at = timezone.now()
-        application.save(update_fields=["status", "reviewer", "reviewed_at"])
+        application.save(update_fields=["status", "reviewer", "reviewed_at",
+                                        "school"])
 
         notify(
             applicant,

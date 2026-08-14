@@ -1,4 +1,7 @@
 """#3 管理员申请与审批流单元测试。"""
+import datetime
+
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import (
@@ -282,3 +285,59 @@ class ScoreConfigValidationTests(APITestCase):
         resp = self.client.patch(
             SC_DETAIL(self.cfg.id), {"recent_contest_limit": -1}, format="json")
         self.assertEqual(resp.status_code, 400)
+
+
+class ProposedSchoolApplicationTests(APITestCase):
+    """M1 允许申请系统里还没有的学校（proposed_school_name）。"""
+
+    def setUp(self):
+        self.applicant = make_user("applicant", school=None)
+        self.super = make_user("super", role=UserRole.SUPER_ADMIN)
+
+    def test_submit_proposed_creates_pending(self):
+        self.client.force_authenticate(self.applicant)
+        resp = self.client.post(LIST, {
+            "proposed_school_name": "新星工业大学",
+            "reason": "我校尚未入库", "contact": "a@b.com"}, format="json")
+        self.assertEqual(resp.status_code, 201, resp.content)
+        app = SchoolAdminApplication.objects.get(id=resp.data["id"])
+        self.assertIsNone(app.school)
+        self.assertEqual(app.proposed_school_name, "新星工业大学")
+
+    def test_submit_requires_school_or_proposed(self):
+        self.client.force_authenticate(self.applicant)
+        resp = self.client.post(LIST, {"reason": "x"}, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_submit_existing_school_name_rejected(self):
+        School.objects.create(name="已存在大学", code="exists", short_name="已")
+        self.client.force_authenticate(self.applicant)
+        resp = self.client.post(LIST, {
+            "proposed_school_name": "已存在大学", "reason": "x"}, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_duplicate_proposed_pending_rejected(self):
+        prev = SchoolAdminApplication.objects.create(
+            applicant=self.applicant, proposed_school_name="待建大学",
+            reason="x", status=AdminApplicationStatus.PENDING)
+        # 推到上个月，避开「每月仅限一次」约束，单独验证新建校名去重
+        prev.created_at = timezone.now() - datetime.timedelta(days=40)
+        prev.save(update_fields=["created_at"])
+        self.client.force_authenticate(self.applicant)
+        resp = self.client.post(LIST, {
+            "proposed_school_name": "待建大学", "reason": "again"}, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_approve_proposed_creates_school_and_promotes(self):
+        app = SchoolAdminApplication.objects.create(
+            applicant=self.applicant, proposed_school_name="新建科技大学",
+            reason="x")
+        self.client.force_authenticate(self.super)
+        resp = self.client.post(APPROVE(app.id))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        school = School.objects.get(name="新建科技大学")
+        app.refresh_from_db()
+        self.assertEqual(app.school_id, school.id)
+        self.applicant.refresh_from_db()
+        self.assertEqual(self.applicant.role, UserRole.SCHOOL_ADMIN)
+        self.assertEqual(self.applicant.school_id, school.id)
