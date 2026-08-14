@@ -1,8 +1,17 @@
+import secrets
+from datetime import timedelta
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
 
+from apps.accounts.security import get_security_config
 from apps.common.models import Platform, TimeStampedModel
+
+
+def generate_security_stamp() -> str:
+    """会话吊销标记：改密/解锁/登出全部设备时轮换，使旧令牌失效。"""
+    return secrets.token_hex(16)
 
 
 class UserRole(models.TextChoices):
@@ -40,6 +49,16 @@ class User(AbstractUser):
     # 学校信息补全后，名下所有平台账号自动绑定到该学校（见 PlatformAccount.sync_school）
     school_bound_at = models.DateTimeField("学校绑定时间", null=True, blank=True)
 
+    # ---------- 登录安全 ----------
+    # 连续登录失败次数（成功登录清零）；达阈值由 register_login_failure 写入锁定
+    failed_login_count = models.PositiveIntegerField("连续登录失败次数", default=0, db_index=True)
+    # 非空表示账号临时锁定，期间禁止登录；到期（<= now）自动视为解锁
+    locked_until = models.DateTimeField("锁定至", null=True, blank=True, db_index=True)
+    last_failed_login_at = models.DateTimeField("最近一次失败登录", null=True, blank=True)
+    # 会话吊销标记：改密/解锁/登出全部设备时轮换，使所有已签发令牌失效
+    security_stamp = models.CharField("安全戳", max_length=64,
+                                      default=generate_security_stamp, db_index=True)
+
     class Meta:
         verbose_name = "用户"
         verbose_name_plural = verbose_name
@@ -55,6 +74,46 @@ class User(AbstractUser):
     @property
     def is_school_admin(self):
         return self.role == UserRole.SCHOOL_ADMIN
+
+    @property
+    def is_locked(self) -> bool:
+        if self.locked_until is None:
+            return False
+        # 过期即视为自动解锁（无需定时任务清理）
+        return self.locked_until > timezone.now()
+
+    def register_login_failure(self):
+        """记录一次失败并推进计数器；达阈值则临时锁定。"""
+        now = timezone.now()
+        self.failed_login_count = (self.failed_login_count or 0) + 1
+        self.last_failed_login_at = now
+        cfg = get_security_config()
+        if self.failed_login_count >= cfg["MAX_CONSECUTIVE_FAILURES"]:
+            self.locked_until = now + timedelta(
+                minutes=cfg["LOCK_DURATION_MINUTES"])
+        self.save(update_fields=["failed_login_count", "last_failed_login_at",
+                                 "locked_until"])
+
+    def register_login_success(self):
+        """成功登录：清零失败计数与锁定。"""
+        if self.failed_login_count or self.locked_until:
+            self.failed_login_count = 0
+            self.locked_until = None
+            self.save(update_fields=["failed_login_count", "locked_until"])
+
+    def unlock(self, rotate_stamp=True):
+        """管理员手动解锁。rotate_stamp=True 时同时吊销该账号现存会话。"""
+        self.locked_until = None
+        self.failed_login_count = 0
+        if rotate_stamp:
+            self.security_stamp = generate_security_stamp()
+        self.save(update_fields=["locked_until", "failed_login_count",
+                                 "security_stamp"])
+
+    def rotate_security_stamp(self):
+        """轮换安全戳，使所有已签发令牌在下一次请求时被拒绝。"""
+        self.security_stamp = generate_security_stamp()
+        self.save(update_fields=["security_stamp"])
 
     @property
     def needs_username(self):
@@ -189,3 +248,48 @@ def notify(user, title, message="", *, type=NotificationType.SYSTEM, link=""):
     return Notification.objects.create(
         user=user, title=title, message=message, type=type, link=link
     )
+
+
+class AuthEventType(models.TextChoices):
+    LOGIN_SUCCESS = "login_success", "登录成功"
+    LOGIN_FAILURE = "login_failure", "登录失败"
+    LOGIN_BLOCKED = "login_blocked", "登录被拦截(锁定/限流)"
+    LOGOUT = "logout", "登出"
+    ACCOUNT_LOCKED = "account_locked", "账号锁定"
+    ACCOUNT_UNLOCKED = "account_unlocked", "账号解锁"
+    ANOMALY = "anomaly", "异常行为"
+
+
+class AuthLog(TimeStampedModel):
+    """认证事件流：登录成功/失败、锁定/解锁、登出、异常。
+
+    用于失败计数之外的频率限制与异常检测（撞库、登录↔登出横跳），
+    以及安全审计。高频写入，可按 created_at 定期清理。
+    """
+
+    user = models.ForeignKey("accounts.User", verbose_name="用户",
+                             null=True, blank=True, on_delete=models.SET_NULL,
+                             related_name="auth_logs")
+    event_type = models.CharField("事件", max_length=20,
+                                  choices=AuthEventType.choices, db_index=True)
+    # 尝试用的标识（用户名/邮箱）；未知账号也会记录，用于按 identifier 限流
+    identifier = models.CharField("尝试标识", max_length=150, blank=True, db_index=True)
+    ip = models.CharField("客户端IP", max_length=64, blank=True)
+    device_fp = models.CharField("设备指纹", max_length=64, blank=True, db_index=True)
+    user_agent = models.TextField("User-Agent", blank=True)
+    detail = models.CharField("说明", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "认证日志"
+        verbose_name_plural = verbose_name
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["identifier", "created_at"]),
+            models.Index(fields=["device_fp", "created_at"]),
+            models.Index(fields=["ip", "created_at"]),
+        ]
+
+    def __str__(self):
+        who = self.user.username if self.user else self.identifier or "?"
+        return f"{self.get_event_type_display()}:{who}"

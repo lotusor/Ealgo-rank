@@ -51,6 +51,7 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_filters",
     "drf_spectacular",
@@ -128,7 +129,8 @@ REST_FRAMEWORK = {
         # 统一认证中心签发的 RS256 JWT（离线验签，按 passport_user_id 解析本地用户）。
         # 子类对本地 HS256 令牌放行给 simplejwt，保证 root/兜底登录并存。
         "apps.accounts.auth.AlgoRankPassportAuthentication",
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # 本地 HS256 令牌：在校验基础上比对 security_stamp，改密/解锁/登出全部时吊销旧会话
+        "apps.accounts.auth.StampedJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticatedOrReadOnly",

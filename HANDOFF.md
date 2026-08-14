@@ -23,6 +23,7 @@
 | --- | --- | --- |
 | Django 骨架 + 模型 | ✅ | 自定义用户模型 `accounts.User`；7 个 app（accounts/schools/contests/crawler/ranking/common/announcements） |
 | 认证与用户 API | ✅ | 注册/登录/JWT/改密/平台账号/用户名认领（passport 首登 UUID 占位→补全页认领锁定） |
+| 登录安全 | ✅ | 失败锁定+自动解锁/管理员解锁；登入登出多维限流（账号/设备指纹/IP 兜底放宽）；撞库与会话探测异常检测；安全戳会话吊销；**校园网共享 NAT 友好**（见 §1.9） |
 | Lotus Passport 接入 | ✅ | RS256 离线验签 + 双轨认证（HS256 本地兜底并存）；fragment 回调解析 |
 | 管理员申请与审批流 | ✅ | 提交/列表/审批/驳回/撤回；仅超管审批；**申请校验**：原因必填、每月限一次、已是管理员禁止再申请 |
 | 积分排名引擎 | ✅ | 基础分 + 平台/比赛系数加权；学校榜/学生榜快照 + Redis 缓存层 |
@@ -411,7 +412,7 @@ cd ../frontend && npm install && npm run dev   # Vite 5180，代理 /api → 后
 # 后端
 manage.py migrate / bootstrap / seed_demo / create_test_users
 manage.py check
-manage.py test                 # 全量（当前 63 tests OK）
+manage.py test                 # 全量（当前 96 tests OK，含 apps/accounts/tests_security 14 例登录安全用例）
 manage.py test apps.crawler    # 入库层 + 去重 + 自动爬取测试
 manage.py recompute_ranking [--scope school --period 2026]
 manage.py spectacular --file schema.yml
@@ -471,3 +472,61 @@ manage.py shell -c "from apps.crawler.tasks import auto_crawl_task; print(auto_c
   - 权限边界 ✅：普通用户 & 校管访问 `/score-configs/` → 403，超管 → 200；错误密码 → 401；校管可读本校 `/applications/` → 200。
 
 > 误报说明：首轮冒烟脚本误用 `/users/me/`（应为 `/me/`）与字段 `username`（应为 `user_name`），导致 403 与 `None` 假异常；复核确认端点与数据均正常，非代码缺陷。
+
+---
+
+## 1.9 登录安全（防暴力破解 + 异常频率限制 + 校园网应对策略，2026-08-14）
+
+> 实现文件：`apps/accounts/security.py`（核心逻辑）、`apps/accounts/views.py`（`LoginView`/`LogoutView`/`StampedTokenRefreshView`）、`apps/accounts/auth.py`（`StampedJWTAuthentication`）、`apps/accounts/models.py`（`User` 安全字段 + `AuthLog`）、`apps/accounts/admin.py`（解锁动作）、`apps/accounts/tests_security.py`（14 用例）。迁移 `0006_user_failed_login_count_...`。
+
+### 1) 账户级失败锁定与解锁
+
+- `User.failed_login_count`（连续失败计数，成功登录清零）+ `locked_until`（锁定到期时间，空=未锁）。
+- `register_login_failure()`：计数 +1；达 `AUTH_MAX_CONSECUTIVE_FAILURES`（默认 5）→ 写入 `locked_until = now + AUTH_LOCK_MINUTES`（默认 15）。
+- **自动解锁**：`is_locked` 按 `locked_until > now` 判定，到期即视为解锁，**无需定时任务清理**。
+- **管理员解锁**：Django admin `UserAdmin` 的 `unlock_users` 动作，调用 `unlock()`，默认轮换安全戳吊销该账号现存会话。
+
+### 2) 登入/登出频率限制 + 异常行为检测
+
+- 登录限流三维度：**`identifier`（账号维度，防针对已知用户名的爆破）→ `device_fp`（设备指纹维度）→ `ip`（IP 维度，仅兜底）**，依次拦截。
+- 登出限流按 **`user` + `jti（会话）** 双维度，防登出接口被刷。
+- 异常检测：① 同设备短时尝试大量不同账号（**撞库 credential_stuffing**）；② 同用户短时登录成功↔登出反复横跳（**会话探测**）；命中即拦截/告警（写 `AuthLog` 的 `ANOMALY`）。
+- 全部判定读写 `AuthLog`（认证事件流），高频可定期清理。
+
+### 3) 会话吊销（安全戳 security_stamp）
+
+- 登录/刷新令牌写入 `security_stamp` 声明；`StampedJWTAuthentication` 每次请求比对「令牌戳」与 `user.security_stamp`，不一致 → 401。
+- **改密、管理员解锁（默认）、登出全部设备（`{"all": true}`）** 均轮换安全戳 → 旧令牌立即失效。升级前签发的无戳旧令牌放行，保证灰度部署不登出全员。
+
+### 4) 校园网 / 共享 NAT 出口应对策略（核心）
+
+校园网/企业网大量用户共享同一 NAT 出口 IP，纯 IP 限流有两大致命缺陷：① **误伤**——把整片出口 IP 下的正常用户一起限流；② **绕过**——攻击者用同一出口即可无视 IP 限制爆破任意账号。
+
+本系统采取「**以账号 + 设备指纹为主，IP 兜底且阈值刻意放宽**」的多维识别：
+
+- **设备指纹优先**（`X-Device-Id` 头 → SHA256）：前端写入 localStorage 的稳定设备 ID，最精准区分同一出口 IP 下的不同浏览器/设备；缺失时回退 `User-Agent|Accept-Language` 哈希（同一校园网不同设备/浏览器通常仍可区分）。
+- **账号维度独立**：锁定与失败计数绑定账号本身，**完全不依赖 IP**，攻击者无法借共享出口规避。
+- **IP 维度只作纵深防御**：`AUTH_IP_LOGIN_MAX=300`，比设备维度（`AUTH_DEVICE_LOGIN_MAX=20`）高一个数量级，仅用于拦住「整个出口被僵尸网络接管」的极端情况，日常不会误伤共享出口下的正常用户。
+- **实测验证**（`NatFriendlyThrottlingTests.test_device_isolation_behind_same_ip`）：攻击者设备在同一校园网出口 IP 下反复失败被 `device_rate` 拦截，而受害者设备（**同一 IP、不同设备指纹**）用正确密码登录仍 200——证明共享 IP 下的正常用户不被误伤，攻击者也无法借共享 IP 绕过设备维度限制。
+
+**效果**：限流/锁定精准落到「具体账号 + 具体设备」，而非「整片校园网 IP」，既防爆破撞库、又不误伤、也防绕过。
+
+### 5) 配置项（`security.get_security_config()` 先读 `settings` 再读环境变量，均可覆盖）
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `AUTH_MAX_CONSECUTIVE_FAILURES` | 5 | 连续失败达此值 → 临时锁定 |
+| `AUTH_LOCK_MINUTES` | 15 | 锁定时长（分钟），到期自动解锁 |
+| `AUTH_FAILURE_WINDOW_MINUTES` / `AUTH_MAX_FAILURES_PER_WINDOW` | 15 / 10 | 单账号失败窗口与上限 |
+| `AUTH_DEVICE_LOGIN_MAX` / `AUTH_DEVICE_WINDOW_MINUTES` | 20 / 10 | 设备维度登录失败上限（NAT 友好**主维度**） |
+| `AUTH_IP_LOGIN_MAX` / `AUTH_IP_LOGIN_WINDOW_MINUTES` | 300 / 10 | IP 维度（兜底，刻意放宽） |
+| `AUTH_LOGOUT_USER_MAX` / `AUTH_LOGOUT_USER_WINDOW_MINUTES` | 30 / 10 | 登出按用户上限 |
+| `AUTH_LOGOUT_SESSION_MAX` | 10 | 登出按会话（jti）上限 |
+| `AUTH_ANOMALY_DISTINCT_IDS` / `AUTH_ANOMALY_TOGGLE_PAIRS` | 5 / 8 | 撞库 / 登录↔登出横跳阈值 |
+
+### 6) 测试覆盖（`apps/accounts/tests_security.py`，14 用例，随全量 `manage.py test` 运行）
+
+- `LoginLockoutTests`：连续失败锁定、成功清零、锁定态拒绝（**423**）、管理员解锁后可登录、锁定到期自动解锁。
+- `NatFriendlyThrottlingTests`：同 IP 不同设备隔离、`identifier_rate`、撞库拦截、IP 阈值远大于设备阈值。
+- `LogoutAndRevocationTests`：登出黑名单 refresh、登出全部设备轮换安全戳吊销旧 access、按用户/会话限流。
+- `AnomalyDetectionTests`：登录↔登出横跳检测。

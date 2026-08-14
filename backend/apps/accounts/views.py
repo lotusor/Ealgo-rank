@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.accounts.models import (
     Notification,
@@ -33,6 +34,17 @@ from apps.accounts.serializers import (
     UserMeSerializer,
     UserRosterSerializer,
     UserUpdateSerializer,
+)
+from apps.accounts.security import (
+    check_login_allowed,
+    check_logout_allowed,
+    detect_login_logout_oscillation,
+    get_client_ip,
+    get_device_fingerprint,
+    record_blocked,
+    record_login_failure,
+    record_login_success,
+    record_logout,
 )
 from apps.accounts.validators import first_error_message, validate_username
 from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin
@@ -53,6 +65,153 @@ class RegisterView(APIView):
             "access": str(refresh.access_token),
             "refresh": str(refresh),
         }, status=status.HTTP_201_CREATED)
+
+
+class LoginView(APIView):
+    """账号密码登录（替代 simplejwt 默认 TokenObtainPairView）。
+
+    在密码校验前先做「锁定 / 限流」预检，失败后再记录并尝试锁定。
+    限流/锁定以「账号维度 + 设备指纹维度」为主，「IP 维度」仅兜底且阈值放宽，
+    以适配校园网等共享 NAT 出口（详见 HANDOFF.md 登录安全章节）。
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []  # 登录接口本身不需要已认证
+
+    def post(self, request):
+        identifier = (request.data.get("username")
+                      or request.data.get("email") or "").strip()
+        password = request.data.get("password") or ""
+        ip = get_client_ip(request)
+        device_fp = get_device_fingerprint(request)
+        ua = request.META.get("HTTP_USER_AGENT", "")
+
+        user = None
+        if identifier:
+            user = (User.objects.filter(username=identifier).first()
+                    or User.objects.filter(email=identifier).first())
+
+        allowed, code, retry_after, detail = check_login_allowed(
+            identifier, user, ip, device_fp, ua)
+        if not allowed:
+            record_blocked(user, identifier, ip, device_fp, ua, detail, code)
+            # 锁定态统一返回 423（与失败后判定的路径保持一致）
+            if code == "account_locked":
+                return self._error(
+                    code, detail, retry_after, status=status.HTTP_423_LOCKED)
+            return self._error(code, detail, retry_after)
+
+        # 密码校验
+        if user is not None and user.check_password(password):
+            user.register_login_success()
+            record_login_success(user, identifier, ip, device_fp, ua)
+            detect_login_logout_oscillation(user)
+            refresh = RefreshToken.for_user(user)
+            refresh["security_stamp"] = user.security_stamp
+            access = refresh.access_token
+            access["security_stamp"] = user.security_stamp
+            data = {
+                "user": UserMeSerializer(user,
+                                         context={"request": request}).data,
+                "access": str(access),
+                "refresh": str(refresh),
+            }
+            return Response(data, status=status.HTTP_200_OK)
+
+        # 失败
+        record_login_failure(user, identifier, ip, device_fp, ua,
+                             "用户名或密码错误")
+        if user is not None and user.is_locked:
+            remaining = int((user.locked_until
+                             - timezone.now()).total_seconds())
+            cfg = _lock_minutes()
+            return self._error(
+                "account_locked",
+                f"连续登录失败次数过多，账号已锁定 {cfg} 分钟", max(remaining, 0),
+                status=status.HTTP_423_LOCKED)
+        return self._error("invalid_credentials", "用户名或密码错误", 0,
+                           status=status.HTTP_401_UNAUTHORIZED)
+
+    @staticmethod
+    def _error(code, detail, retry_after, status=status.HTTP_429_TOO_MANY_REQUESTS):
+        resp = Response({"detail": detail, "code": code}, status=status)
+        if retry_after:
+            resp["Retry-After"] = str(retry_after)
+        return resp
+
+
+def _lock_minutes() -> int:
+    from apps.accounts.security import get_security_config
+    return get_security_config()["LOCK_DURATION_MINUTES"]
+
+
+class StampedTokenRefreshView(TokenRefreshView):
+    """刷新访问令牌时把当前 ``security_stamp`` 写回新令牌，保证登出全部设备能吊销它。"""
+
+    def post(self, request, *args, **kwargs):
+        resp = super().post(request, *args, **kwargs)
+        raw = resp.data.get("access")
+        if raw:
+            try:
+                from rest_framework_simplejwt.tokens import AccessToken
+                access = AccessToken(raw)
+                user_id = access.get("user_id")
+                if user_id is not None:
+                    user = User.objects.filter(pk=user_id).first()
+                    if user is not None:
+                        access["security_stamp"] = user.security_stamp
+                        resp.data["access"] = str(access)
+            except Exception:
+                pass
+        return resp
+
+
+class LogoutView(APIView):
+    """登出：吊销当前 refresh 令牌（黑名单）+ 可选登出全部设备（轮换安全戳）。
+
+    按用户与按会话（jti）双重频率限制，防登出接口被刷。
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        ip = get_client_ip(request)
+        device_fp = get_device_fingerprint(request)
+        ua = request.META.get("HTTP_USER_AGENT", "")
+        jti = ""
+        if getattr(request, "auth", None) and hasattr(request.auth, "get"):
+            jti = request.auth.get("jti") or ""
+
+        allowed, code, retry_after, detail = check_logout_allowed(
+            user, jti=jti, ip=ip, device_fp=device_fp, user_agent=ua)
+        if not allowed:
+            record_blocked(user, user.username, ip, device_fp, ua, detail, code)
+            return Response({"detail": detail, "code": code},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS,
+                            headers={"Retry-After": str(retry_after)}
+                            if retry_after else None)
+
+        refresh_token = request.data.get("refresh") or ""
+        if refresh_token:
+            try:
+                RefreshToken(refresh_token).blacklist()
+            except Exception:
+                pass
+
+        # 同时兼容 JSON(true→Python bool) 与表单("True"/"1"→字符串) 两种传参
+        raw_all = request.data.get("all")
+        all_devices = raw_all is True or str(raw_all).lower() in (
+            "true", "1", "yes", "on")
+        if all_devices:
+            user.rotate_security_stamp()
+
+        record_logout(user, user.username, ip, device_fp, ua,
+                      detail=jti or ("all" if all_devices else ""))
+        detect_login_logout_oscillation(user)
+
+        tip = "已登出全部设备" if all_devices else "已登出"
+        return Response({"detail": tip}, status=status.HTTP_200_OK)
 
 
 class UsernameAvailableView(APIView):
@@ -125,6 +284,8 @@ class ChangePasswordView(APIView):
             data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        # 改密即吊销该账号所有其他会话（轮换安全戳），防止旧令牌继续可用
+        request.user.rotate_security_stamp()
         return Response({"detail": "密码已修改"}, status=status.HTTP_200_OK)
 
 

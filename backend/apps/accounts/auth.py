@@ -23,6 +23,8 @@ from lotus_passport.integrations.drf import (
     PassportAuthentication as _PassportAuthentication,
 )
 from lotus_passport.integrations.drf import get_client
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken
 
 
 def _jwt_alg(token: str | None) -> str | None:
@@ -79,3 +81,26 @@ def resolve_passport_user(identity) -> Any:
     user.set_unusable_password()
     user.save()
     return user
+
+
+class StampedJWTAuthentication(JWTAuthentication):
+    """在 simplejwt 校验基础上追加「安全戳」比对。
+
+    令牌签发时写入 ``security_stamp`` 声明；用户改密/被解锁/登出全部设备时轮换
+    该戳，旧令牌下次请求即被拒绝（401）。缺失声明的旧令牌（升级前签发）放行，
+    保证灰度部署不登出全员。
+    """
+
+    def authenticate(self, request):
+        header = self.get_header(request)
+        if header is None:
+            return None
+        raw_token = self.get_raw_token(header)
+        if raw_token is None:
+            return None
+        validated_token = self.get_validated_token(raw_token)
+        user = self.get_user(validated_token)
+        stamp = validated_token.get("security_stamp")
+        if stamp is not None and stamp != user.security_stamp:
+            raise InvalidToken("该会话已失效，请重新登录")
+        return user, validated_token

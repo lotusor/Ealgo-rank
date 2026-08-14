@@ -4,8 +4,9 @@ from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import (SpectacularAPIView, SpectacularSwaggerView)
-from rest_framework_simplejwt.views import (TokenObtainPairView,
-                                            TokenRefreshView, TokenVerifyView)
+from rest_framework_simplejwt.views import TokenVerifyView
+
+from apps.accounts.views import LoginView, LogoutView, StampedTokenRefreshView
 
 
 def healthz(_request):
@@ -13,9 +14,10 @@ def healthz(_request):
 
 
 api_v1 = [
-    path("auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("auth/token/", LoginView.as_view(), name="token_obtain_pair"),
+    path("auth/token/refresh/", StampedTokenRefreshView.as_view(), name="token_refresh"),
     path("auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),
+    path("auth/logout/", LogoutView.as_view(), name="logout"),
     path("", include("apps.accounts.urls")),
     path("", include("apps.schools.urls")),
     path("", include("apps.contests.urls")),
