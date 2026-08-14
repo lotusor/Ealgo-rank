@@ -3,8 +3,8 @@ from django.utils import timezone
 
 from apps.accounts.models import UserRole
 
-from .models import (AdminApplicationStatus, School, SchoolAdminApplication,
-                     ScoreConfig)
+from .models import (AdminApplicationStatus, AtCoderAffiliationAlias, School,
+                     SchoolAdminApplication, ScoreConfig)
 
 
 @admin.register(School)
@@ -59,3 +59,11 @@ class SchoolAdminApplicationAdmin(admin.ModelAdmin):
 class ScoreConfigAdmin(admin.ModelAdmin):
     list_display = ("__str__", "cf_factor", "atcoder_factor", "nowcoder_factor",
                     "platform_weight", "contest_weight", "recent_contest_limit")
+
+
+@admin.register(AtCoderAffiliationAlias)
+class AtCoderAffiliationAliasAdmin(admin.ModelAdmin):
+    list_display = ("raw_affiliation", "school", "canonical_name", "is_active",
+                    "note")
+    list_filter = ("is_active",)
+    search_fields = ("raw_affiliation", "canonical_name", "school__name")

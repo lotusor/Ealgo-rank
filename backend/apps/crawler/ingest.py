@@ -18,6 +18,7 @@ from django.utils import timezone
 from apps.accounts.models import PlatformAccount
 from apps.common.models import ExcludeReason, Platform
 from apps.contests.models import Contest, Participation, Problem
+from apps.schools.models import AtCoderAffiliationAlias, normalize_atcoder_affiliation
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,14 @@ def _ingest_ranks(contest, platform, ranks):
     matched = 0
     countable = 0
 
+    # AtCoder affiliation 归一化表（仅参考/核对，不影响归属）；一次性预取避免 N+1
+    alias_map = {}
+    if platform == Platform.ATCODER:
+        alias_map = {
+            a.raw_affiliation.strip().lower(): a
+            for a in AtCoderAffiliationAlias.objects.filter(is_active=True)
+        }
+
     for r, handle, display_name, is_cheater, raw_display in prepared:
         account = account_map.get(handle.lower())
         is_post = bool(r.get("post_contest_append"))
@@ -196,7 +205,12 @@ def _ingest_ranks(contest, platform, ranks):
         if not excluded:
             countable += 1
 
-        extra = r.get("extra") or {}
+        extra = dict(r.get("extra") or {})
+        # AtCoder affiliation 归一化（仅供参考/核对，不参与归属）
+        if alias_map and extra.get("affiliation"):
+            norm = normalize_atcoder_affiliation(extra["affiliation"], alias_map)
+            if norm:
+                extra["affiliation_normalized"] = norm
         Participation.objects.update_or_create(
             contest=contest,
             handle_lower=handle.lower(),

@@ -82,6 +82,6 @@ class ParticipationSerializer(serializers.ModelSerializer):
             "platform_account", "user_username", "user_real_name",
             "handle", "display_name", "rank", "total_score", "solved_count",
             "is_excluded", "exclude_reason", "exclude_reason_display",
-            "created_at",
+            "extra", "created_at",
         ]
         read_only_fields = fields

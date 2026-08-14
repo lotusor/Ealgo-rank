@@ -133,3 +133,59 @@ class ScoreConfig(TimeStampedModel):
             Platform.ATCODER: self.atcoder_factor,
             Platform.NOWCODER: self.nowcoder_factor,
         }.get(platform, self.default_contest_factor)
+
+
+class AtCoderAffiliationAlias(TimeStampedModel):
+    """AtCoder affiliation 别名归一化：把用户自填的混乱机构名映射到本校。
+
+    仅用于人工核对（不参与积分归属，学校归属仍只认 PlatformAccount）。
+    例如「Tokyo Institute of Technology」「東工大」「Tokyo Tech」都指向「东京工业大学」。
+    """
+
+    raw_affiliation = models.CharField("原始机构名", max_length=200, db_index=True,
+                                        help_text="AtCoder 榜单 Affiliation 原始写法")
+    school = models.ForeignKey(School, verbose_name="对应学校",
+                               null=True, blank=True, on_delete=models.CASCADE,
+                               related_name="affiliation_aliases")
+    canonical_name = models.CharField("归一化名", max_length=200, blank=True,
+                                       help_text="无对应学校时的归一化展示名")
+    is_active = models.BooleanField("启用", default=True, db_index=True)
+    note = models.CharField("备注", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "AtCoder 机构别名"
+        verbose_name_plural = verbose_name
+        ordering = ["raw_affiliation"]
+        constraints = [
+            models.UniqueConstraint(fields=["raw_affiliation"],
+                                    name="uniq_raw_affiliation"),
+        ]
+
+    def __str__(self):
+        target = self.school.name if self.school_id else \
+            (self.canonical_name or self.raw_affiliation)
+        return f"{self.raw_affiliation} → {target}"
+
+
+def normalize_atcoder_affiliation(raw, alias_map=None):
+    """AtCoder affiliation 归一化（仅供参考，不影响归属）。
+
+    alias_map: {lower_raw: AtCoderAffiliationAlias} 可选，命中则免查库。
+    返回 dict 或 None。
+    """
+    if not raw:
+        return None
+    if alias_map is not None:
+        alias = alias_map.get(raw.strip().lower())
+    else:
+        alias = AtCoderAffiliationAlias.objects.filter(
+            raw_affiliation__iexact=raw.strip(), is_active=True).first()
+    if not alias:
+        return None
+    return {
+        "raw": alias.raw_affiliation,
+        "school_id": alias.school_id,
+        "school_name": alias.school.name if alias.school_id else None,
+        "canonical_name": alias.canonical_name or (
+            alias.school.name if alias.school_id else None),
+    }

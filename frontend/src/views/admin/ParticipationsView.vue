@@ -9,6 +9,13 @@ import { fmtDate, fmtScore } from '@/utils/format'
 
 const toast = useToast()
 
+function affiliationHint(p: Participation): string {
+  const norm = p.extra?.affiliation_normalized
+  if (norm?.school_name) return norm.school_name
+  const raw = p.extra?.affiliation
+  return raw ? String(raw) : '—'
+}
+
 const data = ref<Participation[]>([])
 const loading = ref(false)
 const page = ref(1)
@@ -100,24 +107,26 @@ onMounted(load)
       <div class="table-wrap" style="border: none; border-radius: 0">
         <table class="data-table">
           <colgroup>
-            <col style="width: 14%" />
-            <col style="width: 22%" />
-            <col style="width: 12%" />
+            <col style="width: 13%" />
+            <col style="width: 20%" />
+            <col style="width: 10%" />
+            <col style="width: 15%" />
             <col style="width: 8%" />
             <col style="width: 8%" />
             <col style="width: 10%" />
-            <col style="width: 14%" />
-            <col style="width: 12%" />
+            <col style="width: 13%" />
+            <col style="width: 11%" />
             <col style="width: 8%" />
           </colgroup>
           <thead>
-            <tr><th>学生</th><th>比赛</th><th>平台</th><th class="num-cell">排名</th><th class="num-cell">解题数</th><th class="num-cell">积分</th><th>状态</th><th class="num-cell">时间</th><th class="center">操作</th></tr>
+            <tr><th>学生</th><th>比赛</th><th>平台</th><th>机构(归一)</th><th class="num-cell">排名</th><th class="num-cell">解题数</th><th class="num-cell">积分</th><th>状态</th><th class="num-cell">时间</th><th class="center">操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="p in data" :key="p.id">
               <td class="cell-strong">{{ p.user_real_name || p.user_username }}</td>
               <td class="cell-ellipsis">{{ p.contest_name }}</td>
               <td>{{ p.contest_platform_display }}</td>
+              <td class="cell-ellipsis text-tertiary">{{ affiliationHint(p) }}</td>
               <td class="num-cell num">{{ p.rank != null ? '#' + p.rank : '—' }}</td>
               <td class="num-cell num">{{ p.solved_count != null ? p.solved_count : '—' }}</td>
               <td class="num-cell num">{{ fmtScore(p.total_score) }}</td>
@@ -132,7 +141,7 @@ onMounted(load)
                 <button v-else class="btn btn-sm btn-danger" @click="onExclude(p)">剔除</button>
               </td>
             </tr>
-            <tr v-if="!data.length"><td colspan="9" class="empty-cell">暂无记录</td></tr>
+            <tr v-if="!data.length"><td colspan="10" class="empty-cell">暂无记录</td></tr>
           </tbody>
         </table>
       </div>

@@ -9,7 +9,8 @@ from apps.common.models import ExcludeReason, Platform
 from apps.contests.models import Contest, Participation
 from apps.crawler.ingest import (detect_cheater, ingest_contest,
                                  rebind_unbound_participations)
-from apps.schools.models import School
+from apps.schools.models import (AtCoderAffiliationAlias, School,
+                              normalize_atcoder_affiliation)
 
 
 class CheaterDetectionTests(TestCase):
@@ -299,3 +300,99 @@ class AutoCrawlTaskTests(TestCase):
             set(CrawlJob.objects.values_list("platform", flat=True)),
             {Platform.CODEFORCES, Platform.ATCODER, Platform.NOWCODER},
         )
+
+
+class AtCoderAffiliationNormalizationTests(TestCase):
+    """M2：AtCoder affiliation 归一化仅参考/核对，不参与学校归属。
+
+    核心约束：归一化结果写入 Participation.extra 供管理员核对，但绝不能改
+    PlatformAccount.school（学校归属只认绑定关系）。
+    """
+
+    def setUp(self):
+        self.school = School.objects.create(name="东京工业大学", code="titech")
+        self.user = User.objects.create_user(
+            username="atc1", password="pwd12345", school=self.school)
+        # 学生绑定的平台账号归属「测试大学」，与 AtCoder 自填机构无关
+        self.bound_school = School.objects.create(name="测试大学", code="test-u")
+        self.user.school = self.bound_school
+        self.user.save()
+        self.user.sync_platform_accounts_school()
+        self.acc = PlatformAccount.objects.create(
+            user=self.user, platform=Platform.ATCODER, handle="tourist_titech")
+        self.assertEqual(self.acc.school_id, self.bound_school.pk)
+
+        self.alias = AtCoderAffiliationAlias.objects.create(
+            raw_affiliation="Tokyo Institute of Technology",
+            school=self.school, canonical_name="东京工业大学")
+        self.no_school_alias = AtCoderAffiliationAlias.objects.create(
+            raw_affiliation="Some Club", canonical_name="某社团", school=None)
+
+    def _ingest_atcoder(self, ranks):
+        meta = {
+            "real_contest_id": 404555, "name": "AtCoder ABC 999",
+            "start_time": "2026-08-01 21:00:00",
+            "end_time": "2026-08-01 22:40:00", "duration_minutes": 100,
+            "is_rated": True, "is_paid": False,
+            "rated_source": "contest-info", "series": "AtCoder Beginner",
+        }
+        detail = {"problems": [], "ranks": ranks}
+        return ingest_contest(Platform.ATCODER, meta, detail)
+
+    def test_affiliation_normalized_into_extra(self):
+        stats = self._ingest_atcoder([{
+            "rank": 1, "uid": "tourist_titech", "user_name": " tourist ",
+            "accepted_count": 5, "is_cheater": False,
+            "post_contest_append": False, "score_detail": [],
+            "extra": {"affiliation": "tokyo institute of technology"},
+        }])
+        self.assertFalse(stats["skipped"])
+        p = Participation.objects.get(handle="tourist_titech")
+        norm = p.extra.get("affiliation_normalized")
+        self.assertIsNotNone(norm)
+        self.assertEqual(norm["school_id"], self.school.pk)
+        self.assertEqual(norm["school_name"], "东京工业大学")
+        self.assertEqual(norm["raw"], "Tokyo Institute of Technology")
+        # 大小写/空格归一：落库 raw 用别名表原始写法
+        self.assertEqual(norm["raw"], self.alias.raw_affiliation)
+
+    def test_attribution_untouched(self):
+        """归一化不得改变平台账号的学校归属。"""
+        self._ingest_atcoder([{
+            "rank": 1, "uid": "tourist_titech", "user_name": " tourist ",
+            "accepted_count": 5, "is_cheater": False,
+            "post_contest_append": False, "score_detail": [],
+            "extra": {"affiliation": "Tokyo Institute of Technology"},
+        }])
+        # 即便 AtCoder 自填机构指向「东京工业大学」，账号归属仍是「测试大学」
+        self.acc.refresh_from_db()
+        self.assertEqual(self.acc.school_id, self.bound_school.pk)
+
+    def test_no_match_writes_nothing(self):
+        self._ingest_atcoder([{
+            "rank": 1, "uid": "tourist_titech", "user_name": " tourist ",
+            "accepted_count": 5, "is_cheater": False,
+            "post_contest_append": False, "score_detail": [],
+            "extra": {"affiliation": "Unknown Org"},
+        }])
+        p = Participation.objects.get(handle="tourist_titech")
+        self.assertNotIn("affiliation_normalized", p.extra)
+
+    def test_alias_without_school_uses_canonical_name(self):
+        self._ingest_atcoder([{
+            "rank": 1, "uid": "tourist_titech", "user_name": " tourist ",
+            "accepted_count": 5, "is_cheater": False,
+            "post_contest_append": False, "score_detail": [],
+            "extra": {"affiliation": "some club"},
+        }])
+        p = Participation.objects.get(handle="tourist_titech")
+        norm = p.extra["affiliation_normalized"]
+        self.assertIsNone(norm["school_id"])
+        self.assertEqual(norm["canonical_name"], "某社团")
+
+    def test_normalize_helper_directly(self):
+        # 直接调用工具函数，确认无 alias_map 时也能查库
+        res = normalize_atcoder_affiliation("TOKYO INSTITUTE OF TECHNOLOGY")
+        self.assertEqual(res["school_name"], "东京工业大学")
+        self.assertIsNone(normalize_atcoder_affiliation(""))
+        self.assertIsNone(normalize_atcoder_affiliation("No Such Org"))

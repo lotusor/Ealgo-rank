@@ -52,7 +52,7 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 
 ## 1.3 进行中任务
 
-**低难度批次（2026-08-14 晚）已完成 4 项，全量验证通过（后端 67 tests OK，前端 typecheck 通过），尚未提交。** 详见 §1.6。最近一轮（2026-08-14）修复的三项验收问题已提交、验证通过（后端 63 tests OK，前端 typecheck 通过）：
+**低难度批次（4 项）已完成并提交（commit `fb60235`，后端 67 tests OK）；M1 已提交（commit `1819c6b`）；M2 已验证（后端 77 tests OK / 前端 typecheck 通过）待提交。** 详见 §1.6。最近一轮（2026-08-14）修复的三项验收问题已提交、验证通过（后端 63 tests OK，前端 typecheck 通过）：
 - **#1 积分系数设置后台入口**：新增超管专属「积分系数设置」页（`/admin/score-config`，`superOnly`），读取/保存全局 `ScoreConfig` 单例。
 - **#2 定时自动激活爬虫**：新增 `CrawlConfig` 单例（超管设置启用开关/各平台抓取范围/触发小时）；`auto_crawl_task` 由 Celery Beat 每日调度，读取 `CrawlConfig` 派发三平台；`CrawlConfig` 变更经 signal 同步 beat crontab；爬虫页「自动爬取设置」卡片可配置。
 - **#3 爬虫防重复爬取**：任务级去重（同平台+同参数在 1h 窗口内已有进行中任务则不重复派发，Python 归一化比较，不依赖 JSON 列精确匹配）；比赛级已由 `Contest(platform, external_id)` 唯一约束 + `update_or_create` 保证幂等。
@@ -94,11 +94,11 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 | 低 | `ScoreConfig` 系数和校验 | ✅ 已完成 | `validate()`（权重和=1 / 系数非负 / 上限非负）+ 4 测试 |
 | 低 | 个人成绩页「我的排名」入口 | ✅ 已完成 | 调 `listRankings({scope:'student', user:me.id})` 展示学生榜名次 |
 | 中 | 启用 `proposed_school_name`（申请系统里还没有的学校） | ✅ 已完成 | 序列化器二选一（绑定已有/新建）+ 审批通过自动建档 + 前端双模式表单 + 5 测试 |
-| 中 | AtCoder 学校别名归一化 | ⏳ 待确认 | 新功能：别名表 + 聚合归一，提升按校聚合准确度 |
+| 中 | AtCoder 学校别名归一化 | ✅ 已完成 | 别名表 `AtCoderAffiliationAlias` + 入库归一化写入 `Participation.extra`（仅参考/核对，不动归属）；admin 注册 + 5 测试 |
 | 高 | 生产化部署（PostgreSQL / Gunicorn / Nginx） | ⏳ 待确认 | 架构+资源：须用户提供部署环境与域名等信息 |
 | 高 | 真实 GitHub OAuth 浏览器联调 | ⏳ 待确认 | 环境/范围：受 OAuth 单 callback 限制，须决策 dev App 或沿用 mock |
 
-> 低难度批次已通过验证（后端 **67 tests OK** / 前端 typecheck 通过），**尚未提交**（待统一 commit）。中/高难度项涉及范围或架构决策，须用户确认后方可执行。
+> 低难度批次（4 项）已提交（commit `fb60235`，后端 67 tests OK）；M1 已提交（commit `1819c6b`，+5 测试）；M2 已验证（后端 **77 tests OK** / 前端 typecheck 通过），待提交。中/高难度项涉及范围或架构决策，须用户确认后方可执行。
 
 # 第二部分：需要记忆的关键信息
 

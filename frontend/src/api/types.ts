@@ -179,6 +179,7 @@ export interface Participation {
   is_excluded: boolean
   exclude_reason: ExcludeReason
   exclude_reason_display: string
+  extra?: Record<string, any>
   created_at: string
 }
 
@@ -250,6 +251,7 @@ export interface MyParticipation {
   is_excluded: boolean
   exclude_reason: ExcludeReason
   exclude_reason_display: string
+  extra?: Record<string, any>
   created_at: string
 }
 
