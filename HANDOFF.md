@@ -100,6 +100,95 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 
 > 低难度批次（4 项）已提交（commit `fb60235`，后端 67 tests OK）；M1 已提交（commit `1819c6b`，+5 测试）；M2 已验证（后端 **77 tests OK** / 前端 typecheck 通过），待提交。中/高难度项涉及范围或架构决策，须用户确认后方可执行。
 
+## 1.7 高难度任务实施方案（草案，待用户确认 — 2026-08-14）
+
+> 用户已确认"两项都先做方案"，以下为**草案，未改代码**。涉及架构 / 资源 / 环境信息须用户拍板后方可执行（H1/H2 均属此列）。
+
+### H1 生产化部署（PostgreSQL / Gunicorn / Nginx）
+
+**现状（已具备 ~80%）**
+- `config/settings/prod.py` 已就绪：PostgreSQL 引擎、`REDIS_CACHE_URL`、SSL 安全头、`SECURE_PROXY_SSL_HEADER`、强制 `DJANGO_SECRET_KEY` / `DJANGO_ALLOWED_HOSTS`。
+- `requirements.txt` 第 16–17 行 psycopg / gunicorn 处于注释状态。
+- `.env.example` 已覆盖 `DB_*` / `DJANGO_*` / `CELERY_*` / `CORS_*` / `ROOT_ADMIN_*`。
+- `STATIC_ROOT=staticfiles`、`MEDIA_ROOT=media`；前端 `npm run build` → `dist`。
+- 尚无 nginx / systemd(supervisor) / 部署文档。
+
+**实施步骤（草案）**
+1. 取消注释并安装 `psycopg[binary]`、`gunicorn`；提交（chore 依赖）。
+2. 生产 `.env`：`DJANGO_ENV=prod` + 真实密钥/域名/库；`PASSPORT_BASE_URL=https://passport.eacm.cn`；`CORS_ALLOWED_ORIGINS`/`CSRF_TRUSTED_ORIGINS` 指向生产前端域。
+3. 生产 PostgreSQL 建库建用户 → `migrate` → `bootstrap`（root 超管 + 全局积分配置）→ 可选 `seed_demo`。
+4. `manage.py collectstatic --noinput` → `staticfiles/`；`media/` 持久化。
+5. Gunicorn systemd unit：`gunicorn config.wsgi:application -k gthread -w <2×CPU+1> -b 127.0.0.1:8001 --env DJANGO_ENV=prod --timeout 120`（working dir=backend，.env 由 `load_dotenv(REPO_ROOT/.env)` 自动读取）。
+6. Celery worker + beat 两个 unit，`--env DJANGO_ENV=prod`（worker `-Q crawl,crawl_slow`）。
+7. Nginx：① API 虚拟主机反代 `127.0.0.1:8001`，透传 `X-Forwarded-Proto https`，serve `/static` `/media`；② 前端虚拟主机 root=`frontend/dist`，SPA fallback 到 `index.html`。SSL 用 certbot。
+8. 前端：`VITE_PASSPORT_URL=https://passport.eacm.cn` `VITE_API_TARGET=https://api.<域>` 后 `npm run build`。
+9. 校验：`manage.py check --deploy` + 登录/榜单/重算冒烟。
+
+**需用户决策（资源 / 架构）**
+- 目标域名（API 域、前端域、passport 生产地址分别是什么）
+- 服务器 OS 与既有组件：是否已装 PostgreSQL / Redis / Nginx？裸机还是容器（当前无 Dockerfile）
+- 进程管理用 systemd 还是 supervisor（prod.py 注释提到 Supervisor）
+- SSL 证书方式（certbot 自动 / 已有证书）
+- 后端、前端、passport 是否同机
+
+### H2 真实 GitHub OAuth 浏览器联调
+
+**现状**
+- 认证统一走 lotus-passport（RS256 JWT）；GitHub 登录由 passport 侧接入，本系统仅消费令牌。
+- 前端有 `[DEV] 模拟通行证登录` 按钮（mock）；生产应切真实 passport 登录入口。
+- 受 GitHub OAuth App **单 callback URL** 限制：dev / prod 二选一（见 §1.4 #2、§2.9）。
+
+**实施步骤（草案）**
+1. passport 侧配置 GitHub OAuth App（Client ID/Secret），callback = 生产 passport 回调（如 `https://passport.eacm.cn/auth/github/callback`）。
+2. 关键决策（见下）：dev/prod 双 OAuth App，还是沿用模拟登录、prod 直接走真实 passport。
+3. 前端：`VITE_PASSPORT_URL` 指向真实 passport；生产隐藏 `[DEV] 模拟通行证登录`；登录入口跳 passport 的 GitHub 授权页。
+4. 联调：浏览器真实 GitHub 授权 → 回 passport callback → 拿 RS256 JWT → 本系统 `AlgoRankPassportAuthentication` 离线验签 → 建/解析本地用户 → 登录成功。
+
+**需用户决策（环境 / 范围）**
+- 是否要 dev/prod 双套 GitHub OAuth App（受单 callback 限制）
+- passport 生产部署地址与是否已配 GitHub provider
+- 是否保留前端模拟登录按钮（仅 dev 保留）
+
+### 1.7.1 方案细化（依用户 2026-08-14 确认决策）
+
+**H1 已确认架构**
+- 部署形态：**Docker 容器化**（新增 `docker/Dockerfile`，原无 Dockerfile）
+- 数据库/缓存：**复用宝塔内置 PostgreSQL 与 Redis**（不另起容器）
+- 反代：**复用宝塔现有 Nginx**（不另起 nginx 容器）
+- 域名：**rank.eacm.cn**（现挂临时页）→ 前端 + API 同域；API 为相对路径 `/api/v1`，Nginx 反代即可，**无需独立 API 子域**
+
+**已产出草案文件（未部署，待评审）**
+- `docker/Dockerfile` —— 后端镜像（python:3.13-slim，含 backend + crawlers，gunicorn 默认命令）
+- `docker-compose.yml`（仓库根）—— `backend`/`worker`/`beat` 三服务，`network_mode: host`（直连宿主 127.0.0.1 的 PG/Redis 与 gunicorn:8001），`media` 宿主机 bind mount 持久化
+- `.dockerignore` —— 排除 frontend/.git/media/node_modules/ 等
+- `deploy/nginx-rank.eacm.cn.conf` —— 宝塔站点：root=前端 dist，`/api` `/static` `/media` 反代 `127.0.0.1:8001`，SPA fallback
+- `.env.prod.example` —— 生产环境变量模板（`DB_HOST/REDIS=127.0.0.1`、`PASSPORT_BASE_URL=https://passport.eacm.cn`）
+- `.gitignore` 已追加 `.env.prod`、`volumes/`
+
+**H1 部署步骤（草案，待执行）**
+1. 启用依赖：取消注释 `requirements.txt` 的 psycopg/gunicorn（提交 chore）。
+2. 宝塔 PostgreSQL 建库建用户（`ealgo`/`ealgo` + 强密码）；Redis 确认可达。
+3. 复制 `.env.prod.example` → `.env.prod`，填真实 `DJANGO_SECRET_KEY` / `DB_PASSWORD` / `ROOT_ADMIN_PASSWORD`。
+4. `docker compose build` → `docker compose run --rm backend python manage.py migrate` → `bootstrap` → 可选 `seed_demo`。
+5. `docker compose run --rm backend python manage.py collectstatic --noinput`。
+6. 前端：`VITE_PASSPORT_URL=https://passport.eacm.cn` 后 `npm run build`，产物放宝塔站点 `dist/`。
+7. 宝塔加载 `deploy/nginx-rank.eacm.cn.conf`，配 SSL（certbot）。
+8. `docker compose up -d`（backend/worker/beat）。
+9. 校验：`manage.py check --deploy` + 登录/榜单/重算冒烟。
+
+**H2 结论（依用户确认）**
+- 本仓库端**不需要**独立的 GitHub OAuth 注册/登录入口；OAuth 接入是 lotus-passport 的职责，注册必须先走通行证，账密仅作注册后登录手段之一。
+- 本仓库侧零改动：生产 `VITE_PASSPORT_URL` 指向真实 passport（已在 `.env.prod` / 构建体现）；`[DEV] 模拟通行证登录` 按钮本就是 dev-only。
+- 联调链路：经 passport 真实 GitHub 授权 → 回 passport callback → 拿 RS256 JWT → 本系统 `AlgoRankPassportAuthentication` 离线验签 → 建/解析本地用户 → 登录成功。passport 的 GitHub provider 是否就绪属 passport 仓库职责。
+
+**H1 执行前仍需用户提供**
+- 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
+- `DJANGO_SECRET_KEY` 强随机值、初始超管密码
+- passport 生产地址与 GitHub provider 是否就绪（影响 `PASSPORT_BASE_URL` 与 CORS）
+- 服务器是否已装 Docker / Docker Compose
+
+---
+
 # 第二部分：需要记忆的关键信息
 
 ## 2.1 项目背景与核心目标

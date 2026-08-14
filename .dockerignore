@@ -1,0 +1,20 @@
+# 构建上下文 = 仓库根目录；以下路径相对于仓库根
+frontend/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+node_modules/
+media/
+staticfiles/
+db.sqlite3
+.env
+.env.prod
+ Shot/
+# 保留 .env.prod.example（模板，非密钥）进入镜像无关紧要，但排除避免混淆
+.env.prod.example
+# 部署产物目录（media 持久卷与前端 dist 由宿主机提供）
+volumes/

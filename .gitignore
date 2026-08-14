@@ -5,6 +5,7 @@ __pycache__/
 venv/
 
 .env
+.env.prod
 db.sqlite3
 db.sqlite3-journal
 
@@ -24,3 +25,6 @@ dist/
 _shots/
 _e2e_shots/
 dist-verify/
+
+# Docker 部署：媒体持久卷（宿主机目录，含用户上传）
+volumes/

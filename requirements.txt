@@ -12,9 +12,9 @@ python-dotenv==1.2.2
 requests==2.34.2
 Pillow==12.3.0
 
-# 生产环境额外需要（按需取消注释）
-# psycopg[binary]==3.2.*
-# gunicorn==23.*
+# 生产环境额外需要（Docker 部署已启用）
+psycopg[binary]==3.2.*
+gunicorn==23.*
 
 # 统一认证中心 JWT 验签 SDK（RS256 + JWKS，离线验签）
 # 开发期从本地 ../lotus-passport-sdk 可编辑安装：

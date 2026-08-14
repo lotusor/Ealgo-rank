@@ -1,0 +1,47 @@
+# E-algo-rank 后端编排
+# 设计要点（依用户决策 2026-08-14）：
+#   - Docker 容器化，但 PG / Redis 复用 宝塔 内置实例，nginx 复用 宝塔 现有
+#   - 容器用 host 网络模式：直接访问宿主 127.0.0.1 的 PG/Redis 与 gunicorn:8001
+#     （避免 宝塔 服务仅监听 127.0.0.1 时 docker bridge 不可达的坑）
+#   - 前端静态产物由 宝塔 nginx 托管，本编排不含前端/PG/Redis/nginx 容器
+#   - 媒体文件用宿主机 bind mount 持久化（./volumes/media）
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    network_mode: "host"
+    env_file:
+      - .env.prod
+    environment:
+      DJANGO_ENV: prod
+    volumes:
+      - ./volumes/media:/app/backend/media
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    network_mode: "host"
+    command: celery -A config worker -Q crawl,crawl_slow -l info
+    env_file:
+      - .env.prod
+    environment:
+      DJANGO_ENV: prod
+    volumes:
+      - ./volumes/media:/app/backend/media
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    network_mode: "host"
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file:
+      - .env.prod
+    environment:
+      DJANGO_ENV: prod
+    restart: unless-stopped
