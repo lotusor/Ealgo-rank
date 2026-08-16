@@ -3,6 +3,7 @@ import axios, {
   type InternalAxiosRequestConfig,
   type AxiosResponse,
 } from 'axios'
+import { getDeviceId } from '../utils/device'
 
 export const API_BASE = '/api/v1'
 
@@ -14,12 +15,13 @@ const client: AxiosInstance = axios.create({
   timeout: 30000,
 })
 
-// 请求拦截：注入 Bearer Token
+// 请求拦截：注入 Bearer Token + 稳定设备指纹（X-Device-Id）
 client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = localStorage.getItem('access_token')
   if (token) {
     config.headers.set('Authorization', `Bearer ${token}`)
   }
+  config.headers.set('X-Device-Id', getDeviceId())
   return config
 })
 

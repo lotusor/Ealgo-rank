@@ -79,7 +79,7 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 | **`proposed_school_name` 未启用** | ✅ 已启用 | 申请支持"系统里还没有的学校"：`school` 可空 + `proposed_school_name` 二选一；审批通过时 `get_or_create` 自动建档（2026-08-14 晚 M1） |
 | **`PlatformAccount.handle` 不可改** | 🟡 | 防止归属唯一性被破坏；改学校走 `sync_platform_accounts_school()` |
 | **`UnorderedObjectListWarning`** | ✅ 已修复 | `ScoreConfig` 分页无 `ordering`；已在 `ScoreConfigViewSet` 加 `ordering=["-updated_at"]` 消除告警（2026-08-14 晚低难度批次） |
-| **Dead code：权限类** | ⚪ | `common/permissions.py` 中 `IsOwnSchoolAdmin` / `ReadOnlyOrSchoolAdmin` 已定义但未被任何视图引用；清理或接入前勿误用（低难度批次**未处理**，留待决定保留或接入口径） |
+| **Dead code：权限类** | ✅ 已清理 | `common/permissions.py` 的 `IsOwnSchoolAdmin` / `ReadOnlyOrSchoolAdmin` 已删除（全仓库无引用）；保留 `IsSuperAdmin` / `IsSchoolAdmin` |
 | **本地无 Redis** | 🟠 | 见 §2.9 环境坑：Celery 触发接口已用后台线程 + socket 探测规避阻塞，但真跑 worker 需先 `redis-server` 或设 `CELERY_TASK_ALWAYS_EAGER=1` |
 
 ---
@@ -510,6 +510,8 @@ manage.py shell -c "from apps.crawler.tasks import auto_crawl_task; print(auto_c
 - **实测验证**（`NatFriendlyThrottlingTests.test_device_isolation_behind_same_ip`）：攻击者设备在同一校园网出口 IP 下反复失败被 `device_rate` 拦截，而受害者设备（**同一 IP、不同设备指纹**）用正确密码登录仍 200——证明共享 IP 下的正常用户不被误伤，攻击者也无法借共享 IP 绕过设备维度限制。
 
 **效果**：限流/锁定精准落到「具体账号 + 具体设备」，而非「整片校园网 IP」，既防爆破撞库、又不误伤、也防绕过。
+
+**前端接入（2026-08-16）**：`frontend/src/utils/device.ts` 生成 localStorage 稳定设备 ID，`frontend/src/api/client.ts` 请求拦截器全局注入 `X-Device-Id` 头，登录/登出/刷新请求均携带，使设备维度限流真正生效（此前仅后端逻辑就绪、前端未发该头）。
 
 ### 5) 配置项（`security.get_security_config()` 先读 `settings` 再读环境变量，均可覆盖）
 
