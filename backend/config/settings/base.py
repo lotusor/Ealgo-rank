@@ -28,6 +28,16 @@ def env_bool(key, default=False):
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
+def env_int(key, default):
+    val = os.environ.get(key)
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
+
+
 def env_list(key, default=None):
     val = os.environ.get(key)
     if not val:
@@ -164,6 +174,11 @@ LOTUS_PASSPORT = {
     "BASE_URL": env("PASSPORT_BASE_URL", "http://127.0.0.1:8000"),
     "ISSUER": env("PASSPORT_ISSUER", "lotus-passport"),
     "AUTO_CREATE_USER": env_bool("PASSPORT_AUTO_CREATE_USER", True),
+    # 可选验签参数（默认值来自 lotus-passport SDK；此处显式化以便调参与观测）
+    # 2026-08-16 护照侧实测核实：iss=lotus-passport、不签发 aud、JWKS 走公网 https
+    "LEEWAY": env_int("PASSPORT_JWKS_LEEWAY", 10),        # 时钟偏差容忍(s)，跨机建议 5–10
+    "TIMEOUT": env_int("PASSPORT_HTTP_TIMEOUT", 5),       # JWKS/refresh 出站超时(s)
+    "JWKS_CACHE_TTL": env_int("PASSPORT_JWKS_CACHE_TTL", 600),  # JWKS 公钥缓存(s)
     "USER_RESOLVER": "apps.accounts.auth.resolve_passport_user",
 }
 

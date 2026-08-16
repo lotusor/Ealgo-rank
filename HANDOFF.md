@@ -14,7 +14,8 @@
 
 - ✅ **已是 git 仓库**（master 分支，提交历史完整），非早期文档所说的"无 VCS"。
 - ✅ 核心功能（认证、爬虫调度、积分引擎、公告、站内信、权限体系、管理后台、用户端）**均已落地并验证**。
-- ⏳ 生产化（PostgreSQL / Gunicorn / 真实 passport 域名）尚未落地。
+- ✅ **Lotus Passport 接入契约已实测核实（2026-08-16）**：iss=lotus-passport、RS256、不签发 aud、access 30min/refresh 14d、redirect_uri 白名单 origin 级含 rank.eacm.cn、JWKS 公网可达。详见 §1.7.2。
+- ⏳ 生产化（PostgreSQL / Gunicorn / Docker 部署）尚未落地（passport 接入配置已就绪，H1 部署执行时即可生效）。
 - ⏳ 少量技术债务与可选增强见 §1.5。
 
 ## 1.2 已完成功能模块
@@ -24,7 +25,7 @@
 | Django 骨架 + 模型 | ✅ | 自定义用户模型 `accounts.User`；7 个 app（accounts/schools/contests/crawler/ranking/common/announcements） |
 | 认证与用户 API | ✅ | 注册/登录/JWT/改密/平台账号/用户名认领（passport 首登 UUID 占位→补全页认领锁定） |
 | 登录安全 | ✅ | 失败锁定+自动解锁/管理员解锁；登入登出多维限流（账号/设备指纹/IP 兜底放宽）；撞库与会话探测异常检测；安全戳会话吊销；**校园网共享 NAT 友好**（见 §1.9） |
-| Lotus Passport 接入 | ✅ | RS256 离线验签 + 双轨认证（HS256 本地兜底并存）；fragment 回调解析 |
+| Lotus Passport 接入 | ✅（生产已验证 2026-08-16） | RS256 离线验签 + 双轨认证（HS256 本地兜底并存）；fragment 回调解析；契约见 §1.7.2 |
 | 管理员申请与审批流 | ✅ | 提交/列表/审批/驳回/撤回；仅超管审批；**申请校验**：原因必填、每月限一次、已是管理员禁止再申请 |
 | 积分排名引擎 | ✅ | 基础分 + 平台/比赛系数加权；学校榜/学生榜快照 + Redis 缓存层 |
 | 爬虫 Celery 接线 | ✅ | 每日爬 + 每日重算（beat 调度由迁移种子写入 DB） |
@@ -63,7 +64,7 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 ## 1.4 待办事项（建议顺序）
 
 1. **生产化部署**：取消注释并安装 `psycopg` / `gunicorn`；配置 `DJANGO_SECRET_KEY`、`ALLOWED_HOSTS`、`VITE_PASSPORT_URL`；Nginx + Gunicorn + Supervisor（见 §2.6）。
-2. **真实 GitHub OAuth 浏览器联调**：受 GitHub OAuth App 单 callback URL 限制（dev/prod 二选一）。建议另建 dev 专用 OAuth App，或沿用前端的 `[DEV] 模拟通行证登录` 按钮验证链路（见 §2.9）。
+2. **真实 GitHub OAuth 浏览器联调**：✅ **2026-08-16 已实测核实**——iss=lotus-passport 与 `PASSPORT_ISSUER` 一致、redirect_uri 白名单 origin 级含 `rank.eacm.cn`、JWKS 公网可达、令牌寿命 access 30min/refresh 14d；前端仅暴露 GitHub 入口为刻意取舍（QQ/微信 passport 侧已就绪，微信未启用）。详见 §1.7.2。
 3. **（可选）"我的排名"入口**：个人成绩页展示用户在榜单中的名次（`listRankings({scope:'student', user:me.id})`）。
 4. **（可选）AtCoder 学校别名归一化**：`Affiliation` 自填写法混乱，需别名表才能稳定按学校聚合（当前仅靠本地 handle↔学生绑定）。
 5. **（已确认不做）分类资源网站推荐**：不在范围内。
@@ -210,6 +211,48 @@ def relevant_contest_ids(platform):
 - 本仓库端**不需要**独立的 GitHub OAuth 注册/登录入口；OAuth 接入是 lotus-passport 的职责，注册必须先走通行证，账密仅作注册后登录手段之一。
 - 本仓库侧零改动：生产 `VITE_PASSPORT_URL` 指向真实 passport（已在 `.env.prod` / 构建体现）；`[DEV] 模拟通行证登录` 按钮本就是 dev-only。
 - 联调链路：经 passport 真实 GitHub 授权 → 回 passport callback → 拿 RS256 JWT → 本系统 `AlgoRankPassportAuthentication` 离线验签 → 建/解析本地用户 → 登录成功。passport 的 GitHub provider 是否就绪属 passport 仓库职责。
+- ✅ **2026-08-16 已实测核实**：iss=`lotus-passport`（与 `PASSPORT_ISSUER` 一致，无 `InvalidIssuer`）、redirect_uri 白名单 origin 级含 `rank.eacm.cn`、JWKS 公网 `https://passport.eacm.cn/.well-known/jwks.json` 可达、令牌寿命 access 30min/refresh 14d。集成契约见 **§1.7.2**。
+
+### 1.7.2 Lotus Passport 接入契约（2026-08-16 实测核实）
+
+> 护照侧维护方就集成评审 10 项缺口逐条实测核实（见《集成评审遗留缺口与风险跟踪 2026-08-16》）。本系统侧代码已于此前落地，本次据核实结果锁定生产配置并收口文档。
+
+**域名规划（已确认）**
+| 角色 | 域名 |
+| --- | --- |
+| E-algo Rank 前端 + API（同域，API 经 Nginx 反代 `/api/v1`） | `https://rank.eacm.cn` |
+| Lotus Passport 后端 API（本系统登录/刷新令牌打这里） | `https://passport.eacm.cn` |
+| Lotus Passport 前端（托管登录页；本系统未直连，仅 passport 自用） | `https://account.eacm.cn` |
+
+**已实测核实的护照侧契约**
+- `iss` = `lotus-passport`（与 `PASSPORT_ISSUER` 一致，无 `InvalidIssuer` 风险）。
+- 算法 RS256；**不签发 `aud`**（双方均不校验，属已知防御盲区，见下）。
+- 令牌寿命：`ACCESS_TOKEN_LIFETIME=30min`、`REFRESH_TOKEN_LIFETIME=14d`（本地 HS256 的 60min/7d 仅作对照，**不作生产预期**；access 过期用 refresh 续期，refresh 过期 14d 后强制重新 OAuth）。
+- `redirect_uri` 白名单 `OAUTH_ALLOWED_REDIRECT_URIS=https://account.eacm.cn,https://rank.eacm.cn`，**origin 级**匹配 → 本系统回跳 `https://rank.eacm.cn/auth/callback` 已放行，**无需再登记**。
+- CORS：`rank.eacm.cn` 已在 passport `CORS_ALLOWED_ORIGINS` → 浏览器直连其 `/api/v1/oauth/github/login/` 与 `/api/v1/token/refresh/` 均允许。
+- JWKS：`https://passport.eacm.cn/.well-known/jwks.json` 公网 HTTPS 正常（证书 SAN 含 `eacm.cn`）。**注意**：passport gunicorn 仅 `127.0.0.1:8000` 明文，必须走公网 `https://passport.eacm.cn`，本系统 `PASSPORT_BASE_URL` 已是该值。
+
+**集成架构（本系统侧，代码已落地）**
+- 后端：`AlgoRankPassportAuthentication`（RS256 离线验签）→ `resolve_passport_user()` 按 `passport_user_id` 查/建本地 `User`（首登 `username=UUID占位` + `set_unusable_password`）；`LOTUS_PASSPORT` 配置见 `config/settings/base.py`。
+- 前端：`RegisterEntryView` 调 `${VITE_PASSPORT_URL}/api/v1/oauth/github/login/?redirect_uri=${origin}/auth/callback` 取 `authorize_url` → 跳 GitHub；`AuthCallbackView` 解析 fragment 的 `access_token`/`refresh_token` → 存 localStorage → `GET /me/` 由后端验签。刷新由 `client.ts` 拦截器按 `auth_source='passport'` 打 passport `/token/refresh/`。
+- 仅 GitHub 入口（QQ/微信 passport 侧已就绪但微信未启用；多 provider 为待补项，非 bug）。
+
+**上线前必做（仅剩运行时核验）**
+- [ ] 后端容器内执行 `curl -sS -o /dev/null -w '%{http_code}' https://passport.eacm.cn/.well-known/jwks.json` 期望 `200`（查 DNS / 443 出站 / 内网 CA 信任），纳入 H1 上线检查清单。
+
+**10 项缺口处置（集成评审）**
+| # | 缺口 | 处置 |
+| --- | --- | --- |
+| 8.1 | 文档状态未统一为「生产已验证」 | ✅ 本小节统一改写 |
+| 8.2 | 两套 callback 混用 | ✅ 已核实：origin 级白名单含 `rank.eacm.cn`，回跳已放行 |
+| 8.3 | iss 实际值 | ✅ 实测 `lotus-passport`，与 `PASSPORT_ISSUER` 一致 |
+| 8.4 | aud/AUDIENCE 未文档化 | ✅ 护照不签发 aud；本系统显式配置 `LEEWAY/TIMEOUT/JWKS_CACHE_TTL`（`base.py`），盲区已记录 |
+| 8.5 | JWKS 出站可达性 | ✅ 护照侧可用；本系统上线前 curl 核验（上条自查清单） |
+| 8.6 | 仅 GitHub 接通 | ✅ 刻意取舍，待补 QQ/微信 |
+| 8.7 | 令牌寿命未对齐 | ✅ 实测 access 30min/refresh 14d，已记录 |
+| 8.8 | 双路由语义不清 | 📌 本系统文档已补：`/register/info`(public，拉学校列表等) vs `/register/complete`(auth，passport 首登补全/绑校) |
+| 8.9 | 降级边界 | ✅ 已说明：离线验签对**存量用户**无感；**首登新用户**依赖 `AUTO_CREATE_USER`+验签，passport 宕机且 JWKS 缓存失效时无法建号 |
+| 8.10 | 安全戳例外 | ✅ 已说明：`security_stamp` 仅本地 HS256 令牌；passport RS256 不含该声明，改密/解锁/登出全设备吊销对 passport 登录用户**不适用** |
 
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
@@ -303,10 +346,13 @@ e-algo-rank/
 | `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` / `REDIS_CACHE_URL` | 默认 `redis://127.0.0.1:6379/{0,1,2}` |
 | `CELERY_TASK_ALWAYS_EAGER` | 本地无 Redis 设 `1` 同步执行 |
 | `JWT_ACCESS_MINUTES` / `JWT_REFRESH_DAYS` | JWT 有效期（默认 60 / 7） |
-| `PASSPORT_BASE_URL` / `PASSPORT_ISSUER` | lotus-passport（默认 `http://127.0.0.1:8000` / `lotus-passport`） |
-| `CORS_ALLOWED_ORIGINS` | 前端地址；改后需重启 passport 生效 |
+| `PASSPORT_BASE_URL` / `PASSPORT_ISSUER` | lotus-passport（默认 `http://127.0.0.1:8000` / `lotus-passport`；生产 `https://passport.eacm.cn` / `lotus-passport`，已实测核实） |
+| `PASSPORT_AUTO_CREATE_USER` | 首登无本地行时自动建号（默认 `True`） |
+| `PASSPORT_JWKS_LEEWAY` / `PASSPORT_HTTP_TIMEOUT` / `PASSPORT_JWKS_CACHE_TTL` | 验签时钟容忍(s,默认10) / JWKS出站超时(s,默认5) / JWKS缓存(s,默认600)；已显式化于 `base.py` |
+| `CORS_ALLOWED_ORIGINS` | 前端地址（生产 `https://rank.eacm.cn`）；passport 侧 CORS 亦含 rank.eacm.cn |
 | `ROOT_ADMIN_USERNAME/EMAIL/PASSWORD` | 初始超管，密码留空则随机生成打印一次 |
-| `VITE_PASSPORT_URL` / `VITE_API_TARGET` | 前端：passport 地址 / 后端地址（同机时后端起 8001） |
+| `VITE_PASSPORT_URL` / `VITE_API_TARGET` | 前端：`https://passport.eacm.cn` / 后端（同域生产用相对 `/api/v1`，此项仅 dev 代理） |
+| `aud` / `AUDIENCE` | 护照**不签发** `aud`，本系统未设 `AUDIENCE`（SDK 默认 `None`）→ 双方均不校验；属已知防御盲区（详见 §1.7.2） |
 
 **本地运行**
 ```bash
