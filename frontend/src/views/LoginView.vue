@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
+import PassportLoginButtons from '@/components/auth/PassportLoginButtons.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -13,6 +14,10 @@ const username = ref('')
 const password = ref('')
 const loading = ref(false)
 const error = ref('')
+
+function onForgotPassword() {
+  toast.info('当前功能开发中')
+}
 
 async function onSubmit() {
   error.value = ''
@@ -33,9 +38,6 @@ async function onSubmit() {
   }
 }
 
-function goPassport() {
-  router.push({ name: 'register' })
-}
 </script>
 
 <template>
@@ -52,12 +54,9 @@ function goPassport() {
         <p class="body-sm text-secondary">登录以查看你的竞赛排名与成绩</p>
       </div>
 
-      <button class="btn btn-lg btn-block" style="background: linear-gradient(135deg, #7c3aed, #6366f1); color: #fff; height: 52px; margin-bottom: var(--space-5)" @click="goPassport">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg>
-        使用 Lotus Passport 登录
-      </button>
+      <PassportLoginButtons />
 
-      <div style="display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-6)">
+      <div style="display: flex; align-items: center; gap: var(--space-4); margin: var(--space-5) 0 var(--space-6)">
         <div style="flex: 1; height: 1px; background: var(--color-divider)" />
         <span class="caption text-tertiary">或使用本地账号</span>
         <div style="flex: 1; height: 1px; background: var(--color-divider)" />
@@ -78,7 +77,7 @@ function goPassport() {
           <label style="display: flex; align-items: center; gap: var(--space-2); font-size: 13px; color: var(--color-text-secondary); cursor: pointer">
             <input type="checkbox" checked style="accent-color: var(--color-primary)" /> 记住我
           </label>
-          <a class="link caption">忘记密码？</a>
+          <a class="link caption" @click="onForgotPassword">忘记密码？</a>
         </div>
         <button type="submit" class="btn btn-primary btn-block btn-lg" :disabled="loading">
           {{ loading ? '登录中…' : '登录' }}
@@ -86,7 +85,7 @@ function goPassport() {
       </form>
 
       <p class="caption text-tertiary" style="text-align: center; margin-top: var(--space-6)">
-        还没有账号？<a class="link" @click="goPassport">通过 Lotus Passport 注册</a>
+        还没有账号？<a class="link" @click="router.push({ name: 'register' })">通过 Lotus Passport 注册</a>
       </p>
     </div>
   </div>

@@ -53,7 +53,13 @@ client.interceptors.response.use(
           source === 'passport' && PASSPORT_URL
             ? `${PASSPORT_URL}/api/v1/token/refresh/`
             : `${API_BASE}/auth/token/refresh/`
-        const { data } = await axios.post(refreshUrl, { refresh })
+        // 护照侧 §9.3 device trust gate 会按 UA+设备指纹判定设备是否受信任，
+        // 必须带上与业务请求一致的 X-Device-Id，否则换设备/未信任设备刷新被 401。
+        const { data } = await axios.post(
+          refreshUrl,
+          { refresh },
+          { headers: { 'X-Device-Id': getDeviceId() } },
+        )
         localStorage.setItem('access_token', data.access)
         if (data.refresh) localStorage.setItem('refresh_token', data.refresh)
         isRefreshing = false

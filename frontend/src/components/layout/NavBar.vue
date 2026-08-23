@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
 import {
-  logout,
   fetchNotifications,
   markNotificationRead,
   markAllNotificationsRead,
@@ -22,6 +21,7 @@ const nav = [
   { label: '排名榜', key: 'rankings', path: '/u/rankings' },
   { label: '比赛列表', key: 'contests', path: '/u/contests' },
   { label: '个人中心', key: 'my-scores', path: '/u/my-scores' },
+  { label: '账号安全', key: 'security', path: '/u/security' },
 ]
 
 const activeKey = computed(() => route.name as string)
@@ -103,10 +103,9 @@ const roleBadge = computed(() =>
       : { text: '用户', cls: 'badge-muted' },
 )
 
-function doLogout() {
+async function doLogout() {
   menuOpen.value = false
-  logout()
-  auth.logout()
+  await auth.logout() // 内部已处理 passport 吊销 + 本地清理
   router.push({ name: 'login' })
 }
 
@@ -186,6 +185,7 @@ defineExpose({ drawerOpen })
           <div v-if="menuOpen" class="menu">
             <a v-if="auth.isAdmin" @click="go('/admin/dashboard')">后台管理</a>
             <a @click="go('/u/my-scores')">个人中心</a>
+            <a @click="go('/u/security')">账号安全</a>
             <a class="danger" @click="doLogout">退出登录</a>
           </div>
         </div>

@@ -30,6 +30,8 @@ onMounted(async () => {
       email: '',
       real_name: '',
       student_no: '',
+      avatar: null,
+      bio: '',
       role: 'user',
       role_display: '普通用户',
       school: null,
@@ -38,6 +40,7 @@ onMounted(async () => {
       is_super_admin: false,
       is_school_admin: false,
       needs_username: false,
+      has_usable_password: false,
       date_joined: '',
     }
     auth.token = 'mock'
@@ -62,12 +65,13 @@ onMounted(async () => {
   localStorage.setItem('access_token', access)
   localStorage.setItem('refresh_token', refresh)
   localStorage.setItem('auth_source', 'passport')
+  // 清理 URL 中的令牌 fragment，避免令牌泄漏到浏览器历史/分享链接
   history.replaceState(null, '', window.location.pathname + window.location.search)
-  auth.token = access
+  auth.setSession(access, refresh, 'passport')
   try {
     await auth.loadMe()
   } catch {
-    auth.logout()
+    await auth.logout()
     loading.value = false
     failed.value = true
     hint.value = '登录态校验失败，请重新登录。'

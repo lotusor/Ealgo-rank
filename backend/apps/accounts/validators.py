@@ -7,8 +7,8 @@
 
 为什么规则要严：
     ``username`` 是**对外展示字段**——个人排行榜（``ranking`` 序列化器取
-    ``user.username``）、管理员审核页的申请人列都直接显示它。所以既要可读，
-    也要挡掉冒充官方/管理员的取名。
+    ``user.username``）、管理员审核页的申请人列都直接显示它，所以要保证可读、
+    可区分（大小写不敏感查重避免「Alice」/「alice」并存冒充）。
 """
 from __future__ import annotations
 
@@ -22,15 +22,6 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\u4e00-\u9fff-]{3,20}$")
 
 # 至少含一个「有意义字符」，挡掉 "___" / "..." / "---" 这类纯符号名
 _HAS_ALNUM_RE = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]")
-
-# 保留字（小写比较）：防止冒充官方或管理员身份
-RESERVED_USERNAMES = frozenset({
-    "admin", "admins", "administrator", "root", "superuser", "superadmin",
-    "staff", "system", "sys", "official", "support", "help", "helpdesk",
-    "service", "security", "moderator", "operator", "master",
-    "lotus", "passport", "ealgo", "e-algo", "algorank", "algo-rank",
-    "anonymous", "guest", "null", "none", "undefined", "me", "self", "test",
-})
 
 
 def validate_username(value: str, *, exclude_pk: int | None = None) -> str:
@@ -60,14 +51,12 @@ def validate_username(value: str, *, exclude_pk: int | None = None) -> str:
             "用户名需为 3-20 个字符，仅允许中文、字母、数字、下划线、连字符和句点")
     if not _HAS_ALNUM_RE.search(value):
         raise serializers.ValidationError("用户名至少需包含一个中文、字母或数字")
-    if value.lower() in RESERVED_USERNAMES:
-        raise serializers.ValidationError("该用户名为系统保留，请更换")
 
     qs = User.objects.filter(username__iexact=value)
     if exclude_pk is not None:
         qs = qs.exclude(pk=exclude_pk)
     if qs.exists():
-        raise serializers.ValidationError("用户名已被占用")
+        raise serializers.ValidationError("当前用户名被占用")
     return value
 
 
@@ -86,7 +75,6 @@ def first_error_message(exc: serializers.ValidationError) -> str:
 
 __all__ = [
     "USERNAME_RE",
-    "RESERVED_USERNAMES",
     "validate_username",
     "first_error_message",
 ]

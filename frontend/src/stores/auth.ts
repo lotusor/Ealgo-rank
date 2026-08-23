@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { fetchMe, login as apiLogin, logout as apiLogout } from '@/api'
+import { fetchMe, login as apiLogin } from '@/api'
 import type { UserMe } from '@/api/types'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(localStorage.getItem('access_token'))
+  const authSource = ref<string>(localStorage.getItem('auth_source') || 'local')
   const user = ref<UserMe | null>(null)
 
   const isAuthenticated = computed(() => !!token.value)
@@ -24,6 +25,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(username: string, password: string) {
     await apiLogin(username, password)
     token.value = localStorage.getItem('access_token')
+    authSource.value = localStorage.getItem('auth_source') || 'local'
     await loadMe()
   }
 
@@ -31,19 +33,45 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = await fetchMe()
   }
 
+  // passport 回调 / 注册成功后写入完整登录态（token + source + user）
+  function setSession(access: string, refresh: string, source: string) {
+    localStorage.setItem('access_token', access)
+    localStorage.setItem('refresh_token', refresh)
+    localStorage.setItem('auth_source', source)
+    token.value = access
+    authSource.value = source
+  }
+
   // 注册 / 补全资料后直接写入 user（无需再请求 /me/）
   function setUser(u: UserMe) {
     user.value = u
   }
 
-  function logout() {
-    apiLogout()
+  async function logout() {
+    // 尽力吊销 passport 侧 jti（离线验签不查黑名单，显式吊销更稳妥）
+    const source = authSource.value
+    const pp = import.meta.env.VITE_PASSPORT_URL as string | undefined
+    if (source === 'passport' && token.value && pp) {
+      try {
+        await fetch(`${pp}/api/v1/logout/`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token.value}` },
+        })
+      } catch {
+        /* 吊销失败不阻断本地清理 */
+      }
+    }
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem('auth_source')
     token.value = null
+    authSource.value = 'local'
     user.value = null
   }
 
   return {
     token,
+    authSource,
     user,
     isAuthenticated,
     isSuperAdmin,
@@ -52,6 +80,7 @@ export const useAuthStore = defineStore('auth', () => {
     isProfileComplete,
     login,
     loadMe,
+    setSession,
     setUser,
     logout,
   }
