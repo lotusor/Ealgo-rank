@@ -15,8 +15,10 @@ Pillow==12.3.0
 # 生产环境额外需要（Docker 部署已启用）
 psycopg[binary]==3.2.*
 gunicorn==23.*
+# 生产静态资源（admin / drf-spectacular 等）由后端经 /static/ 提供，避免额外挂共享卷
+whitenoise==6.9.0
 
 # 统一认证中心 JWT 验签 SDK（RS256 + JWKS，离线验签）
-# 开发期从本地 ../lotus-passport-sdk 可编辑安装：
-#   pip install -e ../lotus-passport-sdk[drf]
-lotus-passport-sdk[drf]>=1.0.0
+# 注意：该 SDK 未发布到 PyPI（演示项目）。Docker 构建时由 docker/Dockerfile
+# 从 vendored 源码（./vendor/lotus-passport-sdk）或 GitHub 源码安装，不在此处声明。
+# 开发期本地安装：pip install -e ../lotus-passport-sdk[drf]

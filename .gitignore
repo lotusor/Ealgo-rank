@@ -21,6 +21,14 @@ node_modules/
 dist/
 .DS_Store
 
+# 前端构建产物目录（vite build --outDir 的临时输出，非 dist 标准目录）
+frontend/build-*/
+build-out/
+build-final/
+build-final2/
+build-final3/
+build-nc/
+
 # Test artifacts / screenshots
 _shots/
 _e2e_shots/
