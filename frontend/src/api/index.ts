@@ -17,6 +17,7 @@ import type {
   UsernameAvailability,
   Announcement,
   AppNotification,
+  PlatformAccount,
 } from './types'
 
 // ---------- Auth ----------
@@ -47,6 +48,32 @@ export async function logout() {
   localStorage.removeItem('access_token')
   localStorage.removeItem('refresh_token')
   localStorage.removeItem('auth_source')
+}
+
+// ---------- Lotus Passport OAuth（统一登录）----------
+// 按官方接入契约（docs/integration/project1-ealgo-rank.md）：rank 自行调用护照
+// API 的 /api/v1/oauth/{provider}/login/，取返回的 authorize_url 后跳转；护照完成
+// 第三方登录后 302 回 rank 的 /auth/callback 并把 JWT 放在 URL fragment
+// （access_token / refresh_token / passport_user_id），由 AuthCallbackView 解析。
+// 不要跳 account.eacm.cn/login —— 那是护照自己的 SPA，会把 token 发回它自己的
+// 回调页，不会回跳 rank。
+export type PassportProvider = 'github' | 'qq' | 'wechat'
+
+export async function startPassportOAuth(provider: PassportProvider): Promise<void> {
+  const pp =
+    (import.meta.env.VITE_PASSPORT_URL as string | undefined) ||
+    'https://passport.eacm.cn'
+  const cb = `${window.location.origin}/auth/callback`
+  const url = `${pp}/api/v1/oauth/${provider}/login/?redirect_uri=${encodeURIComponent(cb)}`
+  const resp = await fetch(url, { headers: { Accept: 'application/json' } })
+  const data = (await resp.json().catch(() => ({}))) as {
+    authorize_url?: string
+    error?: { message?: string }
+  }
+  if (!resp.ok || !data.authorize_url) {
+    throw new Error(data?.error?.message || '无法发起通行证登录，请稍后重试')
+  }
+  window.location.href = data.authorize_url
 }
 
 // ---------- Schools ----------
@@ -212,6 +239,40 @@ export async function listMyParticipations(params: PageQuery = {}) {
   return data
 }
 
+// ---------- 平台账号绑定 ----------
+export async function listPlatformAccounts(): Promise<PlatformAccount[]> {
+  // 后端 ModelViewSet 默认分页，返回 {count, results, ...}，这里取 results
+  const { data } = await client.get<Paginated<PlatformAccount>>(
+    '/platform-accounts/',
+    { params: { page_size: 100 } },
+  )
+  return data.results
+}
+
+export async function bindPlatformAccount(payload: {
+  platform: string
+  handle: string
+  display_name?: string
+}): Promise<PlatformAccount> {
+  const { data } = await client.post<PlatformAccount>('/platform-accounts/', payload)
+  return data
+}
+
+export async function updatePlatformAccount(
+  id: number,
+  payload: { handle?: string; display_name?: string },
+): Promise<PlatformAccount> {
+  const { data } = await client.patch<PlatformAccount>(
+    `/platform-accounts/${id}/`,
+    payload,
+  )
+  return data
+}
+
+export async function unbindPlatformAccount(id: number): Promise<void> {
+  await client.delete(`/platform-accounts/${id}/`)
+}
+
 // ---------- 注册 / 资料补全 ----------
 export interface RegisterPayload {
   username: string
@@ -233,6 +294,7 @@ export async function register(payload: RegisterPayload): Promise<RegisterResult
   const { data } = await client.post<RegisterResult>('/register/', payload)
   localStorage.setItem('access_token', data.access)
   localStorage.setItem('refresh_token', data.refresh)
+  localStorage.setItem('auth_source', 'local') // 本地注册账号，刷新走 algo_rank
   return data
 }
 
@@ -242,8 +304,37 @@ export async function updateMe(payload: {
   real_name?: string
   student_no?: string
   school_code?: string
+  bio?: string
 }): Promise<UserMe> {
   const { data } = await client.put<UserMe>('/me/', payload)
+  return data
+}
+
+/** 更新头像（multipart 上传）。传 null 表示移除头像。 */
+export async function updateAvatar(file: File | null): Promise<UserMe> {
+  const fd = new FormData()
+  if (file) fd.append('avatar', file)
+  else fd.append('avatar', '')
+  const { data } = await client.put<UserMe>('/me/', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+/**
+ * 改密 / 设置本地密码（后端 /me/change-password/ 二合一）。
+ * - 已设本地密码：需传 old_password（原密码）。
+ * - passport 首登用户（无本地密码）：不传 old_password，直接设置首条本地密码。
+ */
+export async function setPassword(payload: {
+  old_password?: string
+  new_password1: string
+  new_password2: string
+}): Promise<{ detail: string }> {
+  const { data } = await client.post<{ detail: string }>(
+    '/me/change-password/',
+    payload,
+  )
   return data
 }
 

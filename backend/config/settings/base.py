@@ -82,6 +82,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -192,6 +193,10 @@ SIMPLE_JWT = {
     "USER_ID_FIELD": "id",
     "USER_ID_CLAIM": "user_id",
 }
+
+# ---------- 平台账号 ID 修改冷却 ----------
+# 竞赛平台账号 handle 一周仅可修改一次（解绑重绑视为新账号，不受限）。
+PLATFORM_HANDLE_EDIT_COOLDOWN_DAYS = int(env("PLATFORM_HANDLE_EDIT_COOLDOWN_DAYS", "7"))
 
 # ---------- Celery ----------
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")

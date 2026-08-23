@@ -63,9 +63,19 @@ const router = createRouter({
           component: () => import('@/views/user/MyScoresView.vue'),
         },
         {
+          path: 'profile',
+          name: 'profile',
+          component: () => import('@/views/user/ProfileEditView.vue'),
+        },
+        {
           path: 'contests',
           name: 'contests',
           component: () => import('@/views/user/ContestsView.vue'),
+        },
+        {
+          path: 'security',
+          name: 'security',
+          component: () => import('@/views/user/SecurityView.vue'),
         },
       ],
     },
@@ -137,12 +147,17 @@ router.beforeEach(async (to) => {
   // 回调页自行处理登录态（写 token 后再 loadMe），守卫直接放行
   if (to.name === 'auth-callback') return true
 
-  // 已登录（有 token）但还没拉取用户信息，先补一次
-  if (auth.token && !auth.user && to.name !== 'login') {
+  // 已登录（有 token）但还没拉取用户信息，先补一次（不区分目标路由，
+  // 否则管理员刷新登录页时 user 未加载、isAdmin 误判为 false 被降级为普通用户）
+  if (auth.token && !auth.user) {
     try {
       await auth.loadMe()
     } catch {
-      auth.logout()
+      await auth.logout()
+      // loadMe 失败说明凭证已失效：清状态后回登录页，避免卡在空白/报错页
+      if (to.name !== 'login') {
+        return { name: 'login', query: { redirect: to.fullPath } }
+      }
     }
   }
 

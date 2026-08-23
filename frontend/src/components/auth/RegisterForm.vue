@@ -2,9 +2,16 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { checkUsernameAvailable, listSchools, register, updateMe } from '@/api'
-import type { School, UserMe } from '@/api/types'
+import {
+  checkUsernameAvailable,
+  listSchools,
+  listPlatformAccounts,
+  register,
+  updateMe,
+} from '@/api'
+import type { PlatformAccount, School, UserMe } from '@/api/types'
 import { useToast } from '@/composables/useToast'
+import PlatformAccountsEditor from '@/components/auth/PlatformAccountsEditor.vue'
 
 const props = defineProps<{
   mode: 'create' | 'complete'
@@ -27,6 +34,26 @@ const studentNo = ref(props.prefill?.student_no ?? '')
 const schools = ref<School[]>([])
 const loading = ref(false)
 const error = ref('')
+
+// 表单提交成功后进入「绑定平台账号（可选）」步骤
+const submitted = ref(false)
+const accounts = ref<PlatformAccount[]>([])
+const accountsLoading = ref(false)
+
+async function loadAccounts() {
+  accountsLoading.value = true
+  try {
+    accounts.value = await listPlatformAccounts()
+  } catch {
+    /* ignore */
+  } finally {
+    accountsLoading.value = false
+  }
+}
+
+function onAccountsChanged() {
+  loadAccounts()
+}
 
 // ---------- 用户名实时查重 ----------
 type UsernameState = 'idle' | 'checking' | 'ok' | 'bad'
@@ -162,10 +189,11 @@ async function onSubmit() {
         student_no: studentNo.value.trim() || undefined,
         school_code: schoolCode.value ?? undefined,
       })
-      auth.token = localStorage.getItem('access_token')
+      auth.setSession(res.access, res.refresh, 'local')
       auth.setUser(res.user)
       toast.success('注册成功')
-      emit('done', res.user)
+      submitted.value = true
+      loadAccounts()
     } else {
       const user = await updateMe({
         username: needsUsername.value ? username.value.trim() || undefined : undefined,
@@ -175,13 +203,18 @@ async function onSubmit() {
       })
       auth.setUser(user)
       toast.success('资料已保存')
-      emit('done', user)
+      submitted.value = true
+      loadAccounts()
     }
   } catch (e: any) {
     error.value = extractError(e)
   } finally {
     loading.value = false
   }
+}
+
+function finish() {
+  emit('done', auth.user!)
 }
 </script>
 
@@ -201,7 +234,22 @@ async function onSubmit() {
 
       <div v-if="error" class="alert alert-error" style="margin-bottom: var(--space-4)">{{ error }}</div>
 
-      <form @submit.prevent="onSubmit">
+      <!-- 步骤二：绑定平台账号（可选） -->
+      <div v-if="submitted">
+        <div class="section-title" style="margin-bottom: var(--space-2)">绑定竞赛平台账号</div>
+        <p class="body-sm text-secondary" style="margin-bottom: var(--space-5)">
+          绑定你在 Codeforces / AtCoder / 牛客 的账号 ID，用于同步参赛成绩并纳入学校排名。可跳过，稍后在「编辑资料」中补充。
+        </p>
+        <div v-if="accountsLoading" class="caption text-tertiary">加载中…</div>
+        <PlatformAccountsEditor v-else :accounts="accounts" @changed="onAccountsChanged" />
+        <div style="display: flex; gap: var(--space-3); margin-top: var(--space-6)">
+          <button class="btn btn-ghost" @click="finish">跳过</button>
+          <button class="btn btn-primary btn-block" @click="finish">完成，继续</button>
+        </div>
+      </div>
+
+      <!-- 步骤一：基础资料表单 -->
+      <form v-else @submit.prevent="onSubmit">
         <div v-if="usernameEditable" class="field">
           <label class="field-label">用户名</label>
           <input

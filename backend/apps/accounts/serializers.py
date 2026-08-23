@@ -6,6 +6,9 @@ accounts 序列化器。
 - 用户变更学校后必须调 sync_platform_accounts_school，把学校同步到名下平台账号
 - 用户名规则统一走 apps.accounts.validators，注册与 passport 首登认领共用
 """
+from datetime import timedelta
+
+from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from rest_framework import serializers
@@ -27,29 +30,65 @@ class PlatformAccountSerializer(serializers.ModelSerializer):
     platform_display = serializers.CharField(source="get_platform_display",
                                               read_only=True)
     school = SchoolMinimalSerializer(read_only=True)
+    # 前端据此判断能否修改 handle：一周内改过则展示「下次可改时间」
+    can_edit_handle = serializers.SerializerMethodField()
+    handle_next_edit_at = serializers.SerializerMethodField()
 
     class Meta:
         model = PlatformAccount
         fields = ["id", "platform", "platform_display", "handle", "display_name",
-                  "verified", "verified_at", "school", "created_at"]
-        read_only_fields = ["verified", "verified_at", "school", "created_at"]
+                  "verified", "verified_at", "school", "created_at",
+                  "can_edit_handle", "handle_next_edit_at"]
+        read_only_fields = ["verified", "verified_at", "school", "created_at",
+                            "can_edit_handle", "handle_next_edit_at"]
+
+    def get_can_edit_handle(self, obj):
+        """一周内改过 handle 则不可再改。"""
+        return self._next_edit_at(obj) is None
+
+    def get_handle_next_edit_at(self, obj):
+        return self._next_edit_at(obj)
+
+    def _next_edit_at(self, obj):
+        if obj.handle_changed_at is None:
+            return None
+        return obj.handle_changed_at + timedelta(
+            days=settings.PLATFORM_HANDLE_EDIT_COOLDOWN_DAYS)
 
     def validate(self, attrs):
         request = self.context.get("request")
         user = request.user if request else None
-        platform = attrs.get("platform")
+        # PATCH 时可能只传 handle，platform 需回退到 instance
+        platform = attrs.get("platform") or (
+            self.instance.platform if self.instance else None)
         handle = (attrs.get("handle") or "").strip()
+        is_create = self.instance is None
         if platform and handle and user is not None:
             # 一个用户在同一平台只能绑一个账号（uniq_user_platform 兜底）
-            if PlatformAccount.objects.filter(user=user, platform=platform).exists():
+            if is_create and PlatformAccount.objects.filter(
+                    user=user, platform=platform).exists():
                 raise serializers.ValidationError(
                     {"platform": "你已在该平台绑定过账号，请先解绑再重新绑定"})
             # 跨用户：同一平台账号(handle)只能被一个人绑定
             if PlatformAccount.objects.filter(
-                    platform=platform, handle_lower=handle.lower()).exists():
+                    platform=platform, handle_lower=handle.lower()
+            ).exclude(pk=self.instance.pk if self.instance else None).exists():
                 raise serializers.ValidationError(
                     {"handle": "该平台账号已被其他用户绑定，无法重复绑定"})
         return attrs
+
+    def update(self, instance, validated_data):
+        # 修改 handle 受「一周一次」冷却限制
+        new_handle = (validated_data.get("handle") or "").strip()
+        old_handle = (instance.handle or "").strip()
+        if new_handle and new_handle.lower() != old_handle.lower():
+            next_at = self._next_edit_at(instance)
+            if next_at is not None:
+                raise serializers.ValidationError(
+                    {"handle": f"平台账号 ID 一周仅可修改一次，请于 "
+                               f"{timezone.localtime(next_at):%Y-%m-%d %H:%M} 后再试"})
+            validated_data["handle_changed_at"] = timezone.now()
+        return super().update(instance, validated_data)
 
     def create(self, validated_data):
         request = self.context["request"]
@@ -61,6 +100,13 @@ class PlatformAccountSerializer(serializers.ModelSerializer):
             from apps.crawler.ingest import rebind_unbound_participations
             rebind_unbound_participations(pa)
         except Exception:  # 历史数据缺失不应阻断绑定
+            pass
+        # 异步补全「参与比赛索引」，解决冷启动预筛死锁：
+        # 否则新账号索引为空，爬虫预筛永远跳过其历史比赛。
+        try:
+            from apps.crawler.ingest import fill_participated_contests_async
+            fill_participated_contests_async(pa.pk)
+        except Exception:  # 后台派发失败不阻断绑定
             pass
         return pa
 
@@ -118,18 +164,32 @@ class UserMeSerializer(serializers.ModelSerializer):
     is_school_admin = serializers.BooleanField(read_only=True)
     # 前端据此判断补全页的用户名框是否可编辑，并把它纳入「资料是否补全」的门槛
     needs_username = serializers.BooleanField(read_only=True)
+    # 是否已设置本地密码：passport 首登用户为 False，可走「设置本地密码」流程
+    has_usable_password = serializers.BooleanField(read_only=True)
+    # 头像：有则输出完整 URL，无则 null（前端据此回退到首字母头像）
+    avatar = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = ["id", "username", "email", "real_name", "student_no",
-                  "role", "role_display", "school", "school_bound_at",
-                  "platform_accounts", "is_super_admin", "is_school_admin",
-                  "needs_username", "date_joined"]
+                  "avatar", "bio", "role", "role_display", "school",
+                  "school_bound_at", "platform_accounts", "is_super_admin",
+                  "is_school_admin", "needs_username", "has_usable_password",
+                  "date_joined"]
         read_only_fields = fields
+
+    def get_avatar(self, obj):
+        if not obj.avatar:
+            return None
+        request = self.context.get("request")
+        url = obj.avatar.url
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
-    """个人信息更新：用户名认领、真实姓名、学号、绑定/变更学校。"""
+    """个人信息更新：用户名认领、真实姓名、学号、头像、个性签名、绑定/变更学校。"""
 
     username = serializers.CharField(
         required=False, allow_blank=True,
@@ -137,10 +197,14 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     school_code = serializers.CharField(
         required=False, allow_blank=True, write_only=True,
         help_text="可选；不传或空字符串表示不修改；传入已存在的 code 则变更学校并同步平台账号")
+    avatar = serializers.ImageField(
+        required=False, allow_null=True,
+        help_text="头像图片；传 null 表示移除头像")
 
     class Meta:
         model = User
-        fields = ["username", "real_name", "student_no", "school_code"]
+        fields = ["username", "real_name", "student_no", "school_code",
+                  "avatar", "bio"]
 
     def validate_username(self, value):
         """未认领 → 按统一规则校验；已认领 → 只允许原值回传，否则拒绝。
@@ -188,20 +252,29 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
 
 class ChangePasswordSerializer(serializers.Serializer):
-    old_password = serializers.CharField(write_only=True)
+    """改密 / 设置本地密码（二合一）。
+
+    - 已设置本地密码的用户：必须提供并校验原密码。
+    - passport 首登用户（``has_usable_password()`` 为 False，尚未设本地密码）：
+      无需原密码，直接设置首条本地密码。
+    """
+
+    old_password = serializers.CharField(write_only=True, required=False)
     new_password1 = serializers.CharField(write_only=True,
                                           validators=[validate_password])
     new_password2 = serializers.CharField(write_only=True)
 
-    def validate_old_password(self, value):
-        user = self.context["request"].user
-        if not user.check_password(value):
-            raise serializers.ValidationError("原密码错误")
-        return value
-
     def validate(self, attrs):
         if attrs["new_password1"] != attrs["new_password2"]:
             raise serializers.ValidationError({"new_password2": "两次密码不一致"})
+        user = self.context["request"].user
+        # 已设置本地密码才校验原密码；passport 首登用户（无本地密码）跳过
+        if user.has_usable_password():
+            old = attrs.get("old_password")
+            if not old:
+                raise serializers.ValidationError({"old_password": "请输入原密码"})
+            if not user.check_password(old):
+                raise serializers.ValidationError({"old_password": "原密码错误"})
         return attrs
 
     def save(self, **kwargs):

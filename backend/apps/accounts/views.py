@@ -262,11 +262,11 @@ class MeView(APIView):
 
 
 class PlatformAccountViewSet(viewsets.ModelViewSet):
-    """平台账号绑定。只允许 增/删/查，不允许改 handle（改了会破坏归属唯一性）。"""
+    """平台账号绑定。支持 增/删/查 + 改 handle（一周一次冷却，见 serializer）。"""
 
     serializer_class = PlatformAccountSerializer
     permission_classes = [IsAuthenticated]
-    http_method_names = ["get", "post", "delete"]
+    http_method_names = ["get", "post", "patch", "delete"]
 
     def get_queryset(self):
         return PlatformAccount.objects.filter(
@@ -274,6 +274,32 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
 
     def get_serializer_context(self):
         return {"request": self.request}
+
+    def update(self, request, *args, **kwargs):
+        """PATCH：仅允许改 handle / display_name；platform 不允许改（改平台应解绑重绑）。"""
+        partial = kwargs.pop("partial", True)
+        instance = self.get_object()
+        serializer = self.get_serializer(
+            instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        # 改 handle 后回填历史成绩 + 异步补全参与比赛索引（与创建时一致）
+        handle_changed = (
+            "handle" in serializer.validated_data and
+            (serializer.validated_data["handle"] or "").strip().lower() !=
+            instance.handle_lower
+        )
+        self.perform_update(serializer)
+        if handle_changed:
+            try:
+                from apps.crawler.ingest import (
+                    rebind_unbound_participations,
+                    fill_participated_contests_async,
+                )
+                rebind_unbound_participations(instance)
+                fill_participated_contests_async(instance.pk)
+            except Exception:  # 历史数据缺失不应阻断修改
+                pass
+        return Response(serializer.data)
 
 
 class ChangePasswordView(APIView):

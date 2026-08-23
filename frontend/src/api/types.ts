@@ -17,17 +17,34 @@ export interface PageQuery {
 // 用户 / 角色
 export type UserRole = 'user' | 'school_admin' | 'super_admin'
 
+// 平台账号（绑定到三大算法竞赛平台的账号 ID）
+export interface PlatformAccount {
+  id: number
+  platform: 'codeforces' | 'atcoder' | 'nowcoder'
+  platform_display: string
+  handle: string
+  display_name: string
+  verified: boolean
+  verified_at: string | null
+  school: { id: number; name: string; short_name: string; code: string } | null
+  created_at: string
+  can_edit_handle: boolean
+  handle_next_edit_at: string | null
+}
+
 export interface UserMe {
   id: number
   username: string
   email: string
   real_name: string
   student_no: string
+  avatar: string | null
+  bio: string
   role: UserRole
   role_display: string
   school: { id: number; name: string; short_name: string; code: string } | null
   school_bound_at: string | null
-  platform_accounts: any[]
+  platform_accounts: PlatformAccount[]
   is_super_admin: boolean
   is_school_admin: boolean
   /**
@@ -35,6 +52,10 @@ export interface UserMe {
    * 为 true 时补全页的用户名框可编辑且必填；认领后后端锁定不可再改。
    */
   needs_username: boolean
+  /**
+   * 是否已设置本地密码。passport 首登用户为 false，可走「设置本地密码」流程。
+   */
+  has_usable_password: boolean
   date_joined: string
 }
 

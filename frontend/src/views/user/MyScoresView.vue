@@ -104,7 +104,7 @@ function accountTag(p: string) {
         <div class="breadcrumb"><a @click="router.push('/u')">首页</a><span>/</span><span>个人中心</span></div>
         <h1 class="page-title">个人成绩</h1>
       </div>
-      <button class="btn btn-secondary btn-sm" @click="router.push('/register/info')">
+      <button class="btn btn-secondary btn-sm" @click="router.push('/u/profile')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
         编辑资料
       </button>

@@ -40,6 +40,8 @@ class User(AbstractUser):
                                related_name="members")
     real_name = models.CharField("真实姓名", max_length=50, blank=True)
     student_no = models.CharField("学号", max_length=50, blank=True)
+    avatar = models.ImageField("头像", upload_to="avatars/", null=True, blank=True)
+    bio = models.CharField("个性签名", max_length=200, blank=True)
 
     # 统一认证中心下发的用户标识，一个 passport 用户对应一个本地账号
     passport_user_id = models.CharField("通行证用户ID", max_length=64,
@@ -168,6 +170,9 @@ class PlatformAccount(TimeStampedModel):
 
     verified = models.BooleanField("已验证归属", default=False)
     verified_at = models.DateTimeField("验证时间", null=True, blank=True)
+    # 最近一次修改 handle 的时间，用于「平台账号ID 一周仅可改一次」限制。
+    # 解绑后重新绑定视为新账号，不受此限制（时间戳随新记录重置）。
+    handle_changed_at = models.DateTimeField("handle 最近修改时间", null=True, blank=True)
 
     # 参与过的比赛 external_id 列表（按平台维度，因为 handle 已平台隔离）。
     # 用于爬虫「只抓有已关联平台ID用户参与的比赛」预筛，避免下载无关全量榜单。
