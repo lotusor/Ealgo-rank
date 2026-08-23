@@ -227,6 +227,22 @@ def _run_job(job, worker):
         job.cheater_count = cheat_n
         job.log = "\n".join(lines)[:20000]
         job.save()
+
+    # 有实际入库（比赛数>0）时触发积分重算，让新抓的成绩立即进入榜单，
+    # 而非等到每日 04:00 的 beat 重算。走后台线程 + broker 探测，避免
+    # 无 Redis 时阻塞主流程或与测试库写锁冲突。
+    if contest_n:
+        def _dispatch_recompute():
+            if not _broker_reachable():
+                return
+            try:
+                from apps.ranking.tasks import recompute_ranking_task
+                recompute_ranking_task.delay()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("爬取后积分重算派发失败: %s", exc)
+        threading.Thread(target=_dispatch_recompute, daemon=True,
+                         name=f"recompute-after-{job.pk}").start()
+
     return {"job_id": job.pk, "status": job.status,
             "contests": contest_n, "countable": part_n, "cheaters": cheat_n}
 
@@ -398,6 +414,12 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
                 rid, filter_post_contest=True, exclude_cheaters=False,
                 cache_dir=cache_dir,
                 cache_ttl_hours=getattr(settings, "CRAWLER_CACHE_TTL_HOURS", 168))
+        # 榜单全部入库后，回填牛客 rating 涨落（榜单本身不含 rating，需走 rating-history）
+        try:
+            from apps.crawler.ingest import backfill_nowcoder_ratings
+            backfill_nowcoder_ratings()
+        except Exception as exc:  # noqa: BLE001 - 回填失败不阻断爬取主流程
+            logger.warning("牛客 rating 回填失败: %s", exc)
 
     return _run_job(job, worker)
 

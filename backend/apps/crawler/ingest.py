@@ -211,6 +211,14 @@ def _ingest_ranks(contest, platform, ranks):
             norm = normalize_atcoder_affiliation(extra["affiliation"], alias_map)
             if norm:
                 extra["affiliation_normalized"] = norm
+        # rating 涨落：CF 爬虫在 extra 里直接给 delta，AtCoder 只给 old/new，
+        # 牛客榜单两者皆无（由 backfill_nowcoder_ratings 事后从 rating-history 补）。
+        # 这里统一兜底：有 old/new 就推导 delta，保证三平台契约一致。
+        old_rating = extra.get("old_rating")
+        new_rating = extra.get("new_rating")
+        delta = extra.get("delta")
+        if delta is None and old_rating is not None and new_rating is not None:
+            delta = new_rating - old_rating
         Participation.objects.update_or_create(
             contest=contest,
             handle_lower=handle.lower(),
@@ -223,9 +231,9 @@ def _ingest_ranks(contest, platform, ranks):
                 "solved_count": r.get("accepted_count"),
                 "total_score": r.get("total_score"),
                 "penalty_ms": r.get("penalty_time_ms"),
-                "rating_delta": extra.get("delta"),
-                "old_rating": extra.get("old_rating"),
-                "new_rating": extra.get("new_rating"),
+                "rating_delta": delta,
+                "old_rating": old_rating,
+                "new_rating": new_rating,
                 "is_excluded": excluded,
                 "exclude_reason": reason,
                 "score_detail": r.get("score_detail") or [],
@@ -253,6 +261,66 @@ def _ingest_ranks(contest, platform, ranks):
 
     return {"total": total, "cheaters": cheaters,
             "matched": matched, "countable": countable}
+
+
+def backfill_nowcoder_ratings():
+    """从牛客 rating-history 接口回填参赛记录的 rating 涨落。
+
+    牛客榜单（real-time-rank-data）不含 rating 涨落字段，只有官方个人历史
+    接口 `acm/contest/rating-history?uid=` 返回每场的 rating（赛后）与
+    changeValue（涨落）。按 contest.external_id 匹配回填，让牛客的
+    rating_delta / old_rating / new_rating 与 CF/AtCoder 对齐。
+
+    返回回填条数。
+    """
+    _crawler_dir()
+    from nowcoder_scraper import NowCoderScraper
+
+    scraper = NowCoderScraper()
+    scraper.init_session()
+
+    updated = 0
+    for acc in PlatformAccount.objects.filter(platform=Platform.NOWCODER):
+        try:
+            hist = scraper.user_rating_history(acc.handle)
+        except Exception:  # noqa: BLE001 - 单账号失败不阻断整体
+            logger.exception("牛客 rating 回填：账号 %s 历史拉取失败", acc.handle)
+            continue
+        by_contest = {
+            str(x.get("contestId")): x
+            for x in hist if x.get("contestId") not in (None, "")
+        }
+        qs = Participation.objects.filter(
+            platform_account=acc,
+            contest__platform=Platform.NOWCODER,
+        )
+        for p in qs:
+            row = by_contest.get(p.contest.external_id)
+            if not row:
+                continue
+            new_rating = row.get("rating")
+            delta = row.get("changeValue")
+            if new_rating is None and delta is None:
+                continue
+            old_rating = None
+            if new_rating is not None and delta is not None:
+                old_rating = new_rating - delta
+            changed = False
+            if new_rating is not None and p.new_rating != new_rating:
+                p.new_rating = new_rating
+                changed = True
+            if delta is not None and p.rating_delta != delta:
+                p.rating_delta = delta
+                changed = True
+            if old_rating is not None and p.old_rating != old_rating:
+                p.old_rating = old_rating
+                changed = True
+            if changed:
+                p.save(update_fields=["old_rating", "new_rating",
+                                      "rating_delta", "updated_at"])
+                updated += 1
+    logger.info("牛客 rating 回填完成，更新 %d 条", updated)
+    return updated
 
 
 def rebind_unbound_participations(platform_account):
