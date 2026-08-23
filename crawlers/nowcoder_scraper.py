@@ -144,6 +144,31 @@ class NowCoderScraper:
         return datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
 
     # ---------- rated / 收费判定 ----------
+    def user_rating_history(self, uid):
+        """取某 uid 的完整 rating 历史（官方个人历史接口）。
+
+        返回 [{"contestId": int, "contestName": str, "time": 毫秒时间戳, ...}, ...]，
+        与 Codeforces user.rating / AtCoder users/{handle}/history 对齐。
+        该接口返回的 contestId 即 real_contest_id（可直接用于 contest-info 与榜单）。
+        失败返回 []。
+        """
+        ts = int(time.time() * 1000)
+        url = f"{self.base}/acm/contest/rating-history?uid={uid}&_={ts}"
+        try:
+            data = self._get(url).json()
+        except Exception as e:
+            print(f"[user_rating_history] {uid} 失败: {e}")
+            return []
+        if data.get("code") != 0:
+            print(f"[user_rating_history] {uid} 返回错误: {data.get('msg')}")
+            return []
+        return data.get("data") or []
+
+    def user_rating_history_contest_ids(self, uid):
+        """取某 uid 参加过的所有 rated 比赛 real_contest_id 列表。"""
+        return [str(x.get("contestId")) for x in self.user_rating_history(uid)
+                if x.get("contestId") not in (None, "")]
+
     def fetch_contest_info(self, real_contest_id, use_cache=True):
         """抓取比赛详情（含 category / uid / needCharge），失败返回 None"""
         if use_cache and real_contest_id in self._info_cache:

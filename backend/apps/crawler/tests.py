@@ -8,7 +8,8 @@ from apps.accounts.models import PlatformAccount, User, UserRole
 from apps.common.models import ExcludeReason, Platform
 from apps.contests.models import Contest, Participation
 from apps.crawler.ingest import (detect_cheater, ingest_contest,
-                                 rebind_unbound_participations)
+                                 rebind_unbound_participations,
+                                 fill_participated_contests)
 from apps.schools.models import (AtCoderAffiliationAlias, School,
                               normalize_atcoder_affiliation)
 
@@ -410,7 +411,7 @@ from apps.crawler.tasks import crawl_codeforces  # noqa: E402
 class _FakeCF:
     """替代 CodeforcesScraper：不联网，返回受控比赛列表与明细。"""
 
-    def fetch_contest_list(self):
+    def fetch_contests(self):
         return _FAKE_CF_LIST
 
     def parse_contests(self, lst):
@@ -433,14 +434,16 @@ class _FakeCF:
 
 _FAKE_CF_LIST = [
     {"contest_id": 111, "real_contest_id": 111, "name": "CF 111",
-     "is_rated": True, "is_paid": False, "is_future": False},
+     "is_rated": True, "is_paid": False, "is_future": False,
+     "phase": "FINISHED"},
     {"contest_id": 222, "real_contest_id": 222, "name": "CF 222",
-     "is_rated": True, "is_paid": False, "is_future": False},
+     "is_rated": True, "is_paid": False, "is_future": False,
+     "phase": "FINISHED"},
 ]
 
 
 class RelevantContestFilterTests(TestCase):
-    """A：爬虫只抓「有已关联平台ID用户参与的比赛」，其余跳过。"""
+    """A：预筛 = 窗口 ∪ 索引历史（窗口内的比赛 + 用户历史参加的比赛都要抓）。"""
 
     def _make_cf_account(self, username, participated):
         user = User.objects.create_user(username=username, password="pwd12345")
@@ -448,13 +451,15 @@ class RelevantContestFilterTests(TestCase):
             user=user, platform=Platform.CODEFORCES, handle=username,
             participated_contests=participated)
 
-    def test_only_relevant_contests_crawled(self):
-        self._make_cf_account("cfr1", ["111"])  # 仅 111 在索引内
+    def test_window_plus_index_crawled(self):
+        # cfr1 索引里只有 111；但 111/222 都在最近窗口内，应一起抓（窗口∪索引）
+        self._make_cf_account("cfr1", ["111"])
         with mock.patch.object(tasks_mod, "_load_scraper", return_value=_FakeCF()):
             crawl_codeforces(count=10, mode="rating")
         contests = Contest.objects.filter(platform=Platform.CODEFORCES)
-        self.assertEqual(contests.count(), 1)
-        self.assertEqual(contests.first().external_id, "111")
+        self.assertEqual(contests.count(), 2)
+        ids = {c.external_id for c in contests}
+        self.assertEqual(ids, {"111", "222"})
 
     def test_force_crawls_all(self):
         self._make_cf_account("cfr2", ["111"])
@@ -538,3 +543,44 @@ class AtCoderHistoryParseTests(TestCase):
         with mock.patch.object(sc, "_get", return_value=_Resp()):
             ids = sc.user_history_contest_ids("someone")
         self.assertEqual(ids, ["agc004", "abc470", "arc061"])
+
+
+class FillParticipatedContestsTests(TestCase):
+    """绑定后补全参与比赛索引（解决冷启动预筛死锁）。"""
+
+    def _make_cf_account(self, username, participated=None):
+        user = User.objects.create_user(username=username, password="pwd12345")
+        return PlatformAccount.objects.create(
+            user=user, platform=Platform.CODEFORCES, handle=username,
+            participated_contests=participated or [])
+
+    def test_cf_fills_index(self):
+        acc = self._make_cf_account("fillcf1")
+        fake_cf = mock.MagicMock()
+        fake_cf.user_rating_contest_ids.return_value = ["111", "222"]
+        with mock.patch("cf_scraper.CodeforcesScraper", return_value=fake_cf):
+            updated, n = fill_participated_contests(acc)
+        self.assertTrue(updated)
+        self.assertEqual(n, 2)
+        acc.refresh_from_db()
+        self.assertIn("111", acc.participated_contests)
+        self.assertIn("222", acc.participated_contests)
+
+    def test_union_keeps_existing(self):
+        acc = self._make_cf_account("fillcf2", participated=["999"])
+        fake_cf = mock.MagicMock()
+        fake_cf.user_rating_contest_ids.return_value = ["111"]
+        with mock.patch("cf_scraper.CodeforcesScraper", return_value=fake_cf):
+            fill_participated_contests(acc)
+        acc.refresh_from_db()
+        self.assertIn("999", acc.participated_contests)
+        self.assertIn("111", acc.participated_contests)
+
+    def test_nowcoder_returns_false(self):
+        user = User.objects.create_user(username="fillnc", password="pwd12345")
+        acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="123456",
+            participated_contests=[])
+        updated, n = fill_participated_contests(acc)
+        self.assertFalse(updated)
+        self.assertEqual(n, 0)

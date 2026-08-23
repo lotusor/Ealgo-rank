@@ -11,6 +11,7 @@ import socket
 import sys
 import threading
 import traceback
+from datetime import datetime
 from urllib.parse import urlparse
 
 from celery import shared_task
@@ -239,14 +240,33 @@ def crawl_codeforces(self, job_id=None, count=20, mode="rating", force=False):
 
     def worker():
         s = _load_scraper(Platform.CODEFORCES)
-        contests = s.parse_contests(s.fetch_contest_list())
-        contests = [c for c in contests if not c.get("is_future")][:count]
-        contests = s.filter_contests(contests, rated_only=True, exclude_paid=True)
-        # A：只抓有已关联平台ID用户参与的比赛（force=True 跳过预筛，用于冷启动全量引导）
+        all_contests = s.parse_contests(s.fetch_contests())
+        # contest.list 按 id 降序（最新在前）。先本地筛掉未结束比赛（不联网），
+        # 只对最近的 FINISHED 窗口做 rated 判定——否则 filter_contests 会
+        # 对全量历史逐条联网 ratingChanges，CF 2.1s 限速下冷启动需数十分钟。
+        recent_finished = [c for c in all_contests
+                           if c.get("phase") == "FINISHED"][:count * 2]
+        recent = s.filter_contests(recent_finished, rated_only=True,
+                                   exclude_paid=True)[:count]
+        # A：预筛 = 窗口 ∪ 索引历史。用户历史比赛（可能很早，如 contest 2227）
+        #    不在「最近窗口」内，若只做窗口∩索引交集会漏掉，导致永远抓不到历史成绩。
+        #    force=True 跳过预筛，用于冷启动全量引导。
         if not force:
             relevant = relevant_contest_ids(Platform.CODEFORCES)
-            contests = [c for c in contests
-                        if str(c.get("real_contest_id") or c.get("contest_id")) in relevant]
+            recent_ids = {
+                str(c.get("real_contest_id") or c.get("contest_id"))
+                for c in recent
+            }
+            history = [
+                c for c in all_contests
+                if c.get("phase") == "FINISHED"
+                and str(c.get("real_contest_id") or c.get("contest_id")) in relevant
+                and str(c.get("real_contest_id") or c.get("contest_id")) not in recent_ids
+            ]
+            history = s.filter_contests(history, rated_only=True, exclude_paid=True)
+            contests = recent + history
+        else:
+            contests = recent
         cache_dir = _crawler_cache_dir(Platform.CODEFORCES)
         handles = _relevant_handles(Platform.CODEFORCES)  # B：只为本平台用户补齐每题明细
         for c in contests:
@@ -268,15 +288,29 @@ def crawl_atcoder(self, job_id=None, count=20, force=False):
 
     def worker():
         s = _load_scraper(Platform.ATCODER)
-        contests = s.parse_contests(s.fetch_contest_list())
-        contests = s.filter_contests(contests, rated_only=True, exclude_paid=True)
-        # A：只抓有已关联平台ID用户参与的比赛
+        all_contests = s.parse_contests(s.fetch_contests())
+        # kenkoooo contests.json 的原始顺序是**字母序**（APG4b -> ... -> zone2021），
+        # 不是时间序！之前 reversed() 取到的是「字母序最靠后」的旧比赛（zone2021 等），
+        # 导致抓不到最新的 abc4xx。必须按开始时间降序取最近窗口。
+        all_contests.sort(key=lambda c: c.get("start_time") or "", reverse=True)
+        # filter 是纯本地（读 rate_change），先取宽窗口再筛
+        recent = s.filter_contests(
+            all_contests[:count * 2], rated_only=True, exclude_paid=True)[:count]
+        # A：预筛 = 窗口 ∪ 索引历史（用户历史比赛即使不在最近窗口也要抓）
         if not force:
             relevant = relevant_contest_ids(Platform.ATCODER)
-            contests = [c for c in contests
-                        if str(c.get("real_contest_id") or c.get("contest_id")) in relevant]
+            recent_ids = {str(c.get("contest_id")) for c in recent}
+            history = [
+                c for c in all_contests
+                if str(c.get("contest_id")) in relevant
+                and str(c.get("contest_id")) not in recent_ids
+            ]
+            history = s.filter_contests(history, rated_only=True, exclude_paid=True)
+            contests = recent + history
+        else:
+            contests = recent
         cache_dir = _crawler_cache_dir(Platform.ATCODER)
-        for c in contests[:count]:
+        for c in contests:
             cid = c.get("contest_id")
             yield c, s.scrape_contest_detail(
                 cid, cache_dir=cache_dir,
@@ -285,9 +319,13 @@ def crawl_atcoder(self, job_id=None, count=20, force=False):
     return _run_job(job, worker)
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, soft_time_limit=60 * 55, time_limit=60 * 60)
 def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False):
     """牛客最慢（1100 人约 65s），路由到 crawl_slow 队列。
+
+    软超时单独放宽到 55 分钟：牛客「窗口∪索引历史」可能一次要抓几十场
+    （每场 65s~数分钟），全局 25 分钟软超时会让任务反复 SoftTimeLimitExceeded
+    只抓一半。time_limit 60 分钟留收尾余量，防止任务卡死占死 worker。
 
     months: 显式指定 ["YYYY-MM", ...]；
     months_back: 自动取最近 N 个月（与 months 互斥，months 优先）；
@@ -303,20 +341,50 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
         s = _load_scraper(Platform.NOWCODER)
         s.init_session()
         if months:
-            target = months
+            base_months = list(months)
         elif months_back:
-            target = _last_n_months(months_back)
+            base_months = _last_n_months(months_back)
         else:
-            target = [timezone.now().strftime("%Y-%m")]
+            base_months = [timezone.now().strftime("%Y-%m")]
+
+        # A：预筛 = 窗口 ∪ 索引历史。
+        #    牛客没有「整月全量」外的廉价全量列表，故先按窗口月份 fetch；
+        #    若索引（relevant）里有更早的历史比赛，通过 rating-history 反查
+        #    其所在月份并扩展抓取范围，避免用户历史成绩永远抓不到。
+        relevant = set() if force else relevant_contest_ids(Platform.NOWCODER)
+        target = set(base_months)
+        if relevant:
+            try:
+                for acc in PlatformAccount.objects.filter(platform=Platform.NOWCODER):
+                    for row in s.user_rating_history(acc.handle):
+                        cid = str(row.get("contestId"))
+                        t = row.get("time")
+                        if cid in relevant and t:
+                            ym = datetime.fromtimestamp(
+                                t / 1000).strftime("%Y-%m")
+                            target.add(ym)
+            except Exception as exc:  # noqa: BLE001 - 历史反查失败不阻断主流程
+                logger.warning("牛客历史月份反查失败: %s", exc)
+
         contests = []
-        for ym in target:
+        for ym in sorted(target):
             contests.extend(s.parse_contests(s.fetch_contests(ym)))
         contests = s.filter_contests(contests, rated_only=True, exclude_paid=True)
-        # A：只抓有已关联平台ID用户参与的比赛
-        if not force:
-            relevant = relevant_contest_ids(Platform.NOWCODER)
-            contests = [c for c in contests
-                        if str(c.get("real_contest_id") or c.get("contest_id")) in relevant]
+        # B：只保留「窗口月份内」或「索引里」的比赛
+        if not force and relevant:
+            base = set(base_months)
+
+            def _ym_of(c):
+                return (c.get("start_time") or "")[:7]
+
+            contests = [
+                c for c in contests
+                if str(c.get("real_contest_id") or c.get("contest_id")) in relevant
+                or _ym_of(c) in base
+            ]
+        # C：单次场数上限，防止索引历史比赛过多时单任务超软超时。
+        #    超出部分依赖落盘缓存 + 幂等入库，由后续定时任务继续补抓。
+        contests = contests[:50]
         cache_dir = _crawler_cache_dir(Platform.NOWCODER)
         for c in contests:
             rid = c.get("real_contest_id")

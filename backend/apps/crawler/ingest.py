@@ -277,3 +277,81 @@ def rebind_unbound_participations(platform_account):
         updated += 1
     logger.info("回填 %s 的历史记录 %d 条", platform_account, updated)
     return updated
+
+
+def _crawler_dir():
+    """返回爬虫脚本目录并加入 sys.path（与 tasks.py 同一约定）。"""
+    import os
+    import sys
+    from django.conf import settings
+    base = str(getattr(settings, "CRAWLER_DIR", None) or "")
+    if base and base not in sys.path:
+        sys.path.insert(0, base)
+    return base
+
+
+def fill_participated_contests(platform_account):
+    """按官方个人历史接口补全单个 PlatformAccount 的参与比赛索引。
+
+    Codeforces -> user.rating（contestId 列表）
+    AtCoder    -> users/{handle}/history/json（ContestScreenName 列表）
+    牛客       -> acm/contest/rating-history?uid=（contestId 列表，即 real_contest_id）
+
+    返回 (updated: bool, ids_count: int)。索引为空时也算一次更新写入。
+    """
+    if not platform_account.handle:
+        return False, 0
+
+    # 确保爬虫脚本目录在 sys.path（backend gunicorn 进程未必加载过 tasks.py，
+    # 直接 from cf_scraper/atcoder_scraper/nowcoder_scraper 会 ImportError）
+    _crawler_dir()
+
+    ids = []
+    if platform_account.platform == Platform.CODEFORCES:
+        from cf_scraper import CodeforcesScraper
+        ids = CodeforcesScraper().user_rating_contest_ids(platform_account.handle)
+    elif platform_account.platform == Platform.ATCODER:
+        from atcoder_scraper import AtCoderScraper
+        ids = AtCoderScraper().user_history_contest_ids(platform_account.handle)
+    elif platform_account.platform == Platform.NOWCODER:
+        from nowcoder_scraper import NowCoderScraper
+        scraper = NowCoderScraper()
+        scraper.init_session()
+        ids = scraper.user_rating_history_contest_ids(platform_account.handle)
+    else:
+        return False, 0
+
+    ids = [str(x) for x in ids if x not in (None, "")]
+    merged = sorted(set(platform_account.participated_contests or []) | set(ids))
+    if merged != list(platform_account.participated_contests or []):
+        platform_account.participated_contests = merged
+        platform_account.save(update_fields=["participated_contests", "updated_at"])
+        return True, len(ids)
+    return False, len(ids)
+
+
+def fill_participated_contests_async(platform_account_id):
+    """后台线程补全参与比赛索引（绑定接口即时返回，不阻塞用户）。
+
+    失败不抛出，仅记录日志；CF/AT 限速决定单账号耗时约 1~5s。
+    """
+    import threading
+    from django.db import connection
+
+    def _run():
+        try:
+            # 线程内关闭旧连接，避免复用父线程的 SQLite/PG 连接造成状态污染
+            connection.close()
+            acc = PlatformAccount.objects.get(pk=platform_account_id)
+            updated, n = fill_participated_contests(acc)
+            logger.info("异步补全 %s 参与比赛索引: 官方接口返回 %d 场, 更新=%s",
+                        acc, n, updated)
+        except Exception:  # noqa: BLE001 - 后台线程不得抛出到调用方
+            logger.exception("异步补全参与比赛索引失败 (account_id=%s)",
+                             platform_account_id)
+        finally:
+            connection.close()
+
+    threading.Thread(target=_run, daemon=True,
+                     name=f"fill-idx-{platform_account_id}").start()
+
