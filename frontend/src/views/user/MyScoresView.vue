@@ -85,6 +85,26 @@ const chartPoints = computed(() =>
 
 const accounts = computed(() => (me.value?.platform_accounts || []) as any[])
 
+// 各平台当前 rating（取该平台最新一场的 new_rating）
+const platformRatings = computed(() => {
+  const byPlat = new Map<ContestPlatform, MyParticipation[]>()
+  for (const r of rows.value) {
+    if (r.new_rating == null || !r.contest_start_time) continue
+    if (!byPlat.has(r.contest_platform)) byPlat.set(r.contest_platform, [])
+    byPlat.get(r.contest_platform)!.push(r)
+  }
+  const result: { platform: ContestPlatform; rating: number; delta: number | null }[] = []
+  for (const [plat, list] of byPlat) {
+    list.sort(
+      (a, b) =>
+        new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime(),
+    )
+    const latest = list[list.length - 1]
+    result.push({ platform: plat, rating: latest.new_rating!, delta: latest.rating_delta })
+  }
+  return result
+})
+
 function fmtDate(s: string | null) {
   if (!s) return '—'
   return new Date(s).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -153,10 +173,25 @@ function accountTag(p: string) {
 
     <!-- Summary metrics -->
     <div class="grid grid-4 metrics-row">
-      <div class="stat-card"><div class="stat-label">总积分</div><div class="stat-value num">{{ fmtCount(rows.length) }}</div><div class="stat-sub">参赛记录</div></div>
+      <div class="stat-card"><div class="stat-label text-accent">总 Rating</div><div class="stat-value num text-cyan">{{ myRank ? fmtCount(myRank.total_score) : '—' }}</div><div class="stat-sub">平台归一化</div></div>
       <div class="stat-card"><div class="stat-label">计入积分场数</div><div class="stat-value num">{{ countedCount }}</div><div class="stat-sub">未排除</div></div>
-      <div class="stat-card"><div class="stat-label">平均排名</div><div class="stat-value num">{{ bestRank != null ? '#' + bestRank : '—' }}</div><div class="stat-sub">历史最佳</div></div>
-      <div class="stat-card"><div class="stat-label text-accent">最高 Rating</div><div class="stat-value num text-cyan">{{ currentRating ?? '—' }}</div><div class="stat-sub">峰值 {{ peakRating ?? '—' }}</div></div>
+      <div class="stat-card"><div class="stat-label">参赛记录</div><div class="stat-value num">{{ rows.length }}</div><div class="stat-sub">全部场次</div></div>
+      <div class="stat-card"><div class="stat-label">历史最佳排名</div><div class="stat-value num">{{ bestRank != null ? '#' + bestRank : '—' }}</div><div class="stat-sub">最高 Rating {{ peakRating ?? '—' }}</div></div>
+    </div>
+
+    <!-- 各平台 Rating 分开展示 -->
+    <div v-if="platformRatings.length" class="card card-pad" style="margin-bottom: var(--space-6)">
+      <div class="card-title" style="margin-bottom: var(--space-4)">各平台 Rating</div>
+      <div class="grid grid-3" style="gap: var(--space-4)">
+        <div v-for="pr in platformRatings" :key="pr.platform" class="stat-card">
+          <div class="stat-label"><span class="platform-tag" :class="accountTag(pr.platform)">{{ platformTag(pr.platform) }}</span></div>
+          <div class="stat-value num">{{ pr.rating }}</div>
+          <div class="stat-sub">
+            <template v-if="pr.delta == null">—</template>
+            <span v-else :class="pr.delta >= 0 ? 'up' : 'down'">{{ pr.delta >= 0 ? '▲' : '▼' }} {{ fmtDelta(pr.delta) }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <EmptyState v-if="!loading && rows.length === 0" title="暂无参赛记录" hint="绑定平台账号并触发爬虫后将自动同步" />
