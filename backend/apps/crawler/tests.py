@@ -139,11 +139,14 @@ class IngestTests(TestCase):
         self.assertEqual(stats["cheaters"], 1)
         self.assertTrue(Participation.objects.get(handle="66666").is_excluded)
 
-    def test_paid_contest_skipped(self):
+    def test_paid_contest_ingested(self):
+        """付费但 rated 的比赛应正常入库并计分（用户决策：只要 rated 就收录）。"""
         meta = {**self.meta, "real_contest_id": 133876, "is_paid": True}
         stats = ingest_contest(Platform.NOWCODER, meta, self.detail)
-        self.assertTrue(stats["skipped"])
-        self.assertFalse(Contest.objects.filter(external_id="133876").exists())
+        self.assertFalse(stats.get("skipped"))
+        c = Contest.objects.get(external_id="133876")
+        self.assertTrue(c.is_paid)
+        self.assertTrue(c.countable)
 
     def test_unrated_contest_skipped(self):
         meta = {**self.meta, "real_contest_id": 137532, "is_rated": False}

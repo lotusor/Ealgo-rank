@@ -106,17 +106,17 @@ class EngineTests(TestCase):
                                       platform_account=self.pa_cf_a)
         self.assertAlmostEqual(sr2.final_score, 50.0)
 
-    # ---------- 学校榜聚合（汇总全部，不限场次） ----------
+    # ---------- 学校榜聚合（成员「各平台最新 rating 加权值」求和） ----------
     def test_school_snapshot(self):
         recompute_score_records()
         n = recompute_snapshots(RankSnapshot.Scope.SCHOOL, "all")
         self.assertEqual(n, 2)  # 两所学校
         a = RankSnapshot.objects.get(scope="school", period="all",
                                      school=self.school_a)
-        # ua: 125+50+92(nc) = 267 ; ub: 113.75 -> 380.75
-        self.assertAlmostEqual(float(a.total_score), 380.75)
+        # 新算法：每成员各平台最新一场。ua=c2(50)+c3(92)=142 ; ub=113.75 -> 255.75
+        self.assertAlmostEqual(float(a.total_score), 255.75)
         self.assertEqual(a.member_count, 2)
-        self.assertEqual(a.contest_count, 4)
+        self.assertEqual(a.contest_count, 3)  # ua 2 场 + ub 1 场
         b = RankSnapshot.objects.get(scope="school", period="all",
                                      school=self.school_b)
         self.assertAlmostEqual(float(b.total_score), 123.75)

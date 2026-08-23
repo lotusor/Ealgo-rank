@@ -59,8 +59,8 @@ class Contest(TimeStampedModel):
 
     @property
     def countable(self):
-        """是否应计入积分：rated 且非付费。"""
-        return self.is_rated and not self.is_paid
+        """是否应计入积分：rated（付费不影响，付费 rated 比赛同样计分）。"""
+        return self.is_rated
 
 
 class Problem(TimeStampedModel):
@@ -99,7 +99,6 @@ class ParticipationQuerySet(models.QuerySet):
             is_excluded=False,
             platform_account__isnull=False,
             contest__is_rated=True,
-            contest__is_paid=False,
         )
 
     def for_school(self, school_id):

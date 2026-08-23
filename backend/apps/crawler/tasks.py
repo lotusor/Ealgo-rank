@@ -263,7 +263,7 @@ def crawl_codeforces(self, job_id=None, count=20, mode="rating", force=False):
         recent_finished = [c for c in all_contests
                            if c.get("phase") == "FINISHED"][:count * 2]
         recent = s.filter_contests(recent_finished, rated_only=True,
-                                   exclude_paid=True)[:count]
+                                   exclude_paid=False)[:count]
         # A：预筛 = 窗口 ∪ 索引历史。用户历史比赛（可能很早，如 contest 2227）
         #    不在「最近窗口」内，若只做窗口∩索引交集会漏掉，导致永远抓不到历史成绩。
         #    force=True 跳过预筛，用于冷启动全量引导。
@@ -279,7 +279,7 @@ def crawl_codeforces(self, job_id=None, count=20, mode="rating", force=False):
                 and str(c.get("real_contest_id") or c.get("contest_id")) in relevant
                 and str(c.get("real_contest_id") or c.get("contest_id")) not in recent_ids
             ]
-            history = s.filter_contests(history, rated_only=True, exclude_paid=True)
+            history = s.filter_contests(history, rated_only=True, exclude_paid=False)
             contests = recent + history
         else:
             contests = recent
@@ -311,7 +311,7 @@ def crawl_atcoder(self, job_id=None, count=20, force=False):
         all_contests.sort(key=lambda c: c.get("start_time") or "", reverse=True)
         # filter 是纯本地（读 rate_change），先取宽窗口再筛
         recent = s.filter_contests(
-            all_contests[:count * 2], rated_only=True, exclude_paid=True)[:count]
+            all_contests[:count * 2], rated_only=True, exclude_paid=False)[:count]
         # A：预筛 = 窗口 ∪ 索引历史（用户历史比赛即使不在最近窗口也要抓）
         if not force:
             relevant = relevant_contest_ids(Platform.ATCODER)
@@ -321,7 +321,7 @@ def crawl_atcoder(self, job_id=None, count=20, force=False):
                 if str(c.get("contest_id")) in relevant
                 and str(c.get("contest_id")) not in recent_ids
             ]
-            history = s.filter_contests(history, rated_only=True, exclude_paid=True)
+            history = s.filter_contests(history, rated_only=True, exclude_paid=False)
             contests = recent + history
         else:
             contests = recent
@@ -399,7 +399,7 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
                 if str(c.get("real_contest_id") or c.get("contest_id")) in relevant
                 or _ym_of(c) in base
             ]
-        contests = s.filter_contests(contests, rated_only=True, exclude_paid=True)
+        contests = s.filter_contests(contests, rated_only=True, exclude_paid=False)
         # C：单次场数上限，防止索引历史比赛过多时单任务超软超时。
         #    超出部分依赖落盘缓存 + 幂等入库，由后续定时任务继续补抓。
         contests = contests[:50]

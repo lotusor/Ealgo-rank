@@ -70,7 +70,9 @@ def ingest_contest(platform, contest_meta, detail, *, force=False):
     is_rated = bool(contest_meta.get("is_rated"))
     is_paid = bool(contest_meta.get("is_paid"))
 
-    if not force and (not is_rated or is_paid):
+    # 付费 rated 比赛同样计入（用户决策：只要 rated 就收录并计分），
+    # is_paid 仅保留作展示标记，不再作为排除依据。
+    if not force and not is_rated:
         logger.info("跳过非计分比赛: %s (rated=%s paid=%s)",
                     contest_meta.get("name"), is_rated, is_paid)
         return {"skipped": True, "reason": "not_countable"}

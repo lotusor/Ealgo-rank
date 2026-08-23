@@ -1,12 +1,13 @@
 """
 #5 积分排名引擎。
 
-设计决策（已与用户确认）：
-- 基础分 base_score = 100 * (1 - (rank-1) / max(1, valid_participant_count))
-  名次归一化，参与即得分，第 1 名≈100、末位≈0；不依赖平台 rating，三平台通用。
-- 综合系数 combined = platform_weight * 平台系数 + contest_weight * 比赛难度系数（加权求和）
-- 最终积分 final = base * combined
-- recent_contest_limit：仅个人榜取各平台最近 N 场求和；学校榜仍汇总成员全部有效场次。
+设计决策（已与用户确认 2026-08-24）：
+- 积分排行采用「平台归一后的总 rating」= 各平台当前 rating × 平台系数 之和。
+  - 每个平台取该用户「最新一场」的赛后 rating（new_rating），乘以平台系数，
+    跨平台求和得到个人总 rating；学校榜 = 成员总 rating 之和。
+  - rating 是「当前水平」而非「累加值」，故每个平台只取最新一场，不逐场累加。
+- 名次归一化 base_score 保留为兜底：new_rating 缺失时才退回
+  base = 100 * (1 - (rank-1)/valid_count)。
 - 周期 period：'all' + 当前年份；触发方式见 management 命令 / Celery 任务。
 - 积分系数为全局统一配置（超管设置），不分学校。
 """
@@ -30,7 +31,7 @@ def get_config():
 
 
 def compute_base_score(participation):
-    """名次归一化基础分。rank 或有效人数缺失时记 0。"""
+    """名次归一化基础分（兜底用）。rank 或有效人数缺失时记 0。"""
     rank = participation.rank
     contest = participation.contest
     vp = contest.valid_participant_count or contest.participant_count or 0
@@ -74,7 +75,7 @@ def recompute_score_records():
         "contest", "platform_account__school")
     countable_ids = set(countable.values_list("id", flat=True))
 
-    # 清理已不再可计分的旧 ScoreRecord（如参赛被标记作弊/付费）
+    # 清理已不再可计分的旧 ScoreRecord（如参赛被标记作弊）
     deleted, _ = ScoreRecord.objects.exclude(
         participation_id__in=countable_ids).delete()
 
@@ -84,12 +85,17 @@ def recompute_score_records():
         school = p.platform_account.school
         base = compute_base_score(p)
         pf, cf, combined = compute_factors(p, config)
-        final = round(base * combined, 4)
-        formula = (
-            f"base={base:.2f} * "
-            f"({float(config.platform_weight):.2f}*{pf:.2f}"
-            f"+{float(config.contest_weight):.2f}*{cf:.2f})"
-        )
+        # rating 加权值 = 赛后 rating × 平台系数；rating 缺失退回名次归一化
+        if p.new_rating is not None:
+            final = round(float(p.new_rating) * pf, 4)
+            formula = f"rating={p.new_rating:.0f} * 平台系数{pf:.2f}"
+        else:
+            final = round(base * combined, 4)
+            formula = (
+                f"base={base:.2f} * "
+                f"({float(config.platform_weight):.2f}*{pf:.2f}"
+                f"+{float(config.contest_weight):.2f}*{cf:.2f})"
+            )
         obj, was_created = ScoreRecord.objects.update_or_create(
             participation=p,
             defaults={
@@ -111,24 +117,52 @@ def recompute_score_records():
     return {"created": created, "updated": updated, "deleted": deleted}
 
 
+def _latest_by_platform(records):
+    """把某用户的所有 ScoreRecord 按平台分组，取各平台最新一场。"""
+    by_plat = defaultdict(list)
+    for r in records:
+        by_plat[r.platform].append(r)
+    latest = []
+    for plist in by_plat.values():
+        plist.sort(key=lambda x: x.contest_time or datetime.min, reverse=True)
+        latest.append(plist[0])
+    return latest
+
+
 def _build_school_rows(period):
-    qs = _period_filter(ScoreRecord.objects.all(), period)
-    agg = qs.values("school").annotate(
-        total=Sum("final_score"),
-        cnt=Count("id"),
-        members=Count("platform_account__user", distinct=True),
-    )
-    rows = []
-    for a in agg:
-        if a["school"] is None:
+    qs = _period_filter(
+        ScoreRecord.objects.select_related("platform_account__user",
+                                           "platform_account__school"),
+        period)
+    records = list(qs)
+
+    # 先按用户聚合「各平台最新 rating 加权值之和」（个人总 rating），再按学校求和
+    by_user = defaultdict(list)
+    for r in records:
+        by_user[r.platform_account.user_id].append(r)
+
+    by_school = defaultdict(lambda: {"total": 0.0, "members": set(),
+                                     "cnt": 0})
+    for uid, recs in by_user.items():
+        school_id = recs[0].school_id
+        if school_id is None:
             continue
+        latest = _latest_by_platform(recs)
+        user_total = sum(r.final_score for r in latest)
+        agg = by_school[school_id]
+        agg["total"] += user_total
+        agg["members"].add(uid)
+        agg["cnt"] += len(latest)
+
+    rows = []
+    for school_id, agg in by_school.items():
         rows.append(RankSnapshot(
             scope=RankSnapshot.Scope.SCHOOL,
             period=period,
-            school_id=a["school"],
-            total_score=round(a["total"] or 0.0, 4),
-            contest_count=a["cnt"] or 0,
-            member_count=a["members"] or 0,
+            school_id=school_id,
+            total_score=round(agg["total"], 4),
+            contest_count=agg["cnt"],
+            member_count=len(agg["members"]),
         ))
     return rows
 
@@ -147,33 +181,18 @@ def _build_student_rows(period):
 
     user_ids = list(by_user.keys())
     users = {u.id: u for u in User.objects.filter(id__in=user_ids)}
-    school_ids = {u.school_id for u in users.values() if u.school_id}
-    # 预取各用户当前学校的配置，取各平台最近 N 场
-    schools = {s.id: s for s in School.objects.filter(id__in=school_ids)}
 
-    config = get_config()
-    limit = config.recent_contest_limit if config else 0
     rows = []
     for uid, recs in by_user.items():
         user = users.get(uid)
-        if limit:
-            by_plat = defaultdict(list)
-            for r in recs:
-                by_plat[r.platform].append(r)
-            chosen = []
-            for plist in by_plat.values():
-                plist.sort(
-                    key=lambda x: x.contest_time or datetime.min,
-                    reverse=True)
-                chosen.extend(plist[:limit])
-            recs = chosen
-        total = sum(r.final_score for r in recs)
+        latest = _latest_by_platform(recs)
+        total = sum(r.final_score for r in latest)
         rows.append(RankSnapshot(
             scope=RankSnapshot.Scope.STUDENT,
             period=period,
             user_id=uid,
             total_score=round(total, 4),
-            contest_count=len(recs),
+            contest_count=len(latest),
             member_count=1,
         ))
     return rows
