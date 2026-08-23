@@ -369,8 +369,9 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
         contests = []
         for ym in sorted(target):
             contests.extend(s.parse_contests(s.fetch_contests(ym)))
-        contests = s.filter_contests(contests, rated_only=True, exclude_paid=True)
-        # B：只保留「窗口月份内」或「索引里」的比赛
+        # B：先把「窗口月份内 ∪ 索引里」的比赛预筛出来（纯本地、不联网），
+        #    再交给 filter_contests 逐场判定 rated/付费。否则历史月份扩展后
+        #    会对数百场校赛/非 rated 赛逐个请求 contest-info，白白耗时十几分钟。
         if not force and relevant:
             base = set(base_months)
 
@@ -382,6 +383,7 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
                 if str(c.get("real_contest_id") or c.get("contest_id")) in relevant
                 or _ym_of(c) in base
             ]
+        contests = s.filter_contests(contests, rated_only=True, exclude_paid=True)
         # C：单次场数上限，防止索引历史比赛过多时单任务超软超时。
         #    超出部分依赖落盘缓存 + 幂等入库，由后续定时任务继续补抓。
         contests = contests[:50]
