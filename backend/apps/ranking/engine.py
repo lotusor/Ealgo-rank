@@ -18,6 +18,7 @@ from django.db.models import Count, Sum
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.contests.models import ContestDifficultyFactor
 from apps.ranking.models import RankSnapshot, ScoreRecord
 from apps.schools.models import ScoreConfig, School
 
@@ -85,10 +86,14 @@ def recompute_score_records():
         school = p.platform_account.school
         base = compute_base_score(p)
         pf, cf, combined = compute_factors(p, config)
-        # rating 加权值 = 赛后 rating × 平台系数；rating 缺失退回名次归一化
+        # 比赛难度系数：按「平台 × 比赛系列」映射的独立乘区，命中不到回退 1.0
+        difficulty = ContestDifficultyFactor.factor_for(
+            p.contest.platform, p.contest.series)
+        # rating 加权值 = rating × 平台系数 × 比赛难度系数；rating 缺失退回名次归一化
         if p.new_rating is not None:
-            final = round(float(p.new_rating) * pf, 4)
-            formula = f"rating={p.new_rating:.0f} * 平台系数{pf:.2f}"
+            final = round(float(p.new_rating) * pf * difficulty, 4)
+            formula = (f"rating={p.new_rating:.0f} * 平台系数{pf:.2f}"
+                       f" * 难度系数{difficulty:.2f}")
         else:
             final = round(base * combined, 4)
             formula = (
@@ -104,7 +109,7 @@ def recompute_score_records():
                 "platform": p.contest.platform,
                 "base_score": base,
                 "platform_factor": pf,
-                "contest_factor": cf,
+                "contest_factor": difficulty,
                 "final_score": final,
                 "formula": formula,
                 "contest_time": p.contest.start_time,

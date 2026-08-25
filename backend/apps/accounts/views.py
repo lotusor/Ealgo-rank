@@ -32,6 +32,7 @@ from apps.accounts.serializers import (
     PlatformAccountSerializer,
     RegisterSerializer,
     UserMeSerializer,
+    UserPublicProfileSerializer,
     UserRosterSerializer,
     UserUpdateSerializer,
 )
@@ -389,3 +390,16 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(
                 Q(username__icontains=kw) | Q(real_name__icontains=kw))
         return qs
+
+
+class UserPublicProfileView(APIView):
+    """用户公开信息页：榜单点击跳转后展示个性信息 + 竞赛信息（任何人可读）。"""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        from django.shortcuts import get_object_or_404
+        user = get_object_or_404(User.objects.select_related("school"), pk=pk)
+        data = UserPublicProfileSerializer(
+            user, context={"request": request}).data
+        return Response(data)

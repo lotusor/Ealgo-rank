@@ -173,3 +173,42 @@ class Participation(TimeStampedModel):
         if not self.is_excluded:
             self.exclude_reason = ""
         super().save(*args, **kwargs)
+
+
+class ContestDifficultyFactor(TimeStampedModel):
+    """比赛难度系数：按「平台 × 比赛系列」映射的独立乘区。
+
+    加权公式：final = rating × 平台系数 × 比赛难度系数。
+    难度越高系数越大（可调，超管在后台维护）。命中不到系列时回退 1.0。
+    series 取值示例：
+      CF      -> Div. 1 / Div. 2 / Div. 3 / Educational / Global
+      AtCoder -> ABC / ARC / AGC
+      牛客    -> 牛客周赛 / 牛客小白月赛 / 牛客练习赛 / 牛客挑战赛 /
+                 牛客暑期多校训练营 / 牛客寒假算法基础集训营
+    """
+
+    platform = models.CharField("平台", max_length=20,
+                                choices=Platform.choices, db_index=True)
+    series = models.CharField("比赛系列", max_length=100, db_index=True)
+    factor = models.DecimalField("难度系数", max_digits=6, decimal_places=3,
+                                 default=1.000)
+
+    class Meta:
+        verbose_name = "比赛难度系数"
+        verbose_name_plural = verbose_name
+        ordering = ["platform", "series"]
+        constraints = [
+            models.UniqueConstraint(fields=["platform", "series"],
+                                    name="uniq_platform_series_difficulty"),
+        ]
+
+    def __str__(self):
+        return f"[{self.get_platform_display()}] {self.series} ×{self.factor}"
+
+    @classmethod
+    def factor_for(cls, platform, series, default=1.0):
+        """查某平台某系列的难度系数，未配置则回退 default（默认 1.0）。"""
+        if not series:
+            return default
+        obj = cls.objects.filter(platform=platform, series=series).first()
+        return float(obj.factor) if obj else default

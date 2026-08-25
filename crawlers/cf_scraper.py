@@ -111,6 +111,25 @@ class CodeforcesScraper:
         return contests
 
     @staticmethod
+    @staticmethod
+    def extract_series(name):
+        """从比赛名提取赛事系列，用于比赛难度系数映射。
+
+        "Codeforces Round 1117 (Div. 2)" -> "Div. 2"
+        "Educational Codeforces Round 193 ..." -> "Educational"
+        "Codeforces Global Round 28" -> "Global"
+        """
+        if not name:
+            return None
+        if "Educational" in name:
+            return "Educational"
+        if "Global" in name:
+            return "Global"
+        m = re.search(r"\(Div\.\s*(\d+)\)", name)
+        if m:
+            return f"Div. {m.group(1)}"
+        return None
+
     def parse_contests(contests):
         """解析比赛列表，提取标准化字段"""
         results = []
@@ -122,6 +141,7 @@ class CodeforcesScraper:
                 "contest_id": cid,
                 "real_contest_id": cid,
                 "name": c.get("name"),
+                "series": CodeforcesScraper.extract_series(c.get("name")),
                 "oj": "Codeforces",
                 "link": f"https://codeforces.com/contest/{cid}",
                 "start_time": CodeforcesScraper._ts2str(start),

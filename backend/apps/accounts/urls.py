@@ -19,4 +19,7 @@ urlpatterns = [
     path("me/", views.MeView.as_view(), name="me"),
     path("change-password/", views.ChangePasswordView.as_view(),
          name="change-password"),
+    # 用户公开信息页（榜单点击跳转），任何人可读
+    path("users/<int:pk>/profile/", views.UserPublicProfileView.as_view(),
+         name="user-public-profile"),
 ] + router.urls

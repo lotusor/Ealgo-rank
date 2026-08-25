@@ -10,9 +10,10 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from rest_framework.response import Response
 
 from apps.common.models import ExcludeReason
-from apps.common.permissions import IsSchoolAdmin
-from apps.contests.models import Contest, Participation
+from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin
+from apps.contests.models import Contest, ContestDifficultyFactor, Participation
 from apps.contests.serializers import (
+    ContestDifficultyFactorSerializer,
     ContestSerializer,
     MyParticipationSerializer,
     ParticipationSerializer,
@@ -115,4 +116,21 @@ class MyParticipationViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(contest__platform=qp["platform"])
         if qp.get("is_excluded") in ("true", "false", "0", "1"):
             qs = qs.filter(is_excluded=qp["is_excluded"] in ("true", "1"))
+        return qs
+
+
+class ContestDifficultyFactorViewSet(viewsets.ModelViewSet):
+    """比赛难度系数（平台 × 系列 → 系数），仅超管读写。"""
+
+    serializer_class = ContestDifficultyFactorSerializer
+    pagination_class = StandardPagination
+    permission_classes = [IsSuperAdmin]
+    queryset = ContestDifficultyFactor.objects.all()
+    ordering = ["platform", "series"]
+
+    def get_queryset(self):
+        qs = ContestDifficultyFactor.objects.all()
+        qp = self.request.query_params
+        if qp.get("platform"):
+            qs = qs.filter(platform=qp["platform"])
         return qs

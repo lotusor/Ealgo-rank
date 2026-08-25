@@ -11,5 +11,7 @@ router.register("participations", views.ParticipationViewSet,
                 basename="participation")
 router.register("me/participations", views.MyParticipationViewSet,
                 basename="my-participation")
+router.register("difficulty-factors", views.ContestDifficultyFactorViewSet,
+                basename="difficulty-factor")
 
 urlpatterns = router.urls

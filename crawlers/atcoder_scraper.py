@@ -89,6 +89,23 @@ class AtCoderScraper:
         return contests
 
     @staticmethod
+    @staticmethod
+    def extract_series(cid):
+        """从 contest id 前缀提取赛事系列，用于比赛难度系数映射。
+
+        "abc461" -> "ABC"；"arc227" -> "ARC"；"agc065" -> "AGC"
+        """
+        if not cid:
+            return None
+        cid = cid.lower()
+        if cid.startswith("abc"):
+            return "ABC"
+        if cid.startswith("arc"):
+            return "ARC"
+        if cid.startswith("agc"):
+            return "AGC"
+        return None
+
     def parse_contests(contests):
         """解析比赛列表，提取标准化字段"""
         results = []
@@ -100,6 +117,7 @@ class AtCoderScraper:
                 "contest_id": cid,
                 "real_contest_id": cid,
                 "name": c.get("title"),
+                "series": AtCoderScraper.extract_series(cid),
                 "oj": "AtCoder",
                 "link": f"https://atcoder.jp/contests/{cid}",
                 "start_time": AtCoderScraper._ts2str(start),

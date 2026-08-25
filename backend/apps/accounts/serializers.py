@@ -304,6 +304,68 @@ class UserRosterSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class UserPublicProfileSerializer(serializers.ModelSerializer):
+    """用户公开信息页：榜单点击跳转后展示的个性信息 + 竞赛信息。
+
+    公开可读（不含邮箱/学号等隐私字段），展示头像、签名、各平台 rating 与参赛记录。
+    """
+    avatar = serializers.SerializerMethodField()
+    school_name = serializers.CharField(source="school.name", read_only=True,
+                                        default="")
+    role_display = serializers.CharField(source="get_role_display", read_only=True)
+    platform_ratings = serializers.SerializerMethodField()
+    participations = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ["id", "username", "real_name", "avatar", "bio", "school",
+                  "school_name", "role_display", "platform_ratings",
+                  "participations"]
+        read_only_fields = fields
+
+    def get_avatar(self, obj):
+        if not obj.avatar:
+            return None
+        request = self.context.get("request")
+        url = obj.avatar.url
+        if request is not None:
+            return request.build_absolute_uri(url)
+        return url
+
+    def get_platform_ratings(self, obj):
+        """各平台当前 rating（该平台最新一场的 new_rating）与最近一次涨跌。"""
+        from apps.contests.models import Participation
+
+        ratings = []
+        for acc in obj.platform_accounts.all():
+            p = (Participation.objects
+                 .filter(platform_account=acc, new_rating__isnull=False)
+                 .select_related("contest")
+                 .order_by("-contest__start_time").first())
+            if p is None:
+                continue
+            ratings.append({
+                "platform": acc.platform,
+                "handle": acc.handle,
+                "rating": p.new_rating,
+                "delta": p.rating_delta,
+            })
+        return ratings
+
+    def get_participations(self, obj):
+        """公开的参赛记录（未排除的 rated 比赛 + rating 涨跌）。"""
+        from apps.contests.models import Participation
+        from apps.contests.serializers import MyParticipationSerializer
+
+        qs = (Participation.objects
+              .filter(platform_account__user=obj, is_excluded=False,
+                      contest__is_rated=True)
+              .select_related("contest", "platform_account")
+              .order_by("-contest__start_time"))
+        return MyParticipationSerializer(qs, many=True,
+                                         context=self.context).data
+
+
 class NotificationSerializer(serializers.ModelSerializer):
     type_display = serializers.CharField(source="get_type_display", read_only=True)
 
