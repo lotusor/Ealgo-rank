@@ -14,6 +14,7 @@ def healthz(_request):
 
 
 api_v1 = [
+    path("healthz/", healthz, name="healthz"),
     path("auth/token/", LoginView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", StampedTokenRefreshView.as_view(), name="token_refresh"),
     path("auth/token/verify/", TokenVerifyView.as_view(), name="token_verify"),

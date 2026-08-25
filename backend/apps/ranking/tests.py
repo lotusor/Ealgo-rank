@@ -92,6 +92,29 @@ class EngineTests(TestCase):
                                        handle_lower="cfb")
         self.assertAlmostEqual(compute_base_score(p2), 91.0)  # rank 10
 
+    def test_base_score_uses_full_participant_count_not_bound_count(self):
+        """兜底分分母必须是全场参赛人数，而非本站已绑定人数。
+
+        生产真实场景：一场 CF/AT 比赛有上万人，但本站只绑定了 1 个学生。
+        ingest 会把 valid_participant_count 写成「已绑定人数」(=1)，
+        若 compute_base_score 拿它当分母，rank=10099 会算出 -1009700
+        的天文负分。这里锁定：分母应取 participant_count（全场人数）。
+        """
+        big = Contest.objects.create(
+            platform=Platform.ATCODER, external_id="big1",
+            name="AT Big", start_time="2026-05-01T00:00:00Z",
+            is_rated=True, is_paid=False,
+            participant_count=11752,          # 全场参赛人数
+            valid_participant_count=1)        # 本站已绑定人数（模拟 ingest 写入）
+        p = Participation.objects.create(
+            contest=big, platform_account=self.pa_cf_a,
+            handle="cfa", handle_lower="cfa", rank=10099)
+        base = compute_base_score(p)
+        # 100 * (1 - (10099-1)/11752) ≈ 14.08，应落在合理正数区间
+        self.assertGreater(base, 0.0)
+        self.assertLess(base, 100.0)
+        self.assertAlmostEqual(base, 100.0 * (1 - (10099 - 1) / 11752), places=2)
+
     # ---------- ScoreRecord 算分 ----------
     def test_score_records_computed(self):
         res = recompute_score_records()

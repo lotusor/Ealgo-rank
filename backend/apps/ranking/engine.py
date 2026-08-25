@@ -32,10 +32,17 @@ def get_config():
 
 
 def compute_base_score(participation):
-    """名次归一化基础分（兜底用）。rank 或有效人数缺失时记 0。"""
+    """名次归一化基础分（兜底用）。rank 或有效人数缺失时记 0。
+
+    分母必须是「全场有效参赛人数」（participant_count），而不是
+    valid_participant_count —— 后者在 ingest 里被写成本站已绑定人数
+    （生产环境仅 1），若拿它当分母，名次稍靠后就会算出 -100 万量级的
+    天文负分。rating 缺失时才走这条兜底，虽当前数据都有 rating，
+    但字段一旦缺值即爆雷，必须修正。
+    """
     rank = participation.rank
     contest = participation.contest
-    vp = contest.valid_participant_count or contest.participant_count or 0
+    vp = contest.participant_count or contest.valid_participant_count or 0
     if not rank or rank <= 0 or vp <= 0:
         return 0.0
     return round(100.0 * (1 - (rank - 1) / vp), 4)
