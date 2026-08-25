@@ -1,7 +1,7 @@
 # E-algo Rank 项目接手文档
 
 > **本文件是本项目唯一的开发文档（single source of truth）。** 其他历史文档（`overview.md`、`BACKEND_HANDOFF.md`、`crawlers/VERIFICATION.md`）的内容已合并进本文，已删除，避免信息分叉。
-> 文档基准时间：**2026-08-14**。代码路径：`D:\_Dev\e-algo-rank\`
+> 文档基准时间：**2026-08-25**。代码路径：`D:\_Dev\e-algo-rank\`
 > 配套设计原型（非开发文档，仅前端 UI 来源）：`prototype design for rank/{DESIGN|DELIVERY}.md` + `prototype.html`。
 
 ---
@@ -32,6 +32,8 @@
 | **定时自动爬取配置** | ✅ | `CrawlConfig` 单例（超管设置启用开关/各平台抓取范围/触发小时）；`auto_crawl_task` 由 Beat 每日调度，`CrawlConfig` 变更经 signal 同步 beat crontab |
 | 爬虫防重复爬取 | ✅ | 任务级：同平台+同参数去重窗口(1h)内已有进行中任务则不重复派发（Python 归一化比较）；比赛级：`Contest(platform, external_id)` 唯一约束 + `update_or_create` |
 | 牛客作弊双层防御 | ✅ | 爬虫层标记 + 入库层强制排除（`is_excluded=cheater`） |
+| **健康检查端点** | ✅（2026-08-25） | `/api/v1/healthz/` 返回 `{"status":"ok"}`；原顶层 `/healthz` 会被 nginx SPA fallback 吞掉，实际不可用 |
+| **僵尸爬取任务清理** | ✅（2026-08-25） | `manage.py stale_crawl_jobs [--hours N] [--fix]`：标记卡在 running/pending 超过 N 小时（默认 2h）的任务为 failed |
 | 系统公告 | ✅ | `announcements` app：超管 CRUD + 公开列表；前端公告条 + 超管发布/置顶 |
 | 站内信 | ✅ | 通用 `Notification` 模型；超管主动群发（`/notifications/publish/`） |
 | 权限体系（3 角色） | ✅ | 普通用户 / 学校管理员 / 超级管理员；详见 §2.7 权限矩阵 |
@@ -73,6 +75,10 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 
 | 项 | 级别 | 说明 / 后续动作 |
 | --- | --- | --- |
+| **base_score 分母用错字段** | ✅ 已修复 | 原用 `valid_participant_count`（ingest 写成本站已绑定人数，生产=1）作分母，rank 稍靠后即得 -1009700 负巨值；改为 `participant_count`（全场人数）优先（2026-08-25，commit a546378，已部署生产） |
+| **僵尸爬取任务** | ✅ 已修复 | worker 重启/派发失败会遗留 running/pending 僵尸记录；新增 `stale_crawl_jobs` 命令清理，生产已清理 3 条（2026-08-25） |
+| **健康检查缺失** | ✅ 已修复 | 顶层 `/healthz` 被 nginx SPA fallback 吞掉返回 HTML；新增 `/api/v1/healthz/`（2026-08-25，已部署生产） |
+| **staticfiles 缺失** | 🟡 | 生产容器未执行 `collectstatic`，`/static/admin/*` 404（Django admin 样式缺失，主功能不受影响）；后续可在部署流程补 `collectstatic` |
 | **生产依赖未装** | 🟠 | `psycopg` / `gunicorn` 在 `requirements.txt` 中注释；prod 部署前需取消注释并安装 |
 | **dev 用 SQLite** | 🟠 | 生产必须切 PostgreSQL（`dev.py` 已预留 `DEV_DB_ENGINE=postgres` 切换） |
 | **`UserRole` 前后端枚举潜在不一致** | ✅ 已修复 | 后端 `UserRole.USER="user"`，前端 `types.ts` 曾声明 `'normal'`（仅 dev mock 用到，运行时靠布尔未爆）；已统一为 `'user'` 并同步 `AuthCallbackView` mock（2026-08-14 晚低难度批次） |
