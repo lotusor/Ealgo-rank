@@ -78,7 +78,7 @@ aa11e2b feat(schools): 管理员申请校验——每月限一次 + 已管理员
 | **base_score 分母用错字段** | ✅ 已修复 | 原用 `valid_participant_count`（ingest 写成本站已绑定人数，生产=1）作分母，rank 稍靠后即得 -1009700 负巨值；改为 `participant_count`（全场人数）优先（2026-08-25，commit a546378，已部署生产） |
 | **僵尸爬取任务** | ✅ 已修复 | worker 重启/派发失败会遗留 running/pending 僵尸记录；新增 `stale_crawl_jobs` 命令清理，生产已清理 3 条（2026-08-25） |
 | **健康检查缺失** | ✅ 已修复 | 顶层 `/healthz` 被 nginx SPA fallback 吞掉返回 HTML；新增 `/api/v1/healthz/`（2026-08-25，已部署生产） |
-| **staticfiles 缺失** | 🟡 | 生产容器未执行 `collectstatic`，`/static/admin/*` 404（Django admin 样式缺失，主功能不受影响）；后续可在部署流程补 `collectstatic` |
+| **staticfiles 缺失** | ✅ 已修复 | 生产容器未执行 `collectstatic`，`/static/admin/*` 404（Django admin 样式缺失）。已本地 collectstatic 打包上传到容器 `/app/backend/staticfiles/` 并重启 backend，admin 样式恢复（2026-08-25）。注意：重建镜像后仍需重新 collectstatic |
 | **生产依赖未装** | 🟠 | `psycopg` / `gunicorn` 在 `requirements.txt` 中注释；prod 部署前需取消注释并安装 |
 | **dev 用 SQLite** | 🟠 | 生产必须切 PostgreSQL（`dev.py` 已预留 `DEV_DB_ENGINE=postgres` 切换） |
 | **`UserRole` 前后端枚举潜在不一致** | ✅ 已修复 | 后端 `UserRole.USER="user"`，前端 `types.ts` 曾声明 `'normal'`（仅 dev mock 用到，运行时靠布尔未爆）；已统一为 `'user'` 并同步 `AuthCallbackView` mock（2026-08-14 晚低难度批次） |
