@@ -24,6 +24,7 @@ Codeforces 比赛信息与用户排名爬虫
 
 import json
 import random
+import re
 import time
 from datetime import datetime
 from pathlib import Path
