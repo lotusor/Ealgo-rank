@@ -109,6 +109,17 @@ export interface ScoreConfig {
   updated_at: string
 }
 
+// 比赛难度系数（平台 × 系列 → 系数）
+export interface ContestDifficultyFactor {
+  id: number
+  platform: string
+  platform_display: string
+  series: string
+  factor: string
+  created_at: string
+  updated_at: string
+}
+
 // 自动爬取配置（CrawlConfig 单例）
 export interface CrawlConfig {
   id: number
@@ -241,11 +252,26 @@ export interface RankSnapshot {
   user: number | null
   user_name: string | null
   user_school_name: string | null
+  user_avatar: string | null
   rank: number
   total_score: number
   contest_count: number
   member_count: number | null
   computed_at: string
+}
+
+// 用户公开信息页（榜单点击跳转后展示）
+export interface UserPublicProfile {
+  id: number
+  username: string
+  real_name: string | null
+  avatar: string | null
+  bio: string
+  school: number | null
+  school_name: string
+  role_display: string
+  platform_ratings: { platform: string; handle: string; rating: number; delta: number | null }[]
+  participations: MyParticipation[]
 }
 
 // 本人参赛记录（只读，仅本人可见）
@@ -269,6 +295,7 @@ export interface MyParticipation {
   rating_delta: number | null
   old_rating: number | null
   new_rating: number | null
+  weighted_rating: number | null
   is_excluded: boolean
   exclude_reason: ExcludeReason
   exclude_reason_display: string

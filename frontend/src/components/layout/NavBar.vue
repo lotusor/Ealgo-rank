@@ -3,6 +3,7 @@ import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
+import UserAvatar from '@/components/ui/UserAvatar.vue'
 import {
   fetchNotifications,
   markNotificationRead,
@@ -179,6 +180,11 @@ defineExpose({ drawerOpen })
         </button>
         <div v-else class="user-menu" ref="menuRef">
           <button class="user-trigger" @click="menuOpen = !menuOpen">
+            <UserAvatar
+              :name="auth.user?.real_name || auth.user?.username"
+              :avatar="auth.user?.avatar"
+              :size="28"
+            />
             <span class="user-name">{{ auth.user?.real_name || auth.user?.username }}</span>
             <span class="badge" :class="roleBadge.cls">{{ roleBadge.text }}</span>
           </button>

@@ -6,6 +6,7 @@ import type {
   UserRoster,
   School,
   ScoreConfig,
+  ContestDifficultyFactor,
   CrawlConfig,
   Application,
   CrawlJob,
@@ -13,6 +14,7 @@ import type {
   Contest,
   RankSnapshot,
   MyParticipation,
+  UserPublicProfile,
   SchoolAdminApplicationCreate,
   UsernameAvailability,
   Announcement,
@@ -126,6 +128,26 @@ export async function createScoreConfig(payload: Partial<ScoreConfig>) {
   return data
 }
 
+// ---------- 比赛难度系数（平台 × 系列 → 系数，超管管理） ----------
+export async function listDifficultyFactors(params: PageQuery = {}) {
+  const { data } = await client.get<Paginated<ContestDifficultyFactor>>(
+    '/difficulty-factors/',
+    { params },
+  )
+  return data
+}
+
+export async function updateDifficultyFactor(
+  id: number,
+  payload: Partial<ContestDifficultyFactor>,
+) {
+  const { data } = await client.patch<ContestDifficultyFactor>(
+    `/difficulty-factors/${id}/`,
+    payload,
+  )
+  return data
+}
+
 // ---------- Crawl config (自动爬取配置，单例) ----------
 export async function getCrawlConfig(): Promise<CrawlConfig> {
   const { data } = await client.get<CrawlConfig>('/crawl-configs/')
@@ -221,6 +243,12 @@ export async function listRankings(params: PageQuery = {}) {
   const { data } = await client.get<Paginated<RankSnapshot>>('/rankings/', {
     params,
   })
+  return data
+}
+
+// ---------- 用户公开信息页（榜单点击跳转） ----------
+export async function getUserPublicProfile(id: number): Promise<UserPublicProfile> {
+  const { data } = await client.get<UserPublicProfile>(`/users/${id}/profile/`)
   return data
 }
 

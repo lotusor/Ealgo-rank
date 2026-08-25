@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { listRankings, listSchools } from '@/api'
 import type { RankSnapshot, School } from '@/api/types'
 import { fmtScore, fmtCount, medalRowClass } from '@/utils/format'
@@ -10,6 +11,8 @@ import PageTabs from '@/components/ui/PageTabs.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import DataPagination from '@/components/ui/DataPagination.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+
+const router = useRouter()
 
 type Scope = 'school' | 'student'
 const scope = ref<Scope>('school')
@@ -266,8 +269,8 @@ watch(schoolSearch, () => {
               </template>
               <template v-else>
                 <td>
-                  <div class="cell-user">
-                    <UserAvatar :name="r.user_name" :size="30" />
+                  <div class="cell-user clickable" @click="r.user != null && router.push(`/u/user/${r.user}`)">
+                    <UserAvatar :name="r.user_name" :avatar="r.user_avatar" :size="30" />
                     <span class="cell-ellipsis">{{ r.user_name }}</span>
                   </div>
                 </td>
@@ -299,6 +302,12 @@ watch(schoolSearch, () => {
 </template>
 
 <style scoped>
+.cell-user.clickable {
+  cursor: pointer;
+}
+.cell-user.clickable:hover .cell-ellipsis {
+  color: var(--color-primary);
+}
 .data-table td.score {
   color: var(--color-primary);
   font-weight: 700;

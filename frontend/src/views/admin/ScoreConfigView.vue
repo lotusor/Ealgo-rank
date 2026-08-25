@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from 'vue'
-import { listScoreConfigs, createScoreConfig } from '@/api'
-import type { ScoreConfig } from '@/api/types'
+import { listScoreConfigs, createScoreConfig, listDifficultyFactors, updateDifficultyFactor } from '@/api'
+import type { ScoreConfig, ContestDifficultyFactor } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
@@ -23,6 +23,9 @@ const empty: ScoreConfig = {
 
 const form = reactive<ScoreConfig>({ ...empty })
 
+// 比赛难度系数列表（平台 × 系列）
+const difficultyFactors = ref<ContestDifficultyFactor[]>([])
+
 async function load() {
   loading.value = true
   try {
@@ -30,6 +33,8 @@ async function load() {
     if (res.results.length) {
       Object.assign(form, res.results[0])
     }
+    const df = await listDifficultyFactors({ page_size: 100 })
+    difficultyFactors.value = df.results
   } catch (e: any) {
     toast.error(e?.response?.data?.detail || '加载积分系数失败')
   } finally {
@@ -58,6 +63,18 @@ async function onSave() {
     saving.value = false
   }
 }
+
+async function onFactorBlur(item: ContestDifficultyFactor) {
+  try {
+    await updateDifficultyFactor(item.id, { factor: item.factor })
+    toast.success(`已更新 ${item.platform_display} ${item.series} 难度系数`)
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail || '难度系数保存失败')
+  }
+}
+
+const platformLabel = (p: string) =>
+  p === 'codeforces' ? 'Codeforces' : p === 'atcoder' ? 'AtCoder' : '牛客'
 
 onMounted(load)
 </script>
@@ -96,6 +113,40 @@ onMounted(load)
           <label class="field-label">比赛难度默认系数</label>
           <input v-model="form.default_contest_factor" class="input" type="number" step="0.001" />
         </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="section-title" style="font-size: 16px; margin-bottom: var(--space-4)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20" /></svg>
+        比赛难度系数（平台 × 系列）
+      </div>
+      <p class="body-sm text-tertiary" style="margin-bottom: var(--space-4)">
+        加权公式 = rating × 平台系数 × 比赛难度系数。难度越高系数越大，改动后即时生效（下次重算榜单时应用）。
+      </p>
+      <div class="table-wrap" style="border: 1px solid var(--color-border); border-radius: var(--radius-md)">
+        <table class="data-table" style="border: none">
+          <thead>
+            <tr><th>平台</th><th>比赛系列</th><th class="num-cell">难度系数</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in difficultyFactors" :key="item.id">
+              <td>{{ platformLabel(item.platform) }}</td>
+              <td>{{ item.series }}</td>
+              <td class="num-cell">
+                <input
+                  v-model="item.factor"
+                  class="input"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  style="width: 120px"
+                  @blur="onFactorBlur(item)"
+                />
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <div class="divider"></div>

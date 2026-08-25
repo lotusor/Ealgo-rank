@@ -40,8 +40,8 @@
   z-index: var(--z-nav);
   display: flex;
   align-items: center;
-  /* 玻璃层需要一个底色兜底，否则内容滚到下面会直接透出来 */
-  background-color: rgba(10, 10, 15, 0.72);
+  /* 玻璃层需要一个底色兜底，否则内容滚到下面会直接透出来；随主题切换 */
+  background-color: var(--navbar-bg);
 }
 .navbar-inner {
   max-width: var(--container-wide);
@@ -539,6 +539,10 @@ table.data-table {
   color: #fff;
   flex-shrink: 0;
   background: var(--gradient-primary);
+}
+.avatar-img {
+  object-fit: cover;
+  border: 1px solid var(--color-border);
 }
 /* 长学校名不该把积分列挤出表格 */
 .cell-ellipsis {
