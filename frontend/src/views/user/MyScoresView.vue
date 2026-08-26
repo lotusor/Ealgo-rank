@@ -58,13 +58,28 @@ const me = computed(() => auth.user)
 
 const countedCount = computed(() => rows.value.filter((r) => !r.is_excluded).length)
 const totalDelta = computed(() => rows.value.reduce((s, r) => s + (r.rating_delta ?? 0), 0))
+// 「全部」tab 展示归一化口径（与折线图一致）；单平台 tab 展示原始 rating
 const currentRating = computed(() => {
+  if (platform.value === '') {
+    // 归一化：各平台最新一场 weighted_rating 之和
+    const latest = new Map<ContestPlatform, number>()
+    const rated = rows.value
+      .filter((r) => r.weighted_rating != null && r.contest_start_time)
+      .sort((a, b) => new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime())
+    for (const r of rated) latest.set(r.contest_platform, r.weighted_rating as number)
+    const total = [...latest.values()].reduce((s, v) => s + v, 0)
+    return latest.size ? Math.round(total * 100) / 100 : null
+  }
   const rated = rows.value
     .filter((r) => r.new_rating != null && r.contest_start_time)
     .sort((a, b) => new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime())
   return rated.length ? rated[rated.length - 1].new_rating : null
 })
 const peakRating = computed(() => {
+  if (platform.value === '') {
+    const vals = rows.value.map((r) => r.weighted_rating).filter((v): v is number => v != null)
+    return vals.length ? Math.round(Math.max(...vals) * 100) / 100 : null
+  }
   const vals = rows.value.map((r) => r.new_rating).filter((v): v is number => v != null)
   return vals.length ? Math.max(...vals) : null
 })
@@ -74,30 +89,49 @@ const bestRank = computed(() => {
 })
 
 const chartPoints = computed(() => {
-  // 各平台「真实 rating」累计趋势：按时间排序，每个点 = 各平台截至该时间的真实
-  // rating（new_rating，整数）之和。**不使用 weighted_rating**——那是对着榜单积分
-  // 口径（× 平台系数 × 比赛难度系数）得来的值，既带了自定义难度系数、又产生小数，
-  // 不该出现在「Rating 趋势」里。总 rating 依赖难度系数那是学生榜积分的事，与本图无关。
+  // 分两种口径：
+  // - 「全部」tab：跨平台可比，用归一化 rating（weighted_rating = new_rating × 平台系数
+  //   × 比赛难度系数），按平台取最新一场后累加，带小数是正常的；
+  // - 单平台 tab：rows 已被 load() 按 platform 过滤，直接按时间展示该平台原始
+  //   new_rating（整数）序列。
+  const all = platform.value === ''
   const pts = rows.value
-    .filter((r) => r.new_rating != null && r.contest_start_time)
+    .filter((r) => {
+      if (all) return r.weighted_rating != null && r.contest_start_time != null
+      return r.new_rating != null && r.contest_start_time != null
+    })
     .sort(
       (a, b) =>
         new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime(),
     )
-  const currentByPlat = new Map<ContestPlatform, number>()
   const result: { label: string; value: number; meta: { contest: string; platform: string; delta: number | null } }[] = []
-  for (const r of pts) {
-    currentByPlat.set(r.contest_platform, r.new_rating as number)
-    const total = [...currentByPlat.values()].reduce((s, v) => s + v, 0)
-    result.push({
-      label: r.contest_start_time as string,
-      value: total,
-      meta: {
-        contest: r.contest_name,
-        platform: r.contest_platform,
-        delta: r.rating_delta,
-      },
-    })
+  if (all) {
+    const currentByPlat = new Map<ContestPlatform, number>()
+    for (const r of pts) {
+      currentByPlat.set(r.contest_platform, r.weighted_rating as number)
+      const total = [...currentByPlat.values()].reduce((s, v) => s + v, 0)
+      result.push({
+        label: r.contest_start_time as string,
+        value: Math.round(total * 100) / 100,
+        meta: {
+          contest: r.contest_name,
+          platform: r.contest_platform,
+          delta: r.rating_delta,
+        },
+      })
+    }
+  } else {
+    for (const r of pts) {
+      result.push({
+        label: r.contest_start_time as string,
+        value: r.new_rating as number,
+        meta: {
+          contest: r.contest_name,
+          platform: r.contest_platform,
+          delta: r.rating_delta,
+        },
+      })
+    }
   }
   return result
 })
