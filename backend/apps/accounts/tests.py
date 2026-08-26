@@ -207,3 +207,76 @@ class AvatarAndBioTests(APITestCase):
     def test_avatar_absent_by_default(self):
         r = self.client.get("/api/v1/me/")
         self.assertIsNone(r.json()["avatar"])
+
+
+class ChangePasswordTests(APITestCase):
+    """本地密码设置 / 修改（/api/v1/change-password/）。
+
+    回归：前端曾错误调用 /me/change-password/（404），这里锁定正确路由与
+    二合一语义（已设密码需原密码，passport 首登无密码可直接设置首条）。
+    """
+
+    def setUp(self):
+        # 已设本地密码的普通用户
+        self.user = User.objects.create_user(
+            username="pwuser", password="OldPass123!")
+        # 模拟 passport 首登用户：无可用的本地密码
+        self.passport_user = User.objects.create_user(username="pwpassport")
+        self.passport_user.set_unusable_password()
+        self.passport_user.save()
+
+    def _auth(self, user):
+        self.client.force_authenticate(user)
+
+    def test_set_first_password_for_passport_user(self):
+        """无本地密码用户：不传 old_password 直接设置首条密码。"""
+        self._auth(self.passport_user)
+        r = self.client.post("/api/v1/change-password/", {
+            "new_password1": "NewPass123!",
+            "new_password2": "NewPass123!",
+        }, format="json")
+        self.assertEqual(r.status_code, 200, r.json())
+        self.passport_user.refresh_from_db()
+        self.assertTrue(self.passport_user.has_usable_password())
+        self.assertTrue(self.passport_user.check_password("NewPass123!"))
+
+    def test_change_password_requires_old_password(self):
+        """已设密码用户：必须校验原密码。"""
+        self._auth(self.user)
+        # 缺原密码 → 400
+        r = self.client.post("/api/v1/change-password/", {
+            "new_password1": "NewPass123!",
+            "new_password2": "NewPass123!",
+        }, format="json")
+        self.assertEqual(r.status_code, 400)
+        # 原密码错误 → 400
+        r = self.client.post("/api/v1/change-password/", {
+            "old_password": "WrongPass1!",
+            "new_password1": "NewPass123!",
+            "new_password2": "NewPass123!",
+        }, format="json")
+        self.assertEqual(r.status_code, 400)
+        # 原密码正确 → 200，新密码生效
+        r = self.client.post("/api/v1/change-password/", {
+            "old_password": "OldPass123!",
+            "new_password1": "NewPass123!",
+            "new_password2": "NewPass123!",
+        }, format="json")
+        self.assertEqual(r.status_code, 200, r.json())
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("NewPass123!"))
+
+    def test_mismatched_confirmation_rejected(self):
+        self._auth(self.passport_user)
+        r = self.client.post("/api/v1/change-password/", {
+            "new_password1": "NewPass123!",
+            "new_password2": "Different123!",
+        }, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_requires_authentication(self):
+        r = self.client.post("/api/v1/change-password/", {
+            "new_password1": "NewPass123!",
+            "new_password2": "NewPass123!",
+        }, format="json")
+        self.assertEqual(r.status_code, 401)

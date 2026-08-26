@@ -132,3 +132,22 @@ export function platformTag(platform: string | null | undefined): {
       return { cls: 'atcoder', label: platform || '未知' }
   }
 }
+
+/**
+ * 平台代码 → 英文名称（纯字符串）。
+ * 用于分类标注等直接展示场景，避免模板里 `{{ platformTag(x) }}` 把 `{cls,label}`
+ * 对象渲染成一串 JSON。
+ */
+export function platformName(platform: string | null | undefined): string {
+  switch (platform) {
+    case 'codeforces':
+    case 'cf':
+      return 'Codeforces'
+    case 'atcoder':
+      return 'AtCoder'
+    case 'nowcoder':
+      return 'NowCoder'
+    default:
+      return platform || '未知'
+  }
+}

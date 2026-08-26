@@ -350,7 +350,7 @@ export async function updateAvatar(file: File | null): Promise<UserMe> {
 }
 
 /**
- * 改密 / 设置本地密码（后端 /me/change-password/ 二合一）。
+ * 改密 / 设置本地密码（后端 /change-password/ 二合一）。
  * - 已设本地密码：需传 old_password（原密码）。
  * - passport 首登用户（无本地密码）：不传 old_password，直接设置首条本地密码。
  */
@@ -360,7 +360,7 @@ export async function setPassword(payload: {
   new_password2: string
 }): Promise<{ detail: string }> {
   const { data } = await client.post<{ detail: string }>(
-    '/me/change-password/',
+    '/change-password/',
     payload,
   )
   return data

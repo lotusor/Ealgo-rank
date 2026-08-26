@@ -16,7 +16,7 @@ const platforms = [
     name: 'Codeforces',
     domain: 'codeforces.com',
     desc: '全球最活跃的算法竞赛平台，Rating 系统权威，高校选手主战场。',
-    icon: 'M4.5 7.5L1 9l2 2-1 5 4 6h4l1-2-2-4 3-1 2-3-3-2 1-3-5-1z',
+    icon: 'https://codeforces.org/s/0/favicon-32x32.png',
     color: '#f87171',
     contests: 712,
     users: 2103,
@@ -25,7 +25,7 @@ const platforms = [
     name: 'AtCoder',
     domain: 'atcoder.jp',
     desc: '日本老牌竞赛平台，题目质量高，ABC / ARC 系列深受高校欢迎。',
-    icon: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
+    icon: 'https://atcoder.jp/favicon.ico',
     color: '#e4e4e7',
     contests: 348,
     users: 1247,
@@ -34,7 +34,7 @@ const platforms = [
     name: '牛客竞赛',
     domain: 'nowcoder.com',
     desc: '国内高校赛事核心阵地，多校训练赛、寒假集训营覆盖面广。',
-    icon: 'M12 2a10 10 0 1 0 0 0',
+    icon: 'https://www.nowcoder.com/favicon.ico',
     color: '#4ade80',
     contests: 187,
     users: 1894,
@@ -152,7 +152,15 @@ onMounted(async () => {
         <div v-for="p in platforms" :key="p.name" class="card card-hover card-pad">
           <div style="display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4)">
             <div class="platform-logo" :style="{ background: p.color + '1f' }">
-              <svg width="26" height="26" viewBox="0 0 24 24" :fill="p.color"><path :d="p.icon" /></svg>
+              <img
+                :src="p.icon"
+                :alt="p.name"
+                width="26"
+                height="26"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
+              />
             </div>
             <div>
               <div class="h4">{{ p.name }}</div>
@@ -270,6 +278,11 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.platform-logo img {
+  object-fit: contain;
+  border-radius: 6px;
 }
 .data-table td.score {
   color: var(--color-primary);

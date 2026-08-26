@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { getUserPublicProfile } from '@/api'
 import type { UserPublicProfile } from '@/api/types'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import { platformTag } from '@/utils/format'
+import { platformName } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -93,7 +93,7 @@ function fmtDelta(v: number) {
         <div class="grid grid-3" style="gap: var(--space-4)">
           <div v-for="pr in profile.platform_ratings" :key="pr.platform" class="stat-card">
             <div class="stat-label">
-              <span class="platform-tag" :class="accountTag(pr.platform)">{{ platformTag(pr.platform) }}</span>
+              <span class="platform-tag" :class="accountTag(pr.platform)">{{ platformName(pr.platform) }}</span>
               <span class="caption text-tertiary" style="margin-left: var(--space-2)">{{ pr.handle }}</span>
             </div>
             <div class="stat-value num">{{ pr.rating }}</div>
@@ -128,7 +128,7 @@ function fmtDelta(v: number) {
                   <a v-if="p.contest_url" :href="p.contest_url" target="_blank" rel="noopener" class="title-link">{{ p.contest_name }}</a>
                   <span v-else class="title-link">{{ p.contest_name }}</span>
                 </td>
-                <td><span class="platform-tag" :class="accountTag(p.contest_platform)">{{ platformTag(p.contest_platform) }}</span></td>
+                <td><span class="platform-tag" :class="accountTag(p.contest_platform)">{{ platformName(p.contest_platform) }}</span></td>
                 <td class="num-cell">{{ fmtDate(p.contest_start_time) }}</td>
                 <td class="num-cell">{{ p.rank != null ? '#' + p.rank : '—' }}</td>
                 <td class="num-cell">

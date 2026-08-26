@@ -7,7 +7,7 @@ import type { MyParticipation, ContestPlatform, RankSnapshot } from '@/api/types
 import RatingLineChart from '@/components/RatingLineChart.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
-import { fmtCount, initial, platformTag } from '@/utils/format'
+import { fmtCount, initial, platformName } from '@/utils/format'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -83,14 +83,18 @@ const chartPoints = computed(() => {
         new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime(),
     )
   const currentByPlat = new Map<ContestPlatform, number>()
-  const result: { label: string; value: number; meta: { contest: string; delta: number | null } }[] = []
+  const result: { label: string; value: number; meta: { contest: string; platform: string; delta: number | null } }[] = []
   for (const r of pts) {
     currentByPlat.set(r.contest_platform, r.weighted_rating as number)
     const total = [...currentByPlat.values()].reduce((s, v) => s + v, 0)
     result.push({
       label: r.contest_start_time as string,
       value: Math.round(total * 100) / 100,
-      meta: { contest: r.contest_name, delta: r.rating_delta },
+      meta: {
+        contest: r.contest_name,
+        platform: r.contest_platform,
+        delta: r.rating_delta,
+      },
     })
   }
   return result
@@ -160,7 +164,7 @@ function accountTag(p: string) {
         </div>
         <div class="profile-accounts">
           <div v-for="a in accounts" :key="a.id" class="badge badge-muted account-badge">
-            <span class="platform-tag" :class="accountTag(a.platform)">{{ platformTag(a.platform) }}</span>
+            <span class="platform-tag" :class="accountTag(a.platform)">{{ platformName(a.platform) }}</span>
             <span class="num" style="font-size: 13px; color: var(--color-text-primary)">{{ a.handle || a.display_name || '—' }}</span>
           </div>
           <div v-if="!accounts.length" class="caption text-tertiary">尚未绑定平台账号</div>
@@ -197,7 +201,7 @@ function accountTag(p: string) {
       <div class="card-title" style="margin-bottom: var(--space-4)">各平台 Rating</div>
       <div class="grid grid-3" style="gap: var(--space-4)">
         <div v-for="pr in platformRatings" :key="pr.platform" class="stat-card">
-          <div class="stat-label"><span class="platform-tag" :class="accountTag(pr.platform)">{{ platformTag(pr.platform) }}</span></div>
+          <div class="stat-label"><span class="platform-tag" :class="accountTag(pr.platform)">{{ platformName(pr.platform) }}</span></div>
           <div class="stat-value num">{{ pr.rating }}</div>
           <div class="stat-sub">
             <template v-if="pr.delta == null">—</template>
@@ -251,7 +255,7 @@ function accountTag(p: string) {
                   <a v-if="r.contest_url" :href="r.contest_url" target="_blank" rel="noopener" class="title-link">{{ r.contest_name }}</a>
                   <span v-else class="title-link">{{ r.contest_name }}</span>
                 </td>
-                <td><span class="platform-tag" :class="accountTag(r.contest_platform)">{{ platformTag(r.contest_platform) }}</span></td>
+                <td><span class="platform-tag" :class="accountTag(r.contest_platform)">{{ platformName(r.contest_platform) }}</span></td>
                 <td class="num-cell">{{ fmtDate(r.contest_start_time) }}</td>
                 <td class="num-cell">{{ r.rank != null ? '#' + r.rank : '—' }}</td>
                 <td class="num-cell hide-mobile">{{ r.solved_count != null ? r.solved_count : '—' }}</td>
