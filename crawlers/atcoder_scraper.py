@@ -89,7 +89,6 @@ class AtCoderScraper:
         return contests
 
     @staticmethod
-    @staticmethod
     def extract_series(cid):
         """从 contest id 前缀提取赛事系列，用于比赛难度系数映射。
 
@@ -106,6 +105,7 @@ class AtCoderScraper:
             return "AGC"
         return None
 
+    @staticmethod
     def parse_contests(contests):
         """解析比赛列表，提取标准化字段"""
         results = []

@@ -204,7 +204,7 @@ onMounted(async () => {
               <col style="width: 130px" />
             </colgroup>
             <thead>
-              <tr><th class="center">排名</th><th>学校</th><th class="num-cell">积分</th><th class="num-cell hide-mobile">参赛人数</th></tr>
+              <tr><th class="center">排名</th><th>学校</th><th class="num-cell">积分</th><th class="center hide-mobile">参赛人数</th></tr>
             </thead>
             <tbody>
               <tr v-for="r in top5" :key="r.id" :class="medalRowClass(r.rank)">

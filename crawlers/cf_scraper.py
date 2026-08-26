@@ -112,7 +112,6 @@ class CodeforcesScraper:
         return contests
 
     @staticmethod
-    @staticmethod
     def extract_series(name):
         """从比赛名提取赛事系列，用于比赛难度系数映射。
 
@@ -131,6 +130,7 @@ class CodeforcesScraper:
             return f"Div. {m.group(1)}"
         return None
 
+    @staticmethod
     def parse_contests(contests):
         """解析比赛列表，提取标准化字段"""
         results = []
