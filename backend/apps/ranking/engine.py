@@ -164,7 +164,10 @@ def _build_school_rows(period):
         agg = by_school[school_id]
         agg["total"] += user_total
         agg["members"].add(uid)
-        agg["cnt"] += len(latest)
+        # 参赛场次 = 该成员「实际计入积分」的场次数（全部 countable 记录），
+        # 而非「每平台最新一场数」。积分值仍只取每平台最新一场（见 _latest_by_platform），
+        # 二者语义不同，勿混用。
+        agg["cnt"] += len(recs)
 
     rows = []
     for school_id, agg in by_school.items():
@@ -204,7 +207,9 @@ def _build_student_rows(period):
             period=period,
             user_id=uid,
             total_score=round(total, 4),
-            contest_count=len(latest),
+            # 参赛场次 = 该用户实际计入积分的场次数（全部 countable 记录），
+            # 而非每平台最新一场数（积分值仍只取每平台最新一场）
+            contest_count=len(recs),
             member_count=1,
         ))
     return rows

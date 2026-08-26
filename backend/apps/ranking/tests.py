@@ -139,7 +139,7 @@ class EngineTests(TestCase):
         # 新算法：每成员各平台最新一场。ua=c2(50)+c3(92)=142 ; ub=113.75 -> 255.75
         self.assertAlmostEqual(float(a.total_score), 255.75)
         self.assertEqual(a.member_count, 2)
-        self.assertEqual(a.contest_count, 3)  # ua 2 场 + ub 1 场
+        self.assertEqual(a.contest_count, 4)  # ua 3 场(c1,c2,c3) + ub 1 场(c1)，全部计入场次
         b = RankSnapshot.objects.get(scope="school", period="all",
                                      school=self.school_b)
         self.assertAlmostEqual(float(b.total_score), 123.75)
@@ -155,7 +155,7 @@ class EngineTests(TestCase):
                                       user=self.ua)
         # 全局 limit=1：每平台取最新一场。cf 最新为 c2(50)，nc 为 c3(92) -> 142
         self.assertAlmostEqual(float(ua.total_score), 142.0)
-        self.assertEqual(ua.contest_count, 2)
+        self.assertEqual(ua.contest_count, 3)  # ua 全部计入场次 c1/c2/c3
         ub = RankSnapshot.objects.get(scope="student", period="all",
                                       user=self.ub)
         self.assertAlmostEqual(float(ub.total_score), 113.75)
