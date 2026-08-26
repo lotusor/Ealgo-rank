@@ -74,10 +74,12 @@ const bestRank = computed(() => {
 })
 
 const chartPoints = computed(() => {
-  // 加权总 rating 累计趋势：按时间排序，每个点 = 各平台截至该时间的加权 rating 之和。
-  // 不再把各平台原始 new_rating 直接混在一条折线里（量纲不一致会画出跳变的错误趋势）。
+  // 各平台「真实 rating」累计趋势：按时间排序，每个点 = 各平台截至该时间的真实
+  // rating（new_rating，整数）之和。**不使用 weighted_rating**——那是对着榜单积分
+  // 口径（× 平台系数 × 比赛难度系数）得来的值，既带了自定义难度系数、又产生小数，
+  // 不该出现在「Rating 趋势」里。总 rating 依赖难度系数那是学生榜积分的事，与本图无关。
   const pts = rows.value
-    .filter((r) => r.weighted_rating != null && r.contest_start_time)
+    .filter((r) => r.new_rating != null && r.contest_start_time)
     .sort(
       (a, b) =>
         new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime(),
@@ -85,11 +87,11 @@ const chartPoints = computed(() => {
   const currentByPlat = new Map<ContestPlatform, number>()
   const result: { label: string; value: number; meta: { contest: string; platform: string; delta: number | null } }[] = []
   for (const r of pts) {
-    currentByPlat.set(r.contest_platform, r.weighted_rating as number)
+    currentByPlat.set(r.contest_platform, r.new_rating as number)
     const total = [...currentByPlat.values()].reduce((s, v) => s + v, 0)
     result.push({
       label: r.contest_start_time as string,
-      value: Math.round(total * 100) / 100,
+      value: total,
       meta: {
         contest: r.contest_name,
         platform: r.contest_platform,
