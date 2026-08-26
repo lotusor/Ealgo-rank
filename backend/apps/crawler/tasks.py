@@ -229,19 +229,21 @@ def _run_job(job, worker):
         job.save()
 
     # 有实际入库（比赛数>0）时触发积分重算，让新抓的成绩立即进入榜单，
-    # 而非等到每日 04:00 的 beat 重算。走后台线程 + broker 探测，避免
-    # 无 Redis 时阻塞主流程或与测试库写锁冲突。
+    # 而非等到每日 04:00 的 beat 重算。
+    # 注意：这里必须「同步」派发，不能用 daemon 线程——Celery prefork worker 里
+    # 任务返回后进程被复用/关闭，daemon 线程可能在 .delay() 真正发出前就被杀，
+    # 导致 recompute 消息静默丢失（曾出现 40 条 countable 只有 39 条 ScoreRecord）。
+    # broker 在线时 .delay() 是瞬时操作（几十 ms），阻塞可忽略。
     if contest_n:
-        def _dispatch_recompute():
-            if not _broker_reachable():
-                return
+        if not _broker_reachable():
+            logger.warning("爬取完成但 broker 不可达，跳过自动重算（待每日 04:00 beat 兜底）")
+        else:
             try:
                 from apps.ranking.tasks import recompute_ranking_task
                 recompute_ranking_task.delay()
+                logger.info("爬取完成，已派发积分重算任务")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("爬取后积分重算派发失败: %s", exc)
-        threading.Thread(target=_dispatch_recompute, daemon=True,
-                         name=f"recompute-after-{job.pk}").start()
 
     return {"job_id": job.pk, "status": job.status,
             "contests": contest_n, "countable": part_n, "cheaters": cheat_n}
