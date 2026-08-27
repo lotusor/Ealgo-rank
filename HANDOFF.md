@@ -1,7 +1,7 @@
 # E-algo Rank 项目接手文档
 
 > **本文件是本项目唯一的开发文档（single source of truth）。** 其他历史文档（`overview.md`、`BACKEND_HANDOFF.md`、`crawlers/VERIFICATION.md`）的内容已合并进本文，已删除，避免信息分叉。
-> 文档基准时间：**2026-08-25**。代码路径：`D:\_Dev\e-algo-rank\`
+> 文档基准时间：**2026-08-25**（2026-08-27 增补 passport 协议升级适配，见 §1.7.3）。代码路径：`D:\_Dev\e-algo-rank\`
 > 配套设计原型（非开发文档，仅前端 UI 来源）：`prototype design for rank/{DESIGN|DELIVERY}.md` + `prototype.html`。
 
 ---
@@ -245,6 +245,20 @@ def relevant_contest_ids(platform):
 
 **上线前必做（仅剩运行时核验）**
 - [ ] 后端容器内执行 `curl -sS -o /dev/null -w '%{http_code}' https://passport.eacm.cn/.well-known/jwks.json` 期望 `200`（查 DNS / 443 出站 / 内网 CA 信任），纳入 H1 上线检查清单。
+
+### 1.7.3 Passport 协议升级适配（2026-08-27，随护照侧同步实施）
+
+护照侧本轮完成三项协议补强（详见 `lotus-passport/HANDOVER.md` 顶部 2026-08-27 段），rank 侧适配如下：
+
+1. **登录改为授权码 + PKCE（RFC 7636）**：
+   - 发起：`startPassportOAuth()`（`api/index.ts`）生成 code_verifier（存 sessionStorage）+ S256 challenge，login 请求带 `code_challenge`；工具在 `frontend/src/utils/pkce.ts`。
+   - 回调：`AuthCallbackView.vue` 优先解析 `?code=` → 调护照 `POST /api/v1/oauth/token/ {code, code_verifier}` 换令牌（新函数 `exchangePassportCode`）；旧 `#fragment` 模式保留兜底（过渡兼容，护照侧未带 challenge 的旧链路仍可用）。
+   - **效果：access/refresh token 不再经 URL fragment 下发**（不进浏览器历史/Referrer）。
+   - 注意：`client.ts` 刷新逻辑不变（仍打护照 `/token/refresh/`）。
+2. **aud 校验接通**：护照按登录 redirect_uri origin 签发 `aud`；rank 后端 `LOTUS_PASSPORT["AUDIENCE"]`（env `PASSPORT_AUDIENCE`，生产值 `https://rank.eacm.cn`，dev 为 `http://localhost:5180`）启用 SDK 校验。**留空 = 不校验**（过渡期兼容存量令牌）；启用后存量无 aud 令牌会被拒，用户需重新登录一次。
+   - 本地 `C:\Python314` 解释器需 `pip install whitenoise`（requirements 已含，本地缺装会导致测试 70 errors）。
+3. **测试基线**：`manage.py test` **110 tests OK**（2026-08-27 实测）。已知无害噪音：`ingest.py` 异步补全参与索引的后台线程在测试库会打 `database table is locked` 日志并真实请求牛客（best-effort 吞异常，不影响断言，属存量现象待优化）。
+4. **naive-ui 死依赖已移除**（package.json + lock，src 零引用）。
 
 **10 项缺口处置（集成评审）**
 | # | 缺口 | 处置 |
