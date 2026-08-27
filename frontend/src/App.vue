@@ -24,6 +24,25 @@ onUnmounted(() => window.removeEventListener('auth:logout', onLogout))
 
 <template>
   <router-view v-slot="{ Component }">
-    <component :is="Component" />
+    <transition name="page" mode="out-in">
+      <component :is="Component" />
+    </transition>
   </router-view>
 </template>
+
+<style>
+/* 页面切换过渡：轻微淡入 + 上移，避免路由跳转的突兀生硬感 */
+.page-enter-active,
+.page-leave-active {
+  transition: opacity var(--duration-base) var(--ease-standard),
+    transform var(--duration-base) var(--ease-standard);
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+</style>
