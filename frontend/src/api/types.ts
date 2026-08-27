@@ -127,6 +127,7 @@ export interface CrawlConfig {
   cf_count: number
   atcoder_count: number
   nowcoder_months_back: number
+  auto_crawl_interval_days: number
   auto_crawl_hour: number
   created_at: string
   updated_at: string

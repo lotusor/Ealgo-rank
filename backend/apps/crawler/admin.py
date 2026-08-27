@@ -41,4 +41,5 @@ class CrawlJobAdmin(admin.ModelAdmin):
 @admin.register(CrawlConfig)
 class CrawlConfigAdmin(admin.ModelAdmin):
     list_display = ("id", "enabled", "cf_count", "atcoder_count",
-                    "nowcoder_months_back", "auto_crawl_hour", "updated_at")
+                    "nowcoder_months_back", "auto_crawl_interval_days",
+                    "auto_crawl_hour", "updated_at")

@@ -105,6 +105,7 @@ async function onSaveCrawlConfig() {
       cf_count: Number(crawlConfig.value.cf_count) || 20,
       atcoder_count: Number(crawlConfig.value.atcoder_count) || 20,
       nowcoder_months_back: Number(crawlConfig.value.nowcoder_months_back) || 2,
+      auto_crawl_interval_days: Number(crawlConfig.value.auto_crawl_interval_days) || 1,
       auto_crawl_hour: Number(crawlConfig.value.auto_crawl_hour) || 2,
     }
     crawlConfig.value = await saveCrawlConfig(payload)
@@ -237,7 +238,11 @@ async function onSaveCrawlConfig() {
             <input v-model.number="crawlConfig.nowcoder_months_back" class="input" type="number" min="1" max="12" />
           </div>
           <div class="field">
-            <label class="field-label">自动触发小时 (0-23)</label>
+            <label class="field-label">自动爬取间隔（天）</label>
+            <input v-model.number="crawlConfig.auto_crawl_interval_days" class="input" type="number" min="1" max="30" />
+          </div>
+          <div class="field">
+            <label class="field-label">触发小时 (0-23)</label>
             <input v-model.number="crawlConfig.auto_crawl_hour" class="input" type="number" min="0" max="23" />
           </div>
         </div>
@@ -279,7 +284,8 @@ async function onSaveCrawlConfig() {
 }
 @media (max-width: 980px) { .grid { grid-template-columns: 1fr !important; } }
 .grid-3 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); }
-@media (max-width: 760px) { .grid-3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 960px) { .grid-3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) { .grid-3 { grid-template-columns: 1fr; } }
 .switch { display: inline-flex; align-items: center; gap: var(--space-3); cursor: pointer; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .switch-track {

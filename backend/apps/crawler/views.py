@@ -91,6 +91,15 @@ class CrawlConfigViewSet(viewsets.ModelViewSet):
     def get_object(self):
         return CrawlConfig.get_config()
 
+    def list(self, request, *args, **kwargs):
+        """单例语义：列表直接返回唯一配置对象，而非分页包裹。
+        否则前端 GET /crawl-configs/ 拿到 {count, results} 而非字段对象，
+        导致开关/数值在刷新后全部初始化。
+        """
+        cfg = CrawlConfig.get_config()
+        serializer = self.get_serializer(cfg)
+        return Response(serializer.data)
+
     def create(self, request, *args, **kwargs):
         cfg = CrawlConfig.get_config()
         serializer = self.get_serializer(cfg, data=request.data)

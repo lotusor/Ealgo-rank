@@ -72,8 +72,11 @@ class CrawlConfig(TimeStampedModel):
                                                 help_text="最近 N 场（rated）")
     nowcoder_months_back = models.PositiveIntegerField("牛客最近月数", default=2,
                                                        help_text="抓取最近 N 个月的比赛")
+    auto_crawl_interval_days = models.PositiveIntegerField(
+        "自动爬取间隔天数", default=1,
+        help_text="每隔 N 天自动触发一次（1~30），N=1 即每天")
     auto_crawl_hour = models.PositiveIntegerField("自动爬取小时", default=2,
-                                                  help_text="每日该小时(0-23)触发，分钟固定 00")
+                                                  help_text="触发当天的小时(0-23)，分钟固定 00")
 
     class Meta:
         verbose_name = "自动爬取配置"
@@ -91,6 +94,7 @@ class CrawlConfig(TimeStampedModel):
                 "cf_count": 20,
                 "atcoder_count": 20,
                 "nowcoder_months_back": 2,
+                "auto_crawl_interval_days": 1,
                 "auto_crawl_hour": 2,
             }
         )

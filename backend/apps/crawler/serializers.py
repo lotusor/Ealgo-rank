@@ -55,7 +55,18 @@ class CrawlConfigSerializer(serializers.ModelSerializer):
         model = CrawlConfig
         fields = [
             "id", "enabled", "cf_count", "atcoder_count",
-            "nowcoder_months_back", "auto_crawl_hour",
+            "nowcoder_months_back", "auto_crawl_interval_days",
+            "auto_crawl_hour",
             "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_auto_crawl_interval_days(self, value):
+        if not 1 <= value <= 30:
+            raise serializers.ValidationError("间隔天数必须在 1~30 之间")
+        return value
+
+    def validate_auto_crawl_hour(self, value):
+        if not 0 <= value <= 23:
+            raise serializers.ValidationError("触发小时必须在 0~23 之间")
+        return value
