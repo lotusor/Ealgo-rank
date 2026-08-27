@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { exchangePassportCode } from '@/api'
+import { takeVerifier } from '@/utils/pkce'
 import type { UserMe } from '@/api/types'
 
 const route = useRoute()
@@ -17,6 +19,24 @@ function goTarget() {
   } else {
     router.replace({ name: 'register-complete' })
   }
+}
+
+async function finishLogin(access: string, refresh: string) {
+  localStorage.setItem('access_token', access)
+  localStorage.setItem('refresh_token', refresh)
+  localStorage.setItem('auth_source', 'passport')
+  auth.setSession(access, refresh, 'passport')
+  try {
+    await auth.loadMe()
+  } catch {
+    await auth.logout()
+    loading.value = false
+    failed.value = true
+    hint.value = '登录态校验失败，请重新登录。'
+    return
+  }
+  loading.value = false
+  goTarget()
 }
 
 onMounted(async () => {
@@ -50,6 +70,30 @@ onMounted(async () => {
     return
   }
 
+  // 授权码 + PKCE 模式（新）：?code=xxx —— 用 sessionStorage 里的
+  // code_verifier 向护照换令牌，令牌不经过 URL。
+  if (q.code) {
+    const verifier = takeVerifier()
+    if (!verifier) {
+      loading.value = false
+      failed.value = true
+      hint.value = '登录会话已失效（找不到 PKCE verifier），请重新登录。'
+      return
+    }
+    // 清掉地址栏的一次性 code
+    history.replaceState(null, '', window.location.pathname)
+    try {
+      const tokens = await exchangePassportCode(q.code, verifier)
+      await finishLogin(tokens.access, tokens.refresh)
+    } catch (e) {
+      loading.value = false
+      failed.value = true
+      hint.value = e instanceof Error ? e.message : '授权码无效或已过期，请重新登录。'
+    }
+    return
+  }
+
+  // 旧 fragment 模式（过渡兼容）：#access_token=...&refresh_token=...
   const hash = window.location.hash.replace(/^#/, '')
   const frag = new URLSearchParams(hash)
   const access = frag.get('access_token')
@@ -62,23 +106,9 @@ onMounted(async () => {
     return
   }
 
-  localStorage.setItem('access_token', access)
-  localStorage.setItem('refresh_token', refresh)
-  localStorage.setItem('auth_source', 'passport')
   // 清理 URL 中的令牌 fragment，避免令牌泄漏到浏览器历史/分享链接
   history.replaceState(null, '', window.location.pathname + window.location.search)
-  auth.setSession(access, refresh, 'passport')
-  try {
-    await auth.loadMe()
-  } catch {
-    await auth.logout()
-    loading.value = false
-    failed.value = true
-    hint.value = '登录态校验失败，请重新登录。'
-    return
-  }
-  loading.value = false
-  goTarget()
+  await finishLogin(access, refresh)
 })
 </script>
 

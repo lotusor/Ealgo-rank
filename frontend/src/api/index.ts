@@ -1,4 +1,5 @@
 import client from './client'
+import { createPkcePair } from '../utils/pkce'
 import type {
   Paginated,
   PageQuery,
@@ -54,9 +55,11 @@ export async function logout() {
 
 // ---------- Lotus Passport OAuth（统一登录）----------
 // 按官方接入契约（docs/integration/project1-ealgo-rank.md）：rank 自行调用护照
-// API 的 /api/v1/oauth/{provider}/login/，取返回的 authorize_url 后跳转；护照完成
-// 第三方登录后 302 回 rank 的 /auth/callback 并把 JWT 放在 URL fragment
-// （access_token / refresh_token / passport_user_id），由 AuthCallbackView 解析。
+// API 的 /api/v1/oauth/{provider}/login/，取返回的 authorize_url 后跳转。
+// 2026-08-27 起走「授权码 + PKCE」（OAuth 2.1 风格）：登录时带 code_challenge，
+// 护照回调只回跳一次性 code（?code=...），由 AuthCallbackView 调
+// exchangePassportCode() 换取 JWT——令牌不再经 URL fragment 下发（不进浏览器
+// 历史/Referrer）。旧 fragment 模式仍兼容（护照侧未带 code_challenge 的旧链路）。
 // 不要跳 account.eacm.cn/login —— 那是护照自己的 SPA，会把 token 发回它自己的
 // 回调页，不会回跳 rank。
 export type PassportProvider = 'github' | 'qq' | 'wechat'
@@ -66,7 +69,10 @@ export async function startPassportOAuth(provider: PassportProvider): Promise<vo
     (import.meta.env.VITE_PASSPORT_URL as string | undefined) ||
     'https://passport.eacm.cn'
   const cb = `${window.location.origin}/auth/callback`
-  const url = `${pp}/api/v1/oauth/${provider}/login/?redirect_uri=${encodeURIComponent(cb)}`
+  const challenge = await createPkcePair()
+  const url =
+    `${pp}/api/v1/oauth/${provider}/login/?redirect_uri=${encodeURIComponent(cb)}` +
+    `&code_challenge=${encodeURIComponent(challenge)}&code_challenge_method=S256`
   const resp = await fetch(url, { headers: { Accept: 'application/json' } })
   const data = (await resp.json().catch(() => ({}))) as {
     authorize_url?: string
@@ -76,6 +82,39 @@ export async function startPassportOAuth(provider: PassportProvider): Promise<vo
     throw new Error(data?.error?.message || '无法发起通行证登录，请稍后重试')
   }
   window.location.href = data.authorize_url
+}
+
+/** 授权码 + PKCE 换令牌：POST {passport}/api/v1/oauth/token/ {code, code_verifier}。 */
+export async function exchangePassportCode(code: string, codeVerifier: string): Promise<{
+  access: string
+  refresh: string
+  token_type: string
+  passport_user_id: string
+}> {
+  const pp =
+    (import.meta.env.VITE_PASSPORT_URL as string | undefined) ||
+    'https://passport.eacm.cn'
+  const resp = await fetch(`${pp}/api/v1/oauth/token/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, code_verifier: codeVerifier }),
+  })
+  const data = (await resp.json().catch(() => ({}))) as {
+    access?: string
+    refresh?: string
+    token_type?: string
+    passport_user_id?: string
+    error?: { message?: string }
+  }
+  if (!resp.ok || !data.access || !data.refresh) {
+    throw new Error(data?.error?.message || '登录凭证交换失败，请重新登录')
+  }
+  return {
+    access: data.access,
+    refresh: data.refresh,
+    token_type: data.token_type || 'Bearer',
+    passport_user_id: data.passport_user_id || '',
+  }
 }
 
 // ---------- Schools ----------

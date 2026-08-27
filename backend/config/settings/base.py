@@ -176,7 +176,11 @@ LOTUS_PASSPORT = {
     "ISSUER": env("PASSPORT_ISSUER", "lotus-passport"),
     "AUTO_CREATE_USER": env_bool("PASSPORT_AUTO_CREATE_USER", True),
     # 可选验签参数（默认值来自 lotus-passport SDK；此处显式化以便调参与观测）
-    # 2026-08-16 护照侧实测核实：iss=lotus-passport、不签发 aud、JWKS 走公网 https
+    # 2026-08-16 护照侧实测核实：iss=lotus-passport、JWKS 走公网 https
+    # 2026-08-27 起护照按 redirect_uri origin 签发 aud（为 A 应用签发的令牌
+    # 不能在 B 应用重放）。此处配置与之一致的 audience 即启用校验；留空 =
+    # 不校验（过渡期兼容旧令牌）。生产值：https://rank.eacm.cn
+    "AUDIENCE": env("PASSPORT_AUDIENCE", "") or None,
     "LEEWAY": env_int("PASSPORT_JWKS_LEEWAY", 10),        # 时钟偏差容忍(s)，跨机建议 5–10
     "TIMEOUT": env_int("PASSPORT_HTTP_TIMEOUT", 5),       # JWKS/refresh 出站超时(s)
     "JWKS_CACHE_TTL": env_int("PASSPORT_JWKS_CACHE_TTL", 600),  # JWKS 公钥缓存(s)
