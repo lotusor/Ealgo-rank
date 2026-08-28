@@ -216,7 +216,7 @@ onMounted(async () => {
                   </div>
                 </td>
                 <td class="score num-cell">{{ fmtScore(r.total_score) }}</td>
-                <td class="num-cell center hide-mobile">{{ fmtCount(r.member_count) }}</td>
+                <td class="num center hide-mobile">{{ fmtCount(r.member_count) }}</td>
               </tr>
               <tr v-if="!loading && top5.length === 0"><td colspan="4" class="empty-cell">暂无榜单数据</td></tr>
             </tbody>

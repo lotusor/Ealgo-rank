@@ -264,8 +264,8 @@ watch(schoolSearch, () => {
                   </div>
                 </td>
                 <td class="score num-cell">{{ fmtScore(r.total_score) }}</td>
-                <td class="num-cell center">{{ fmtCount(r.contest_count) }}</td>
-                <td class="num-cell center">{{ fmtCount(r.member_count) }}</td>
+                <td class="num center">{{ fmtCount(r.contest_count) }}</td>
+                <td class="num center">{{ fmtCount(r.member_count) }}</td>
               </template>
               <template v-else>
                 <td>
@@ -278,7 +278,7 @@ watch(schoolSearch, () => {
                   <span class="cell-ellipsis">{{ r.user_school_name || '—' }}</span>
                 </td>
                 <td class="score num-cell">{{ fmtScore(r.total_score) }}</td>
-                <td class="num-cell center">{{ fmtCount(r.contest_count) }}</td>
+                <td class="num center">{{ fmtCount(r.contest_count) }}</td>
               </template>
             </tr>
           </tbody>
