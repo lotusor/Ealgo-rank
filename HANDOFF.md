@@ -274,6 +274,13 @@ def relevant_contest_ids(platform):
 | 8.9 | 降级边界 | ✅ 已说明：离线验签对**存量用户**无感；**首登新用户**依赖 `AUTO_CREATE_USER`+验签，passport 宕机且 JWKS 缓存失效时无法建号 |
 | 8.10 | 安全戳例外 | ✅ 已说明：`security_stamp` 仅本地 HS256 令牌；passport RS256 不含该声明，改密/解锁/登出全设备吊销对 passport 登录用户**不适用** |
 
+### 1.7.4 前端修复与部署方式变更（2026-08-28）
+
+1. **表格 `hide-mobile` 列错位修复（已上线验证）**：`base.css` 中 `.hide-mobile { display: initial }` 会把 th/td 的 display 重置为规范初始值 `inline`（而非 UA 默认 `table-cell`），导致带该类的列脱离 `table-layout: fixed` 列宽分配、宽度退化为内容收缩——表头与数据盒宽度不同（如 HomeView「参赛人数」列 81.9px vs 39.6px，中心错开 21.2px）。改为 `display: revert`（恢复 UA 默认），受影响的 HomeView「参赛人数」列与 MyScoresView「解题数」列一并修复；`.show-mobile` 移动端同样修正（当前无使用者）。线上实测：display=table-cell、th/td 左右边界完全重合、中心差 0。
+2. **前端构建方式（重要，本地无 node）**：本地机器无 node/npm/docker，rank 前端构建改在服务器上执行——源码打 tgz（排除 node_modules/dist）SFTP 上传 → `docker run --rm -v /tmp/rank-fe-build:/app -w /app node:20-alpine sh -c "npm ci --registry=https://registry.npmmirror.com && npm run build"`（服务器已拉取 node:20-alpine 镜像）→ dist 内容同步到 `/www/wwwroot/rank.eacm.cn/dist`。
+3. **部署陷阱（务必遵守）**：rank-nginx 容器 bind mount 指向 `/www/wwwroot/rank.eacm.cn/dist`，**挂载绑定的是目录 inode**——部署时严禁 `mv dist dist.old && cp -r 新目录 dist`（容器会继续读旧 inode，磁盘新文件容器不可见、线上不生效且极易误判为缓存问题）。正确做法：**保持 dist 目录 inode 不变，只同步其内容**（`rm -rf dist/* && cp -r 新构建/dist/. dist/`）；若已 mv 过，`docker restart rank-rank-nginx-1` 重新解析挂载路径即可恢复。验证部署是否真生效：比对 `curl https://rank.eacm.cn/` 引用的 asset hash 与磁盘 `dist/assets/` 内文件名是否一致。
+4. 当前回滚备份：`/www/wwwroot/rank.eacm.cn/dist.old-20260828`（含 2026-08-27 的上一版 dist，稳定后可删）。
+
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
 - `DJANGO_SECRET_KEY` 强随机值、初始超管密码

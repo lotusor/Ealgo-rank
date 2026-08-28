@@ -230,8 +230,10 @@ svg {
   text-decoration: underline;
 }
 
+/* revert 而非 initial：initial 会把 th/td 的 display 重置为规范初始值 inline，
+   破坏表格列宽分配导致表头与数据错位；revert 恢复 UA 默认（table-cell） */
 .hide-mobile {
-  display: initial;
+  display: revert;
 }
 .show-mobile {
   display: none;
@@ -271,7 +273,7 @@ svg {
     display: none;
   }
   .show-mobile {
-    display: initial;
+    display: revert;
   }
 }
 
