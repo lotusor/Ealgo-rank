@@ -5,6 +5,7 @@ import type { RankSnapshot, School } from '@/api/types'
 import { fmtScore, fmtCount, medalRowClass, orgShort } from '@/utils/format'
 import RankBadge from '@/components/ui/RankBadge.vue'
 import OrgLogo from '@/components/ui/OrgLogo.vue'
+import SeasonBanner from '@/components/SeasonBanner.vue'
 
 const top5 = ref<RankSnapshot[]>([])
 const schoolsMap = ref<Record<number, School>>({})
@@ -100,6 +101,9 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <!-- Season banner -->
+    <SeasonBanner />
 
     <!-- Stats -->
     <div class="grid grid-4 stats-row">

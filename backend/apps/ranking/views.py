@@ -2,11 +2,13 @@
 ranking 视图：
 - 榜单快照：公开可读（按 scope / period / school / user 筛选 + 分页）
 - 重算动作：仅超级管理员（同步触发引擎；生产建议走 Celery 任务）
+- 赛季信息：公开可读，登录用户附带个人本赛季战绩
 """
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.common.permissions import IsSuperAdmin
 from apps.ranking.cache import (
@@ -19,6 +21,7 @@ from apps.ranking.cache import (
 )
 from apps.ranking.engine import recompute_all
 from apps.ranking.models import RankSnapshot
+from apps.ranking.season import get_current_season, past_seasons, season_payload
 from apps.ranking.serializers import RankSnapshotSerializer
 from config.pagination import StandardPagination
 
@@ -69,3 +72,19 @@ class RankSnapshotViewSet(viewsets.ReadOnlyModelViewSet):
         result = recompute_all()
         bump_ranking_version()
         return Response(result, status=status.HTTP_200_OK)
+
+
+class SeasonView(APIView):
+    """赛季信息（公开可读）。
+
+    GET /season/        当前赛季 + 登录用户本赛季战绩
+    GET /season/past/   往期赛季列表
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, past=False):
+        if past:
+            return Response({"results": past_seasons()})
+        season = get_current_season()
+        return Response(season_payload(season, user=request.user))

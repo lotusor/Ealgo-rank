@@ -21,6 +21,8 @@ import type {
   Announcement,
   AppNotification,
   PlatformAccount,
+  SeasonInfo,
+  PastSeason,
 } from './types'
 
 // ---------- Auth ----------
@@ -508,4 +510,15 @@ export async function publishNotification(payload: {
     payload,
   )
   return data
+}
+
+// ---------- 赛季信息 ----------
+export async function getSeason(): Promise<SeasonInfo> {
+  const { data } = await client.get<SeasonInfo>('/season/')
+  return data
+}
+
+export async function getPastSeasons(): Promise<PastSeason[]> {
+  const { data } = await client.get<{ results: PastSeason[] }>('/season/past/')
+  return data.results
 }

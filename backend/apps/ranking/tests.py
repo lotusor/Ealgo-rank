@@ -208,3 +208,55 @@ class EngineTests(TestCase):
         r = client.post("/api/v1/rankings/recompute/")
         self.assertEqual(r.status_code, 200)
         self.assertTrue(RankSnapshot.objects.exists())
+
+
+class SeasonTests(TestCase):
+    """赛季信息：当前赛季懒创建、阶段推导、进度与接口返回。"""
+
+    def test_get_current_season_lazy_creates(self):
+        from django.utils import timezone
+        from apps.ranking.models import Season, SeasonConfig
+        from apps.ranking.season import get_current_season
+
+        season = get_current_season()
+        self.assertEqual(season.year, timezone.now().year)
+        self.assertEqual(Season.objects.count(), 1)
+        cfg = SeasonConfig.get_config()
+        self.assertEqual(cfg.current_season, season.year)
+
+    def test_progress_and_countdown(self):
+        import datetime
+        from django.utils import timezone
+        from apps.ranking.season import season_progress, settle_countdown
+
+        now = timezone.now()
+        start = now - datetime.timedelta(days=100)
+        end = now + datetime.timedelta(days=265)
+        class _S:
+            start_at = start
+            end_at = end
+            settle_at = now + datetime.timedelta(days=10)
+        s = _S()
+        p = season_progress(s, now)
+        self.assertEqual(p["total_days"], 365)
+        self.assertGreater(p["pct"], 0)
+        cd = settle_countdown(s, now)
+        self.assertGreater(cd, 0)
+
+    def test_season_api_public_and_me(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+        User = get_user_model()
+        client = APIClient()
+        # 未登录：公开可读，me 为 None
+        r = client.get("/api/v1/season/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("year", r.data)
+        self.assertIsNone(r.data.get("me"))
+        # 登录用户：me 附带战绩
+        u = User.objects.create_user(username="s1", password="pwd12345")
+        client.force_authenticate(u)
+        r = client.get("/api/v1/season/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNotNone(r.data.get("me"))
+        self.assertEqual(r.data["me"]["total_score"], 0)

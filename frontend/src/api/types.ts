@@ -261,6 +261,44 @@ export interface RankSnapshot {
   computed_at: string
 }
 
+// 赛季信息
+export type SeasonStage = 'upcoming' | 'active' | 'settling' | 'ended'
+
+export interface SeasonReward {
+  title: string
+  desc?: string
+  icon?: string
+}
+
+export interface SeasonInfo {
+  id: number
+  year: number
+  name: string
+  start_at: string
+  end_at: string
+  settle_at: string | null
+  stage: SeasonStage
+  stage_display: string
+  rewards: SeasonReward[]
+  progress: { elapsed_days: number; total_days: number; pct: number }
+  settle_countdown_seconds: number | null
+  me: {
+    rank: number | null
+    total_score: number
+    contest_count: number
+  } | null
+}
+
+export interface PastSeason {
+  id: number
+  year: number
+  name: string
+  start_at: string
+  end_at: string
+  stage: SeasonStage
+  stage_display: string
+}
+
 // 用户公开信息页（榜单点击跳转后展示）
 export interface UserPublicProfile {
   id: number

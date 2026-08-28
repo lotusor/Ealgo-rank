@@ -87,3 +87,64 @@ class RankSnapshot(TimeStampedModel):
     def __str__(self):
         target = self.school or self.user
         return f"[{self.get_scope_display()}/{self.period}] #{self.rank} {target}"
+
+
+class Season(TimeStampedModel):
+    """积分赛季（以年为单位）。
+
+    每年一条记录：`2026` 赛季 = 2026-01-01 00:00 ~ 2026-12-31 23:59:59。
+    赛季切换（年度重置）时由定时任务推进 `SeasonConfig.current_season`，
+    旧赛季记录永久保留，供历史回顾。
+    """
+
+    class Stage(models.TextChoices):
+        UPCOMING = "upcoming", "未开始"
+        ACTIVE = "active", "进行中"
+        SETTLING = "settling", "结算中"
+        ENDED = "ended", "已结束"
+
+    year = models.PositiveIntegerField("赛季编号（年份）", unique=True, db_index=True)
+    name = models.CharField("赛季名称", max_length=50, default="")
+    start_at = models.DateTimeField("开始时间", db_index=True)
+    end_at = models.DateTimeField("结束时间", db_index=True)
+    stage = models.CharField("所处阶段", max_length=20,
+                             choices=Stage.choices, default=Stage.ACTIVE,
+                             db_index=True)
+    # 奖励内容：结构化描述，前端直接渲染；内容随赛季可不同
+    rewards = models.JSONField("奖励内容", default=list, blank=True,
+                               help_text="如 [{title, desc, icon}]")
+    # 结算：通常是赛季结束后一个结算窗口
+    settle_at = models.DateTimeField("结算时间", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "积分赛季"
+        verbose_name_plural = verbose_name
+        ordering = ["-year"]
+
+    def __str__(self):
+        return f"{self.name or self.year} 赛季"
+
+    def save(self, *args, **kwargs):
+        if not self.name:
+            self.name = f"第 {self.year} 赛季"
+        super().save(*args, **kwargs)
+
+
+class SeasonConfig(TimeStampedModel):
+    """赛季全局配置（单例）：当前赛季 + 年度重置开关。"""
+
+    current_season = models.PositiveIntegerField("当前赛季年份", default=0)
+    auto_reset = models.BooleanField("自动年度重置", default=True)
+
+    class Meta:
+        verbose_name = "赛季配置"
+        verbose_name_plural = verbose_name
+
+    @classmethod
+    def get_config(cls):
+        obj, _ = cls.objects.get_or_create(
+            defaults={"current_season": 0, "auto_reset": True})
+        return obj
+
+    def __str__(self):
+        return f"赛季配置（当前 {self.current_season or '未初始化'}）"
