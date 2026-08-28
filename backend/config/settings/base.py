@@ -225,14 +225,16 @@ CELERY_TASK_SOFT_TIME_LIMIT = 60 * 25   # 软超时 25 分钟，留时间收尾
 CELERY_WORKER_MAX_TASKS_PER_CHILD = 50
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 # 牛客抓取最慢（1100 人约 65s），单独队列避免拖垮其他任务
+# ⚠️ 生产 worker 启动命令为 -Q crawl,crawl_slow：任何路由到其他队列的任务
+# 消息都会无人消费（曾致 recompute 堆积 default 队列、榜单 2 天未重算）。
 CELERY_TASK_ROUTES = {
     "apps.crawler.tasks.crawl_nowcoder*": {"queue": "crawl_slow"},
     "apps.crawler.tasks.*": {"queue": "crawl"},
-    "apps.ranking.tasks.*": {"queue": "default"},
+    "apps.ranking.tasks.*": {"queue": "crawl"},
 }
-# 未显式路由的任务（如 debug_task）落入此默认队列，避免落到 celery 默认名
-CELERY_TASK_DEFAULT_QUEUE = "default"
-# 生产队列（crawl / crawl_slow / default）首次出现时由 broker 自动建队列
+# 未显式路由的任务（如 debug_task）同样落入 crawl，确保始终有消费者
+CELERY_TASK_DEFAULT_QUEUE = "crawl"
+# 生产队列（crawl / crawl_slow）首次出现时由 broker 自动建队列
 CELERY_TASK_CREATE_MISSING_QUEUES = True
 
 # ---------- CORS ----------
