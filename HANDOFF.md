@@ -292,6 +292,28 @@ def relevant_contest_ids(platform):
 5. **部署**：本地 `npm run build -- --mode production` 构建（本机 node 22.22.2 + `node_modules` 完整，本地构建产物跨平台可用）→ tgz 经 SFTP 上传（辅助脚本 `D:\_Dev\.workbuddy\tmp_sftp.py`；git-bash 下需 `MSYS_NO_PATHCONV=1` 防止远端路径参数被 MSYS 转换）→ dist 保 inode 替换，**无需重启任何容器**。回滚点 `dist.old-20260829`。
 6. **验证**：`vue-tsc` 零错误；本地 dev + mock 数据四场景（牛客跨段位 / CF 高分段含 3000 传奇线 / AtCoder 低分段 / 全部聚合）× 深浅两主题视觉通过；生产回归首页/`healthz`/新 MyScoresView chunk 全 200，线上 asset hash 与磁盘一致。⚠️ 图表位于登录页 `/u/my-scores`，**真实数据效果待登录态端到端验证**。
 
+### 1.7.6 Celery 路由修复：recompute 消息黑洞 + 僵尸任务（2026-08-29，P0 已修复）
+
+**现象**（用户报告）：① 新增用户的比赛数据未同步到平台各业务区；② 一个"执行中"爬虫任务疑似卡死。
+
+**根因**（两个独立问题）：
+
+1. **recompute 消息黑洞（问题 1 主因）**：`CELERY_TASK_ROUTES` 将 `apps.ranking.tasks.*` 路由到 `default` 队列，而生产 worker 启动命令为 `-Q crawl,crawl_slow`——`default` 队列**无任何消费者**。beat 每日 04:00 的重算与每次爬取后自动派发的重算消息全部堆积（Redis db10 `default` LLEN=35），RankSnapshot 停滞在 08-27 00:06（北京），期间爬入的新成绩（含新增用户）不进榜单/业务区。爬取本身一直是成功的，只差重算这一环。
+2. **僵尸任务（问题 2）**：CrawlJob #57（nowcoder）08-27 23:00 由 beat 启动，随后 worker 容器因部署重建，任务状态永久停在 running（worker 重启丢状态，已知技术债二次发生）。
+
+**修复**：
+
+1. 止血（服务器操作）：`stale_crawl_jobs --hours 2 --fix`（#57 → failed）+ `redis-cli -n 10 DEL default`（清 35 条冗余消息）+ `manage.py recompute_ranking`（立即重算：ScoreRecord +24 ~40 -0，快照恢复至当前时刻）。
+2. 根治（commit `4e8cc31`）：`apps.ranking.tasks.*` 路由改 `crawl`；`CELERY_TASK_DEFAULT_QUEUE` 由 `default` 改 `crawl`（**原默认队列即黑洞**，任何未显式路由的任务都会静默丢失）。SFTP 单文件同步 + `docker compose build backend worker` + `up -d --force-recreate backend worker beat`。
+3. 闭环验证：手动派发 `recompute_ranking_task.delay()` → worker 日志 `received` → `succeeded in 0.46s`（updated 64），crawl 队列归零 ✓。
+4. 补数据：手动派发三平台增量爬取（cf/at/nc，08-29 02:52），完成后爬后重算自动触发。
+
+**坑与教训**：
+
+- ⚠️ **新增 Celery 队列时必须核对生产 worker 的 `-Q` 列表**：路由指向无人监听的队列 = 消息黑洞，全程无任何报错，只能靠业务现象（榜单不更新）发现。排障口诀：`redis-cli -n 10 KEYS '_kombu.binding.*'` 看实际存在的队列 + `LLEN <queue>` 看积压。
+- 僵尸爬取任务在每次 worker 重建后都会遗留（08-25 清 3 条、本次 #57），已有手动工具 `stale_crawl_jobs --fix`；长期方案：worker `worker_ready` 信号启动时自动清理（待办，低优先）。
+- CrawlConfig `auto_crawl_interval_days=3`（用户 08-28 04:11 设置，非 bug）：自动爬取每 3 天一次，下次 08-30 23:00；间隔 >1 天时 PeriodicTask 走 IntervalSchedule（`crontab=None` 属**预期行为**，勿误判为调度损坏）。需要及时数据时管理页手动触发即可。
+
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
 - `DJANGO_SECRET_KEY` 强随机值、初始超管密码
