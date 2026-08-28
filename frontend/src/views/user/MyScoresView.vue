@@ -104,7 +104,7 @@ const chartPoints = computed(() => {
       (a, b) =>
         new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime(),
     )
-  const result: { label: string; value: number; meta: { contest: string; platform: string; delta: number | null } }[] = []
+  const result: { label: string; value: number; meta: { contest: string; platform: string; delta: number | null; rank: number | null } }[] = []
   if (all) {
     const currentByPlat = new Map<ContestPlatform, number>()
     for (const r of pts) {
@@ -117,6 +117,7 @@ const chartPoints = computed(() => {
           contest: r.contest_name,
           platform: r.contest_platform,
           delta: r.rating_delta,
+          rank: r.rank ?? null,
         },
       })
     }
@@ -129,6 +130,7 @@ const chartPoints = computed(() => {
           contest: r.contest_name,
           platform: r.contest_platform,
           delta: r.rating_delta,
+          rank: r.rank ?? null,
         },
       })
     }
@@ -257,7 +259,7 @@ function accountTag(p: string) {
           <SegmentedControl v-model="platform" :options="platformOptions" />
         </div>
         <div class="card-body">
-          <RatingLineChart :points="chartPoints" :height="240" />
+          <RatingLineChart :points="chartPoints" :height="240" :platform="platform" />
           <div style="display: flex; gap: var(--space-6); margin-top: var(--space-4); flex-wrap: wrap" class="caption text-tertiary">
             <span>当前 Rating: <b class="num text-cyan">{{ currentRating ?? '—' }}</b></span>
             <span>峰值 Rating: <b class="num">{{ peakRating ?? '—' }}</b></span>

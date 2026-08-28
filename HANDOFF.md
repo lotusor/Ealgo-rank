@@ -277,9 +277,20 @@ def relevant_contest_ids(platform):
 ### 1.7.4 前端修复与部署方式变更（2026-08-28）
 
 1. **表格 `hide-mobile` 列错位修复（已上线验证）**：`base.css` 中 `.hide-mobile { display: initial }` 会把 th/td 的 display 重置为规范初始值 `inline`（而非 UA 默认 `table-cell`），导致带该类的列脱离 `table-layout: fixed` 列宽分配、宽度退化为内容收缩——表头与数据盒宽度不同（如 HomeView「参赛人数」列 81.9px vs 39.6px，中心错开 21.2px）。改为 `display: revert`（恢复 UA 默认），受影响的 HomeView「参赛人数」列与 MyScoresView「解题数」列一并修复；`.show-mobile` 移动端同样修正（当前无使用者）。线上实测：display=table-cell、th/td 左右边界完全重合、中心差 0。
-2. **前端构建方式（重要，本地无 node）**：本地机器无 node/npm/docker，rank 前端构建改在服务器上执行——源码打 tgz（排除 node_modules/dist）SFTP 上传 → `docker run --rm -v /tmp/rank-fe-build:/app -w /app node:20-alpine sh -c "npm ci --registry=https://registry.npmmirror.com && npm run build"`（服务器已拉取 node:20-alpine 镜像）→ dist 内容同步到 `/www/wwwroot/rank.eacm.cn/dist`。
+2. **前端构建方式（已过时，见 §1.7.5）**：~~本地机器无 node/npm/docker，rank 前端构建改在服务器上执行~~——2026-08-29 起本机已有 node 22.22.2 + 依赖完整，直接本地构建。原服务器 `docker run node:20-alpine` 方案保留为无本地 node 时的备选：源码打 tgz（排除 node_modules/dist）SFTP 上传 → `docker run --rm -v /tmp/rank-fe-build:/app -w /app node:20-alpine sh -c "npm ci --registry=https://registry.npmmirror.com && npm run build"` → dist 内容同步到 `/www/wwwroot/rank.eacm.cn/dist`。
 3. **部署陷阱（务必遵守）**：rank-nginx 容器 bind mount 指向 `/www/wwwroot/rank.eacm.cn/dist`，**挂载绑定的是目录 inode**——部署时严禁 `mv dist dist.old && cp -r 新目录 dist`（容器会继续读旧 inode，磁盘新文件容器不可见、线上不生效且极易误判为缓存问题）。正确做法：**保持 dist 目录 inode 不变，只同步其内容**（`rm -rf dist/* && cp -r 新构建/dist/. dist/`）；若已 mv 过，`docker restart rank-rank-nginx-1` 重新解析挂载路径即可恢复。验证部署是否真生效：比对 `curl https://rank.eacm.cn/` 引用的 asset hash 与磁盘 `dist/assets/` 内文件名是否一致。
 4. 当前回滚备份：`/www/wwwroot/rank.eacm.cn/dist.old-20260828`（含 2026-08-27 的上一版 dist，稳定后可删）。
+
+### 1.7.5 Rating 折线图牛客风格改版（2026-08-29，已部署生产）
+
+参照牛客竞赛个人主页折线图（`ac.nowcoder.com/acm/contest/profile/…`）重写 `RatingLineChart.vue`（用户决策：分平台各自段位着色 / 保留淡渐变 / Y 轴自适应+段位线裁剪）：
+
+1. **段位着色**：单平台 tab 数据点按该平台官方段位阈值着色——Codeforces `1200/1400/1600/1900/2100/2400/3000`（8 档）、AtCoder `400/800/1200/1600/2000/2400/2800`（8 档）、牛客 `700/1100/1500/2000/2400/2800`（7 档）；「全部」聚合口径无段位概念，保持品牌色。配置集中在组件 `TIER_SETS`。
+2. **新视觉元素**：段位参考线（可见 Y 范围内的档位边界虚线 + 右端同色数字标签）；连线降级为中性细线（点是主角，牛客风格）；最新点插段位色小旗（当前 rating 锚点）；面积渐变保留（低透明度，色随最新点段位）。
+3. **Tooltip 重构**：段位色渐变头部 `rating (涨跌) (第N名)` 白字粗体 + 身体（比赛名、`YYYY-MM-DD HH:mm` 时间）；默认显示于点下方，近底部垂直翻转、右缘水平翻转；`left/top/right` 0.16s transition 平滑跟随。
+4. **动画**：折线 `stroke-dash` 描线进场 0.9s、面积/段位线淡入、数据点逐个错峰入场、小旗延迟 0.85s；`prefers-reduced-motion: reduce` 下全部禁用。
+5. **部署**：本地 `npm run build -- --mode production` 构建（本机 node 22.22.2 + `node_modules` 完整，本地构建产物跨平台可用）→ tgz 经 SFTP 上传（辅助脚本 `D:\_Dev\.workbuddy\tmp_sftp.py`；git-bash 下需 `MSYS_NO_PATHCONV=1` 防止远端路径参数被 MSYS 转换）→ dist 保 inode 替换，**无需重启任何容器**。回滚点 `dist.old-20260829`。
+6. **验证**：`vue-tsc` 零错误；本地 dev + mock 数据四场景（牛客跨段位 / CF 高分段含 3000 传奇线 / AtCoder 低分段 / 全部聚合）× 深浅两主题视觉通过；生产回归首页/`healthz`/新 MyScoresView chunk 全 200，线上 asset hash 与磁盘一致。⚠️ 图表位于登录页 `/u/my-scores`，**真实数据效果待登录态端到端验证**。
 
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
