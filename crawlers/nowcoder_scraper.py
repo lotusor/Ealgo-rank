@@ -6,7 +6,8 @@
 - 抓取比赛日历、比赛题目、实时排名（含每题提交详情）
 - 支持多月份、多场比赛批量抓取
 
-【只收录 rated 且免费的比赛】
+【只收录 rated 比赛；付费 rated 同样收录（2026-08-24 ef027b7 设计变更，
+  is_paid 仅作展示标记不再排除）】
   牛客日历接口不含 rated / 收费字段，需逐场请求
   acm-heavy/acm/contest/contest-info?id=X，用两个字段判定：
 
@@ -18,7 +19,7 @@
       category=20 uid=999991351 牛客暑期多校训练营
       category=21 uid=999991351 牛客寒假算法基础集训营
       category=8  各校 uid       校赛/自主命题赛 -> 不计 rating
-    是否收费：needCharge（布尔）
+    是否收费：needCharge（布尔，仅记录展示，不作为排除依据）
       注意同一系列不同年份收费状态会变：2021 多校 needCharge=false，
       2026 多校 needCharge=true，2022 寒假营 needCharge=true。
       所以必须逐场读取，不能按系列推断。
@@ -440,11 +441,12 @@ class NowCoderScraper:
 
     def run(self, months=None, output_dir=None, max_rank_pages=None,
             skip_future=True, filter_post_contest=True,
-            rated_only=True, exclude_paid=True, exclude_cheaters=False):
+            rated_only=True, exclude_paid=False, exclude_cheaters=False):
         """
         入口：抓取多月份比赛列表，并抓取每场比赛的全部有效排名。
         rated_only=True      只收录官方 rated 系列（周赛/小白月赛/练习赛/挑战赛/多校/寒假营）
-        exclude_paid=True    排除 needCharge=true 的付费比赛
+        exclude_paid=False   不排除付费比赛——付费 rated 同样收录（2026-08-24 设计变更，
+                             与 Celery 任务侧 filter_contests 调用参数保持一致）
         exclude_cheaters=False 默认保留作弊账号但打 is_cheater 标记，入库层负责排除
         """
         if months is None:
