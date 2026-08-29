@@ -402,8 +402,28 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
                 or _ym_of(c) in base
             ]
         contests = s.filter_contests(contests, rated_only=True, exclude_paid=False)
+
+        # C0：只处理已结束的比赛。进行中/未开始的比赛榜单不完整、rating 未定，
+        #    入库会产生脏数据且落盘缓存一周内不会自愈（CF 侧有 phase=FINISHED
+        #    过滤；牛客日历无 phase 字段，按 endTime 对齐）。
+        def _ended(c):
+            raw = c.get("end_time") or c.get("start_time")
+            try:
+                dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                return True  # 解析失败保守放行，交由详情层兜底
+            if timezone.is_naive(dt):
+                dt = timezone.make_aware(dt, timezone.get_current_timezone())
+            return dt <= timezone.now()
+
+        contests = [c for c in contests if _ended(c)]
+
         # C：单次场数上限，防止索引历史比赛过多时单任务超软超时。
-        #    超出部分依赖落盘缓存 + 幂等入库，由后续定时任务继续补抓。
+        #    ⚠️ 截断前必须按开始时间降序——contests 按月份升序拼接，直接切片
+        #    会砍掉尾部「最新的比赛」（曾致 2026-08 练习赛 156 永远进不了
+        #    处理列表、用户成绩无法入库）。被截掉的最老比赛依赖落盘缓存 +
+        #    幂等入库，由后续定时任务继续补抓。
+        contests.sort(key=lambda c: c.get("start_time") or "", reverse=True)
         contests = contests[:50]
         cache_dir = _crawler_cache_dir(Platform.NOWCODER)
         for c in contests:

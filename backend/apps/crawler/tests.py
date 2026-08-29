@@ -240,6 +240,7 @@ from apps.crawler.models import CrawlConfig
 from apps.crawler.tasks import (
     auto_crawl_task,
     create_crawl_job,
+    crawl_nowcoder,
     enqueue_crawl,
 )
 
@@ -587,3 +588,85 @@ class FillParticipatedContestsTests(TestCase):
         updated, n = fill_participated_contests(acc)
         self.assertFalse(updated)
         self.assertEqual(n, 0)
+
+
+class _FakeNC:
+    """替代 NowCoderScraper：受控比赛列表，验证截断方向与未结束比赛过滤。"""
+
+    def __init__(self, contests):
+        self._contests = contests
+
+    def init_session(self):
+        pass
+
+    def user_rating_history(self, handle):
+        return []
+
+    def fetch_contests(self, ym):
+        return [c for c in self._contests if (c.get("start_time") or "")[:7] == ym]
+
+    def parse_contests(self, lst, only_nowcoder=True):
+        return lst
+
+    def filter_contests(self, contests, rated_only=True, exclude_paid=True):
+        return [c for c in contests if c.get("is_rated")]
+
+    def scrape_contest_detail(self, rid, filter_post_contest=False,
+                              exclude_cheaters=False, cache_dir=None,
+                              cache_ttl_hours=168, **kwargs):
+        return {"problems": [], "ranks": [], "rank_count": 0,
+                "valid_rank_count": 0, "rank_source": "fake",
+                "crawled_at": "2026-08-29T00:00:00"}
+
+
+class NowcoderWindowTests(TestCase):
+    """牛客窗口处理：截断必须保最新（历史 bug：[:50] 砍掉尾部最新比赛）、
+    未结束比赛不入库（防脏数据 + 缓存不自愈）。"""
+
+    @staticmethod
+    def _contests(n, start_from=None):
+        from datetime import datetime, timedelta
+        base = start_from or datetime(2026, 6, 1, 19, 0)
+        out = []
+        for i in range(n):
+            st = base + timedelta(days=i)
+            out.append({
+                "real_contest_id": 9000 + i, "name": f"NC Round {i}",
+                "start_time": st.strftime("%Y-%m-%d %H:%M:%S"),
+                "end_time": (st + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S"),
+                "duration_minutes": 120, "is_rated": True, "is_paid": False,
+            })
+        return out
+
+    def test_truncation_keeps_newest(self):
+        # 60 场 rated：截断到 50 场时必须保留最新的 50 场（9050..9099），
+        # 被丢的应是最老的（9000..9049）——反向截断会让新比赛永远进不来。
+        fake = _FakeNC(self._contests(60))
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake):
+            crawl_nowcoder(months=["2026-06", "2026-07"])
+        ids = set(Contest.objects.filter(
+            platform=Platform.NOWCODER).values_list("external_id", flat=True))
+        self.assertEqual(len(ids), 50)
+        self.assertIn("9059", ids)   # 最新一场
+        self.assertIn("9010", ids)   # 第 50 新
+        self.assertNotIn("9009", ids)
+        self.assertNotIn("9000", ids)  # 最老 10 场被丢
+
+    def test_unfinished_excluded(self):
+        from datetime import timedelta
+        from django.utils import timezone as dj_tz
+        contests = self._contests(3)
+        future = dj_tz.now() + timedelta(days=3)
+        contests.append({
+            "real_contest_id": 9999, "name": "NC Future Round",
+            "start_time": future.strftime("%Y-%m-%d %H:%M:%S"),
+            "end_time": (future + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_minutes": 120, "is_rated": True, "is_paid": False,
+        })
+        fake = _FakeNC(contests)
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake):
+            crawl_nowcoder(months=["2026-06", "2026-07"])
+        ids = set(Contest.objects.filter(
+            platform=Platform.NOWCODER).values_list("external_id", flat=True))
+        self.assertNotIn("9999", ids)
+        self.assertEqual(ids, {"9000", "9001", "9002"})
