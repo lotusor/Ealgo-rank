@@ -314,6 +314,28 @@ def relevant_contest_ids(platform):
 - 僵尸爬取任务在每次 worker 重建后都会遗留（08-25 清 3 条、本次 #57），已有手动工具 `stale_crawl_jobs --fix`；长期方案：worker `worker_ready` 信号启动时自动清理（待办，低优先）。
 - CrawlConfig `auto_crawl_interval_days=3`（用户 08-28 04:11 设置，非 bug）：自动爬取每 3 天一次，下次 08-30 23:00；间隔 >1 天时 PeriodicTask 走 IntervalSchedule（`crontab=None` 属**预期行为**，勿误判为调度损坏）。需要及时数据时管理页手动触发即可。
 
+### 1.7.7 牛客练习赛漏入库：截断方向 bug + 未结束过滤 + 毒缓存（2026-08-29，已修复部署）
+
+**现象**：用户报告牛客练习赛成绩未入库（对照官方 rating 历史：user2 参加了 08-28「牛客练习赛 156」，rank 116，rating 1029→1208，平台无该场记录）。
+
+**三层根因**：
+
+1. **截断方向 bug（主因）**：`crawl_nowcoder` 的 `contests[:50]` 发生在「按月份升序拼接（`for ym in sorted(target)`）」之后——比赛密集月份（2026-08：多校 10 场+周赛+练习赛+挑战赛，rated 超 50 场）直接砍掉列表尾部**最新的比赛**。#63 的处理日志恰好终止于 08-23 Round 158，08-24 之后的比赛全部漏抓。已排除其他环节：日历接口正常返回练习赛 156、`check_rated` 判定正确（category=6/uid=999991351 在 OFFICIAL_UIDS、needCharge=False）。
+2. **未结束比赛无过滤**：CF 侧有 `phase=FINISHED` 过滤，牛客日历无 phase 字段且未按 endTime 过滤——08-25 的爬取把未举办的 Round 159、未开赛的练习赛 156 都抓了详情。
+3. **毒缓存（修复后仍会被坑的一层）**：`scrape_contest_detail` 命中落盘缓存即跳过下载（TTL 168h/7 天）——08-25 抓的空榜单（`contest_139209.json` 仅 133B、ranks=0）被缓存，即使列表截断修好后，7 天内的爬取依然命中空数据。**排查口诀：`ls /app/crawlers/data/<平台>/` 看缓存 mtime，`python -c "import json;d=json.load(open(f));print(len(d['ranks']))"` 验空榜单**。
+
+**修复**（commit `7523622`）：
+
+- 截断前 `contests.sort(key=start_time, reverse=True)` 保最新 50 场（被截的最老比赛靠缓存+幂等多轮补抓）；
+- 新增 `_ended` 过滤（endTime > now 的比赛跳过，解析失败保守放行）；
+- 新增 `NowcoderWindowTests` 回归 2 例，全量 **115 tests OK**。
+
+**验证**：清除 2 个毒缓存（139209 练习赛 156 / 139660 Round 159）→ 重爬 months_back=2（#65 success）→ 练习赛 156 入库，user2 rank 116 / new_rating 1208 / delta +46 与牛客官方完全一致 → 爬后重算自动触发（created: 1）→ 快照更新。
+
+**CF/AtCoder 对账**：预筛为「最新窗口优先 + relevant 历史补充」模式，无截断 bug；最新 rated 比赛均已入库（CF Round 1117 @ 08-17、AT ABC472 @ 08-22），无同类问题。
+
+**待办（低优）**：detail 层对 ranks 为空的响应不写缓存（或缩短空缓存 TTL），从根上免疫毒缓存。
+
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
 - `DJANGO_SECRET_KEY` 强随机值、初始超管密码
