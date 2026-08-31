@@ -363,6 +363,12 @@ def relevant_contest_ids(platform):
 
 **真实数据对账**（2 学生）：user2 lotus → best #1 @ 1943.22（2026-08-23，历史峰值 ≠ 当前 1697.46）；user5 AuCu → 曾在 2026-02-03 排名 #1（当时 1111.76）。API `/me/best/` 与个人中心展示不变，数据语义已正确。测试重写为重演场景 3 例，全量 123 tests OK。
 
+### 1.7.11 登录/注册页莲花单一入口 + 通用 OAuth（2026-08-31，与 passport `831ce33` 配套，已上线）
+
+- passport 新增 provider 无关入口：`GET /api/v1/oauth/login/`（一次性票据 oauth:generic:\<ticket\> TTL 600s → passport-web 登录页 URL）与 `POST /api/v1/oauth/continue/`（web 登录后凭票据 + Bearer 换发往接入方的单次 PKCE 授权码）。passport-web /login 暂存 `?oticket=`（sessionStorage 跨登录子页存续），密码/邮箱验证码/OAuth 回调三个成功落点优先续行回接入方。详见 passport `HANDOVER.md` 顶部段。
+- rank 两页改版：/login 与 /register 只保留「Lotus 通行证登录」大按钮（`LotusPassportEntry.vue`：旋转渐变环图标 + 掠过高光 + 浮起动效，尊重 prefers-reduced-motion），点击发起通用入口（PKCE）；LoginView 本地账号表单按用户决策移除；RegisterEntryView 管理员文案/按钮已删；`PassportLoginButtons.vue` 删除（已无引用）。平台正式图标（favicon/导航/登录/注册页）同批替换。
+- 已上线验证：passport 端点 curl 实测返回 login_url；rank 新 dist hash 上线、lotus-icon/favicon 均 200。已登录访问 /login 被守卫重定向属预期——完整登录流程需隐身窗口人工验收。
+
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
 - `DJANGO_SECRET_KEY` 强随机值、初始超管密码
