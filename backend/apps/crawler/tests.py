@@ -670,3 +670,57 @@ class NowcoderWindowTests(TestCase):
             platform=Platform.NOWCODER).values_list("external_id", flat=True))
         self.assertNotIn("9999", ids)
         self.assertEqual(ids, {"9000", "9001", "9002"})
+
+
+class CrawlConfigSignalTests(TestCase):
+    """CrawlConfig 保存 → beat 调度条目同步。
+
+    - 间隔 1 天：crontab 使用触发小时；
+    - 间隔 >1 天：IntervalSchedule(every=N) 且 last_run_at 基准规整到
+      00:00（Asia/Shanghai），实现「每 N 天 00:00 触发」；
+    - enabled 同步到 PeriodicTask。
+    """
+
+    @staticmethod
+    def _periodic():
+        from django_celery_beat.models import PeriodicTask
+
+        return PeriodicTask.objects.get(name="auto-crawl-daily")
+
+    @staticmethod
+    def _config():
+        from apps.crawler.models import CrawlConfig
+
+        cfg, _ = CrawlConfig.objects.get_or_create()
+        return cfg
+
+    def test_daily_uses_crontab_hour(self):
+        cfg = self._config()
+        cfg.auto_crawl_interval_days = 1
+        cfg.auto_crawl_hour = 5
+        cfg.save()
+        pt = self._periodic()
+        self.assertIsNotNone(pt.crontab)
+        self.assertEqual(pt.crontab.hour, "5")
+        self.assertIsNone(pt.interval)
+
+    def test_multi_day_aligns_to_midnight(self):
+        from django.utils import timezone as dj_tz
+
+        cfg = self._config()
+        cfg.auto_crawl_interval_days = 3
+        cfg.enabled = True
+        cfg.save()
+        pt = self._periodic()
+        self.assertIsNone(pt.crontab)
+        self.assertEqual(pt.interval.every, 3)
+        self.assertTrue(pt.enabled)
+        # 基准规整到 00:00（Asia/Shanghai）——「每 3 天 00:00 触发」
+        local = dj_tz.localtime(pt.last_run_at)
+        self.assertEqual((local.hour, local.minute, local.second), (0, 0, 0))
+
+        # enabled 关闭同步
+        cfg.enabled = False
+        cfg.save()
+        pt.refresh_from_db()
+        self.assertFalse(pt.enabled)
