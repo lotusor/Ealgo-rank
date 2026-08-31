@@ -351,6 +351,12 @@ def relevant_contest_ids(platform):
 
 **验证**：后端 120 tests OK（新增 5 例：审批意见×2、规则 API×1、最佳纪录×2）；vue-tsc 零错误；线上端到端——/u/score-rules 渲染完整（v1 文案+动态系数表）、/u/my-scores 显示「历史最佳排名 #1（当时总 rating 1697.46）」、/u/user/5 折线图+占位正常。校管视角（王婧橦账号）留待实际登录复核仪表盘。
 
+### 1.7.9 多天间隔自动爬取对齐 00:00（2026-08-31，commit `9709aa9`，已上线）
+
+用户原设计确认：间隔 = 1 天 → crontab 按 `auto_crawl_hour` 定点触发（现状保留）；间隔 ≥ 2 天 → 每隔 N 天在 **00:00（Asia/Shanghai）** 触发，不看触发小时。原实现多天分支只设 `IntervalSchedule(DAYS, every=N)`，due = last_run_at + N 天——**钟点继承上次实际运行时刻**（曾致下次落在北京 08-30 23:00 而非 00:00）。
+
+修复：signal 多天分支保存配置时把 `PeriodicTask.last_run_at` 重置到最近一个已过去的 00:00——下次 = 基准 + N 天 = 未来的 00:00；任务恰在 00:00 运行后 last_run_at 自然保持整点，周期自洽。新增 `CrawlConfigSignalTests` 2 例，全量 122 tests OK。**过渡时序**：旧逻辑最后一轮 08-30 23:00 三平台 success（#66/67/68，入库+重算正常）→ 修复部署 → 重置基准 08-31 00:00 → **下次自动爬取 09-03 00:00**。注意 `auto_crawl_hour` 仅在间隔=1 时生效（管理页改多天间隔时该字段不参与，属预期）。
+
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
 - `DJANGO_SECRET_KEY` 强随机值、初始超管密码
