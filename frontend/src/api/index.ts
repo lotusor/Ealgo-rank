@@ -558,3 +558,16 @@ export async function getMyBestRecord(): Promise<UserBestRecord> {
   const { data } = await client.get<UserBestRecord>('/me/best/')
   return data
 }
+
+// ---------- 公开站点统计（首页数字看板） ----------
+export interface PublicStats {
+  schools: number
+  contests: number
+  users: number
+  participations: number
+}
+
+export async function getPublicStats(): Promise<PublicStats> {
+  const { data } = await client.get<PublicStats>('/stats/')
+  return data
+}
