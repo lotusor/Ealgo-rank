@@ -366,8 +366,15 @@ def relevant_contest_ids(platform):
 ### 1.7.11 登录/注册页莲花单一入口 + 通用 OAuth（2026-08-31，与 passport `831ce33` 配套，已上线）
 
 - passport 新增 provider 无关入口：`GET /api/v1/oauth/login/`（一次性票据 oauth:generic:\<ticket\> TTL 600s → passport-web 登录页 URL）与 `POST /api/v1/oauth/continue/`（web 登录后凭票据 + Bearer 换发往接入方的单次 PKCE 授权码）。passport-web /login 暂存 `?oticket=`（sessionStorage 跨登录子页存续），密码/邮箱验证码/OAuth 回调三个成功落点优先续行回接入方。详见 passport `HANDOVER.md` 顶部段。
-- rank 两页改版：/login 与 /register 只保留「Lotus 通行证登录」大按钮（`LotusPassportEntry.vue`：旋转渐变环图标 + 掠过高光 + 浮起动效，尊重 prefers-reduced-motion），点击发起通用入口（PKCE）；LoginView 本地账号表单按用户决策移除；RegisterEntryView 管理员文案/按钮已删；`PassportLoginButtons.vue` 删除（已无引用）。平台正式图标（favicon/导航/登录/注册页）同批替换。
+- rank 两页改版：/login 与 /register 只保留「Lotus 通行证登录」大按钮（`LotusPassportEntry.vue`：渐变环图标 + 掠过高光 + 浮起动效，尊重 prefers-reduced-motion；持续旋转动画按用户反馈已移除），点击发起通用入口（PKCE）；LoginView 本地账号表单按用户决策移除；RegisterEntryView 管理员文案/按钮已删；`PassportLoginButtons.vue` 删除（已无引用）。平台正式图标（favicon/导航/登录/注册页）同批替换。
 - 已上线验证：passport 端点 curl 实测返回 login_url；rank 新 dist hash 上线、lotus-icon/favicon 均 200。已登录访问 /login 被守卫重定向属预期——完整登录流程需隐身窗口人工验收。
+
+### 1.7.12 登录入口补充与赛季编号修正（2026-08-31~09-01）
+
+- **登录页最终形态**（用户澄清口径后）：主入口 = 莲花通行证（通用 OAuth）；次入口 = 「使用本站账号密码登录」默认收起，展开为**本站本地密码表单**（`auth.login` HS256 双轨——OAuth 首登后在安全页设密码即可本地登录）。⚠️ 「账号密码登录」指本站本地体系，不是 passport 密码页（第一版误解已纠正，commit `f9a36fe`）；莲花图标持续旋转动画按用户反馈移除（`2731b67`）。
+- **页面切换过渡全局化**（`d5d7863`）：page 过渡原只挂 App.vue 顶层 router-view（仅覆盖跨 layout 跳转），PublicLayout/AdminLayout 内部 router-view 已补同样过渡——嵌套路由的每个 router-view 层级都需各自包裹。
+- **赛季编号**（本批）：以 2026 年为第 1 赛季逐年累加——`Season.SEASON_BASE_YEAR = 2025`，`number = year - 基准`，默认名称「第 N 赛季」跟随序号（自定义名称不被覆盖）。存量赛季行名称已随部署修正为「第 1 赛季」（线上 API 断言验证）。
+- **赛季重置逻辑核查结论**：年度切换由 `get_current_season` **懒推进** current_season 指针（幂等，任何赛季 API 访问即触发，无需定时任务）——机制正常；`SeasonConfig.auto_reset` 为未接线预留字段（暂保留，无消费方）；阶段推导（未开始/进行中/结算/结束）按时间实时计算，历史赛季 stage 由 `refresh_stages` 批量刷新（暂无定时挂载，当前仅一个赛季无实际影响）。
 
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
