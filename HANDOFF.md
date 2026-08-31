@@ -1,7 +1,7 @@
 # E-algo Rank 项目接手文档
 
 > **本文件是本项目唯一的开发文档（single source of truth）。** 其他历史文档（`overview.md`、`BACKEND_HANDOFF.md`、`crawlers/VERIFICATION.md`）的内容已合并进本文，已删除，避免信息分叉。
-> 文档基准时间：**2026-08-25**（2026-08-27 增补 passport 协议升级适配，见 §1.7.3）。代码路径：`D:\_Dev\e-algo-rank\`
+> 文档基准时间：**2026-09-01**（§1.7.x 逐批次增补：§1.7.3 passport 协议适配 → §1.7.4 前端修复 → §1.7.5 折线图改版 → §1.7.6 Celery 修复 → §1.7.7 牛客漏入库 → §1.7.8 六项体验 → §1.7.11 登录改版 → §1.7.12 赛季编号 → §1.7.13 安全审计）。代码路径：`D:\_Dev\e-algo-rank\`
 > 配套设计原型（非开发文档，仅前端 UI 来源）：`prototype design for rank/{DESIGN|DELIVERY}.md` + `prototype.html`。
 
 ---
