@@ -54,9 +54,10 @@ class SchoolAdminApplicationSerializer(serializers.ModelSerializer):
     class Meta:
         model = SchoolAdminApplication
         fields = [
-            "id", "applicant", "school", "reason", "contact", "evidence",
-            "status", "status_display", "review_comment", "reviewer",
-            "reviewed_at", "created_at", "updated_at",
+            "id", "applicant", "school", "proposed_school_name", "reason",
+            "contact", "evidence", "status", "status_display",
+            "review_comment", "reviewer", "reviewed_at", "created_at",
+            "updated_at",
         ]
         read_only_fields = fields
 

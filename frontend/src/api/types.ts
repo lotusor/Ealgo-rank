@@ -144,6 +144,7 @@ export interface Application {
   id: number
   applicant: { id: number; username: string; real_name: string; role: string }
   school: { id: number; name: string; code: string } | null
+  proposed_school_name: string | null
   reason: string
   contact: string
   evidence: string | null

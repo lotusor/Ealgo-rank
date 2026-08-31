@@ -211,8 +211,8 @@ class SchoolAdminApplicationViewSet(viewsets.ModelViewSet):
             f"你对「{application.school.name}」的管理员申请被驳回"
             + (f"：{comment}" if comment else ""),
             type=NotificationType.APPLICATION_REVIEWED,
-            # 被驳回者是普通用户，管理端链接不可达——意见已在文案中，不设跳转
-            link="",
+            # 被驳回者是普通用户 → 指向用户侧「我的申请」页（状态 + 审批意见）
+            link="/u/my-application",
         )
         return Response(self.get_serializer(application).data)
 

@@ -137,7 +137,10 @@ onMounted(load)
               <td class="cell-strong">{{ a.applicant.username }}</td>
               <td>{{ a.applicant.real_name || '—' }}</td>
               <td class="cell-ellipsis">{{ a.school?.name || '—' }}</td>
-              <td class="cell-ellipsis text-secondary">{{ a.reason || '—' }}</td>
+              <td class="cell-ellipsis">
+                <span class="text-secondary">{{ a.reason || '—' }}</span>
+                <div v-if="a.contact" class="caption text-tertiary">联系：{{ a.contact }}</div>
+              </td>
               <td class="num-cell">{{ fmtDate(a.created_at) }}</td>
               <td class="center"><span class="badge" :class="statusCls(a.status)">{{ a.status_display }}</span></td>
               <td class="center">

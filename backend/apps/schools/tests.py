@@ -371,7 +371,7 @@ class ApproveCommentTests(APITestCase):
         # 通过后申请人已是校管，管理端链接可达
         self.assertTrue(note.link.startswith("/admin/applications/"))
 
-    def test_reject_notification_has_no_admin_link(self):
+    def test_reject_notification_points_to_my_application(self):
         app = SchoolAdminApplication.objects.create(
             applicant=self.applicant, school=self.school, reason="x")
         self.client.force_authenticate(self.super)
@@ -386,8 +386,8 @@ class ApproveCommentTests(APITestCase):
             type=NotificationType.APPLICATION_REVIEWED).latest("id")
         self.assertIn("被驳回", note.message)
         self.assertIn("材料不足", note.message)
-        # 被驳回者是普通用户，管理端链接不可达 → 不设跳转
-        self.assertEqual(note.link, "")
+        # 被驳回者是普通用户 → 指向用户侧「我的申请」页（非管理端）
+        self.assertEqual(note.link, "/u/my-application")
 
 
 class ScoreRulesApiTests(APITestCase):
