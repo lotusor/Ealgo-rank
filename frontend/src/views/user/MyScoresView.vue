@@ -87,10 +87,6 @@ const peakRating = computed(() => {
   const vals = rows.value.map((r) => r.new_rating).filter((v): v is number => v != null)
   return vals.length ? Math.max(...vals) : null
 })
-const bestRank = computed(() => {
-  const ranks = rows.value.map((r) => r.rank).filter((r): r is number => r != null)
-  return ranks.length ? Math.min(...ranks) : null
-})
 
 const chartPoints = computed(() => {
   // 分两种口径：
@@ -235,7 +231,7 @@ function accountTag(p: string) {
       <div class="stat-card"><div class="stat-label text-accent">总 Rating</div><div class="stat-value num text-cyan">{{ myRank ? fmtCount(myRank.total_score) : '—' }}</div><div class="stat-sub">平台归一化</div></div>
       <div class="stat-card"><div class="stat-label">计入积分场数</div><div class="stat-value num">{{ countedCount }}</div><div class="stat-sub">未排除</div></div>
       <div class="stat-card"><div class="stat-label">参赛记录</div><div class="stat-value num">{{ rows.length }}</div><div class="stat-sub">全部场次</div></div>
-      <div class="stat-card"><div class="stat-label">历史最佳排名</div><div class="stat-value num">{{ bestRank != null ? '#' + bestRank : '—' }}</div><div class="stat-sub">最高 Rating {{ peakRating ?? '—' }}</div></div>
+      <div class="stat-card"><div class="stat-label">历史最佳排名</div><div class="stat-value num">{{ bestRecord?.best_rank != null ? '#' + bestRecord.best_rank : '—' }}</div><div class="stat-sub">当时总 rating {{ bestRecord?.best_rank_score ?? '—' }}</div></div>
     </div>
 
     <!-- 各平台 Rating 分开展示 -->

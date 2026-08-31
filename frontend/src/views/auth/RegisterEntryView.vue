@@ -21,15 +21,6 @@ const router = useRouter()
 
       <PassportLoginButtons />
 
-      <div class="divider" />
-
-      <p class="body-sm text-tertiary" style="text-align: center; margin-bottom: var(--space-4)">
-        没有 Lotus Passport？可用本地账号登录（仅限管理员 / 兜底场景）。
-      </p>
-      <div style="display: flex; justify-content: center">
-        <button class="btn btn-ghost" @click="router.push({ name: 'login' })">管理员本地登录</button>
-      </div>
-
       <p class="caption text-tertiary" style="text-align: center; margin-top: var(--space-6)">
         登录即表示同意 <a class="link">用户协议</a> 与 <a class="link">隐私政策</a>
       </p>
