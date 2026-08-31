@@ -376,6 +376,25 @@ def relevant_contest_ids(platform):
 - **赛季编号**（本批）：以 2026 年为第 1 赛季逐年累加——`Season.SEASON_BASE_YEAR = 2025`，`number = year - 基准`，默认名称「第 N 赛季」跟随序号（自定义名称不被覆盖）。存量赛季行名称已随部署修正为「第 1 赛季」（线上 API 断言验证）。
 - **赛季重置逻辑核查结论**：年度切换由 `get_current_season` **懒推进** current_season 指针（幂等，任何赛季 API 访问即触发，无需定时任务）——机制正常；`SeasonConfig.auto_reset` 为未接线预留字段（暂保留，无消费方）；阶段推导（未开始/进行中/结算/结束）按时间实时计算，历史赛季 stage 由 `refresh_stages` 批量刷新（暂无定时挂载，当前仅一个赛季无实际影响）。
 
+### 1.7.13 双项目安全审计与修复（2026-09-01，rank `6d9c7f8` / passport `e518174`）
+
+三路并行代码审计（rank 后端 / passport 全栈 / 双前端）+ 生产 nginx 核查。**已修复**：
+
+| 级别 | 发现 | 修复 |
+|---|---|---|
+| 高 | rank refresh 绕过吊销（改密/登出全部设备后旧 refresh 仍可换新 access） | `StampedTokenRefreshView` 校验 refresh 携带 stamp，不一致拉黑+401 |
+| 高 | rank 附件存储型 XSS（evidence 无类型白名单 + /media/ 内联分发） | serializer 白名单 pdf/png/jpg/webp + nginx `/media/admin_apply/` 强制 attachment |
+| 高 | rank DRF 限流未生效（只配 rates 没配 classes） | 补 DEFAULT_THROTTLE_CLASSES（anon 60/min、user 600/min） |
+| 高 | passport 密码重置防枚举被 sent 字段击穿 | 响应移除 sent |
+| 高 | rank 首页/校管仪表盘式统计全 0（权限差异接口 × Promise.all） | 独立容错（见 §1.7.12 前批） |
+| 中 | passport 通用登录票据不绑定目标路径（授权码注入面） | 独立精确白名单 `OAUTH_GENERIC_ALLOWED_REDIRECT_URIS`（生产=rank callback），未配置整体拒绝 |
+| 中 | passport XFF 取首段可伪造（污染限流/审计） | 回溯跳过可信代理取第一个非可信地址 |
+| 中 | rank /api/docs+schema 匿名暴露 | 改登录可见（401 实测） |
+| 中 | rank 头像无大小上限；passport 头像解压炸弹 | 2MB 上限 / 24M 像素上限 |
+| 低 | rank 榜单过滤参数非数字 500；continue 回调 origin 兜底校验；nginx Referrer-Policy | 均已修复 |
+
+**遗留（记录在案，牵连行为改造暂不做）**：① passport `ROTATE_REFRESH_TOKENS=False`（refresh 无 rotation，开启需前端同步存新 refresh）；② 无密码账户敏感操作无 step-up；③ 设备信任基于 UA 指纹可伪造；④ 旧 fragment 回调模式仍兼容（两端同步下线需用户重登）；⑤ Next 14.2.35 两个 high 公告（先前已评估接受）；⑥ rank.eacm.cn.conf 在 nginx 容器可写层（已导出备份至 nginx/rank.eacm.cn.conf.bak-20260901，容器重建后需恢复）。基线：rank 124 OK / passport 141 过+9 存量环境失败（与改前一致）。
+
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
 - `DJANGO_SECRET_KEY` 强随机值、初始超管密码
