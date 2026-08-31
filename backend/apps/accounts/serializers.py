@@ -201,6 +201,11 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         required=False, allow_null=True,
         help_text="头像图片；传 null 表示移除头像")
 
+    def validate_avatar(self, f):
+        if f and f.size > 2 * 1024 * 1024:
+            raise serializers.ValidationError("头像图片不能超过 2MB")
+        return f
+
     class Meta:
         model = User
         fields = ["username", "real_name", "student_no", "school_code",

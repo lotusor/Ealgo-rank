@@ -39,6 +39,8 @@ class RankSnapshotViewSet(viewsets.ReadOnlyModelViewSet):
         qs = qs.filter(scope=scope, period=period)
         school = self.request.query_params.get("school")
         if school:
+            if not str(school).isdigit():
+                return qs.none()
             # 学校榜记录 school_id 有值；学生榜记录 school_id 为空，学校归属在
             # user.school 上，须经 user__school_id 过滤，否则学生榜按学校筛选恒为空。
             if scope == RankSnapshot.Scope.STUDENT:
@@ -47,6 +49,8 @@ class RankSnapshotViewSet(viewsets.ReadOnlyModelViewSet):
                 qs = qs.filter(school_id=school)
         user = self.request.query_params.get("user")
         if user:
+            if not str(user).isdigit():
+                return qs.none()
             qs = qs.filter(user_id=user)
         return qs
 

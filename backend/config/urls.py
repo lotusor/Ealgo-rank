@@ -4,6 +4,7 @@ from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import (SpectacularAPIView, SpectacularSwaggerView)
+from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.views import TokenVerifyView
 
 from apps.accounts.views import LoginView, LogoutView, StampedTokenRefreshView
@@ -31,8 +32,14 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("healthz", healthz, name="healthz"),
     path("api/v1/", include((api_v1, "api"), namespace="v1")),
-    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
-    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="docs"),
+    # 接口文档含全量 API 结构：仅登录用户可见，避免匿名枚举攻击面
+    path("api/schema/",
+         SpectacularAPIView.as_view(permission_classes=[IsAuthenticated]),
+         name="schema"),
+    path("api/docs/",
+         SpectacularSwaggerView.as_view(
+             url_name="schema", permission_classes=[IsAuthenticated]),
+         name="docs"),
 ]
 
 if settings.DEBUG:

@@ -111,13 +111,21 @@ class SchoolAdminApplicationCreateSerializer(serializers.ModelSerializer):
         required=False, allow_blank=True, max_length=100,
         help_text="申请系统里还没有的学校时填写，审批通过会自动建档")
     evidence = serializers.FileField(required=False, allow_null=True,
-                                     help_text="证明材料（可选，≤5MB）")
+                                     help_text="证明材料（可选，≤5MB，pdf/png/jpg/webp）")
 
     MAX_EVIDENCE_BYTES = 5 * 1024 * 1024
+    EVIDENCE_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
 
     def validate_evidence(self, f):
-        if f and f.size > self.MAX_EVIDENCE_BYTES:
-            raise serializers.ValidationError("证明材料不能超过 5MB")
+        if f:
+            if f.size > self.MAX_EVIDENCE_BYTES:
+                raise serializers.ValidationError("证明材料不能超过 5MB")
+            import os
+
+            ext = os.path.splitext(f.name or "")[1].lower()
+            if ext not in self.EVIDENCE_EXTS:
+                raise serializers.ValidationError(
+                    "证明材料仅支持 pdf / png / jpg / webp 格式")
         return f
 
     class Meta:

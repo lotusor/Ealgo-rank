@@ -147,23 +147,48 @@ def _lock_minutes() -> int:
 
 
 class StampedTokenRefreshView(TokenRefreshView):
-    """刷新访问令牌时把当前 ``security_stamp`` 写回新令牌，保证登出全部设备能吊销它。"""
+    """刷新访问令牌时校验 security_stamp 并把当前值写回新令牌。
+
+    改密 / 登出全部设备会 rotate security_stamp——旧 refresh 携带的 stamp
+    与用户当前值不一致时立即拉黑该 refresh 并拒绝刷新。否则被盗的 refresh
+    可绕过吊销机制在有效期内持续换发新 access。
+    """
 
     def post(self, request, *args, **kwargs):
         resp = super().post(request, *args, **kwargs)
         raw = resp.data.get("access")
-        if raw:
-            try:
-                from rest_framework_simplejwt.tokens import AccessToken
-                access = AccessToken(raw)
-                user_id = access.get("user_id")
-                if user_id is not None:
-                    user = User.objects.filter(pk=user_id).first()
-                    if user is not None:
-                        access["security_stamp"] = user.security_stamp
-                        resp.data["access"] = str(access)
-            except Exception:
-                pass
+        if not raw:
+            return resp
+        try:
+            from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
+
+            access = AccessToken(raw)
+            user_id = access.get("user_id")
+            user = User.objects.filter(pk=user_id).first() if user_id is not None else None
+            if user is None:
+                return resp
+
+            # 校验 refresh 携带的 security_stamp 是否仍与用户当前值一致
+            refresh_raw = (request.data or {}).get("refresh")
+            if refresh_raw:
+                try:
+                    rt = RefreshToken(refresh_raw)
+                    if rt.get("security_stamp") != user.security_stamp:
+                        try:
+                            rt.blacklist()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        return Response(
+                            {"detail": "会话已失效（密码或登录状态已变更），请重新登录"},
+                            status=status.HTTP_401_UNAUTHORIZED,
+                        )
+                except Exception:  # noqa: BLE001 — 解析失败交由既有校验兜底
+                    pass
+
+            access["security_stamp"] = user.security_stamp
+            resp.data["access"] = str(access)
+        except Exception:  # noqa: BLE001
+            pass
         return resp
 
 
