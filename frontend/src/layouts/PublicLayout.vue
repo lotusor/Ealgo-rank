@@ -8,7 +8,11 @@ import SystemAnnouncement from '@/components/layout/SystemAnnouncement.vue'
     <NavBar />
     <SystemAnnouncement />
     <main class="main-content">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <transition name="page" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </router-view>
     </main>
     <footer class="app-footer">
       <div class="app-footer-inner">
