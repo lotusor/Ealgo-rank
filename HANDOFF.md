@@ -336,6 +336,21 @@ def relevant_contest_ids(platform):
 
 **待办（低优）**：detail 层对 ranks 为空的响应不写缓存（或缩短空缓存 TTL），从根上免疫毒缓存。
 
+### 1.7.8 六项体验修复（2026-08-29，commit `7462a71`，已上线并端到端验证）
+
+| # | 问题 | 根因 / 实现 |
+|---|---|---|
+| 1 | 审批意见申请人看不到 | `approve()` 原本不读 request.data、不存 review_comment、通知固定文案（reject 链路本就完整）。已改为与驳回同构：接收/存库/通知携带意见；**驳回通知移除管理端链接**（被驳回者是普通用户，`requiresAdmin` 守卫会弹回，意见已在文案中） |
+| 2 | 校管仪表盘空白 | `/crawl-jobs/` 为 `IsSuperAdmin`，校管 403 × `Promise.all` 一损俱损 × 空 catch 静默 → 整页空白。改为**各接口独立加载独立容错**；「触发爬取任务」按钮/爬虫统计卡/最近任务区块 `v-if="auth.isSuperAdmin"`（侧边菜单本就有 superOnly 过滤，仅仪表盘遗漏） |
+| 3 | 排行榜用户详情缺签名/折线图 | 后端本就齐全（`GET /users/<pk>/profile/` AllowAny 含 bio + participations 含 weighted_rating）。前端 UserProfileView 增加 RatingLineChart（全部=各平台最新 weighted 累加 + 平台切换，段位化配置复用）；未填签名显示「这个人还没写个性签名」占位 |
+| 4 | 个人中心历史最佳口径 | 原「峰值」是单场 weighted_rating 最大值、「最佳排名」是单场名次——均非学生榜口径。新增 `UserBestRecord`（OneToOne，ranking.0003）：`update_user_best_records()` 在每次重算后维护 best_rank（历史最小名次，配对当时 total_score）与 best_score（历史最高总 rating）；挂载于 `recompute_ranking_task` 尾部与 `manage.py recompute_ranking`。API `GET /api/v1/me/best/`（未登录返回全 null）。系数调整导致重算结果变化时以「重算历史中最优」为准（接受口径漂移，与 CF rating 峰值同类） |
+| 5 | 积分规则公开页 | `ScoreRulePage` 单例（schools.0006，Django admin 维护 Markdown，保存自动升版本）+ `GET /api/v1/score-rules/`（AllowAny，**动态拼接当前 ScoreConfig 系数**，改系数页面自动同步）+ `/u/score-rules` 页面（`SimpleMarkdown.vue` 自研渲染器：先 HTML 转义再替换语法，无第三方依赖）+ NavBar「积分规则」入口；已预填 v1 文案 |
+| 6 | 总 rating 波动 | 设计行为（Elo 当前值跨平台求和，非单调累加），规则页已写明解释 |
+
+**坑**：`/api/v1/` 下 schools 与 ranking 均 include 在根（无 app 前缀），新增 me/best 路径时勿写成 `/rankings/me/best/`（404）；Windows GBK 终端下 `python - <<EOF` heredoc 传中文会因 stdin 编码损坏字面量，**改文件一律用 Read+Edit 工具**。
+
+**验证**：后端 120 tests OK（新增 5 例：审批意见×2、规则 API×1、最佳纪录×2）；vue-tsc 零错误；线上端到端——/u/score-rules 渲染完整（v1 文案+动态系数表）、/u/my-scores 显示「历史最佳排名 #1（当时总 rating 1697.46）」、/u/user/5 折线图+占位正常。校管视角（王婧橦账号）留待实际登录复核仪表盘。
+
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
 - `DJANGO_SECRET_KEY` 强随机值、初始超管密码
