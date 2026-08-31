@@ -1,3 +1,4 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from apps.schools import views
@@ -11,4 +12,7 @@ router.register("applications", views.SchoolAdminApplicationViewSet,
 router.register("score-configs", views.ScoreConfigViewSet,
                 basename="score-config")
 
-urlpatterns = router.urls
+urlpatterns = [
+    path("score-rules/", views.ScoreRulesView.as_view(),
+         name="score-rules"),
+] + router.urls

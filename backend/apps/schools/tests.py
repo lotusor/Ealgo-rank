@@ -17,6 +17,7 @@ from apps.schools.models import (
     School,
     SchoolAdminApplication,
     ScoreConfig,
+    ScoreRulePage,
 )
 
 BASE = "/api/v1"
@@ -341,3 +342,71 @@ class ProposedSchoolApplicationTests(APITestCase):
         self.applicant.refresh_from_db()
         self.assertEqual(self.applicant.role, UserRole.SCHOOL_ADMIN)
         self.assertEqual(self.applicant.school_id, school.id)
+
+
+class ApproveCommentTests(APITestCase):
+    """审批意见：通过/驳回均存库并写入站内信，申请人可见。"""
+
+    def setUp(self):
+        self.school = School.objects.create(
+            name="意见大学", code="cmtu", short_name="意见")
+        self.applicant = make_user("cmt_applicant", school=None)
+        self.super = make_user("cmt_super", role=UserRole.SUPER_ADMIN)
+
+    def test_approve_saves_comment_and_notifies(self):
+        app = SchoolAdminApplication.objects.create(
+            applicant=self.applicant, school=self.school, reason="x")
+        self.client.force_authenticate(self.super)
+        resp = self.client.post(APPROVE(app.id),
+                                {"review_comment": "欢迎加入"},
+                                format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        app.refresh_from_db()
+        self.assertEqual(app.review_comment, "欢迎加入")
+        note = Notification.objects.filter(
+            user=self.applicant,
+            type=NotificationType.APPLICATION_REVIEWED).latest("id")
+        self.assertIn("已通过", note.message)
+        self.assertIn("欢迎加入", note.message)
+        # 通过后申请人已是校管，管理端链接可达
+        self.assertTrue(note.link.startswith("/admin/applications/"))
+
+    def test_reject_notification_has_no_admin_link(self):
+        app = SchoolAdminApplication.objects.create(
+            applicant=self.applicant, school=self.school, reason="x")
+        self.client.force_authenticate(self.super)
+        resp = self.client.post(REJECT(app.id),
+                                {"review_comment": "材料不足"},
+                                format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        app.refresh_from_db()
+        self.assertEqual(app.review_comment, "材料不足")
+        note = Notification.objects.filter(
+            user=self.applicant,
+            type=NotificationType.APPLICATION_REVIEWED).latest("id")
+        self.assertIn("被驳回", note.message)
+        self.assertIn("材料不足", note.message)
+        # 被驳回者是普通用户，管理端链接不可达 → 不设跳转
+        self.assertEqual(note.link, "")
+
+
+class ScoreRulesApiTests(APITestCase):
+    """积分规则公开页：AllowAny + 动态系数。"""
+
+    def test_public_and_dynamic_config(self):
+        ScoreConfig.objects.create(cf_factor=1.200, nowcoder_factor=0.900)
+        page = ScoreRulePage.get_solo()
+        page.content = "# 积分规则\n总 rating 为各平台最新加权之和"
+        page.save()
+        resp = self.client.get(f"{BASE}/score-rules/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertIn("总 rating", resp.data["content"])
+        cfg = resp.data["config"]
+        self.assertEqual(len(cfg["platforms"]), 3)
+        plats = {p["platform"]: float(p["factor"]) for p in cfg["platforms"]}
+        self.assertEqual(plats["codeforces"], 1.2)
+        self.assertEqual(plats["nowcoder"], 0.9)
+        # 未登录同样可访问（AllowAny）
+        self.client.force_authenticate(None)
+        resp2 = self.client.get(f"{BASE}/score-rules/")
+        self.assertEqual(resp2.status_code, 200)

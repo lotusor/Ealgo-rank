@@ -21,6 +21,7 @@ const nav = [
   { label: '首页', key: 'home', path: '/u' },
   { label: '排名榜', key: 'rankings', path: '/u/rankings' },
   { label: '比赛列表', key: 'contests', path: '/u/contests' },
+  { label: '积分规则', key: 'score-rules', path: '/u/score-rules' },
   { label: '个人中心', key: 'my-scores', path: '/u/my-scores' },
   { label: '账号安全', key: 'security', path: '/u/security' },
 ]

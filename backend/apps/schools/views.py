@@ -9,11 +9,13 @@ from django.utils.text import slugify
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import (
+    AllowAny,
     SAFE_METHODS,
     IsAuthenticated,
     IsAuthenticatedOrReadOnly,
 )
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.accounts.models import (
     NotificationType,
@@ -27,6 +29,7 @@ from apps.schools.models import (
     School,
     SchoolAdminApplication,
     ScoreConfig,
+    ScoreRulePage,
 )
 from apps.schools.serializers import (
     SchoolAdminApplicationCreateSerializer,
@@ -130,6 +133,12 @@ class SchoolAdminApplicationViewSet(viewsets.ModelViewSet):
                 {"detail": "只有待审状态的申请可以审批"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # 审批意见可选填；与驳回同构——存库并写入站内信，申请人可见
+        review_serializer = SchoolAdminApplicationReviewSerializer(
+            data=request.data)
+        review_serializer.is_valid(raise_exception=True)
+        comment = review_serializer.validated_data.get("review_comment", "")
+
         applicant = application.applicant
         school = application.school
         # 申请的是系统里还没有的学校：审批通过时自动建档
@@ -159,13 +168,16 @@ class SchoolAdminApplicationViewSet(viewsets.ModelViewSet):
         application.status = AdminApplicationStatus.APPROVED
         application.reviewer = request.user
         application.reviewed_at = timezone.now()
+        application.review_comment = comment
         application.save(update_fields=["status", "reviewer", "reviewed_at",
-                                        "school"])
+                                        "review_comment", "school"])
 
         notify(
             applicant,
             "管理员申请已通过",
-            f"你对「{school.name}」的管理员申请已通过，名下 {synced} 个平台账号已同步至该校",
+            f"你对「{school.name}」的管理员申请已通过"
+            + (f"：{comment}" if comment else "")
+            + f"，名下 {synced} 个平台账号已同步至该校",
             type=NotificationType.APPLICATION_REVIEWED,
             link=f"/admin/applications/{application.id}",
         )
@@ -199,7 +211,8 @@ class SchoolAdminApplicationViewSet(viewsets.ModelViewSet):
             f"你对「{application.school.name}」的管理员申请被驳回"
             + (f"：{comment}" if comment else ""),
             type=NotificationType.APPLICATION_REVIEWED,
-            link=f"/admin/applications/{application.id}",
+            # 被驳回者是普通用户，管理端链接不可达——意见已在文案中，不设跳转
+            link="",
         )
         return Response(self.get_serializer(application).data)
 
@@ -246,3 +259,35 @@ class ScoreConfigViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ScoreRulesView(APIView):
+    """积分规则公开页：超管维护的说明文案 + 当前生效系数（动态拼接）。
+
+    面向所有用户（AllowAny）；系数调整后此接口自动返回新值，规则页随之更新。
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        page = ScoreRulePage.get_solo()
+        cfg = ScoreConfig.objects.first()
+        config = None
+        if cfg is not None:
+            config = {
+                "platform_weight": cfg.platform_weight,
+                "contest_weight": cfg.contest_weight,
+                "default_contest_factor": cfg.default_contest_factor,
+                "recent_contest_limit": cfg.recent_contest_limit,
+                "platforms": [
+                    {"platform": "codeforces", "factor": cfg.cf_factor},
+                    {"platform": "atcoder", "factor": cfg.atcoder_factor},
+                    {"platform": "nowcoder", "factor": cfg.nowcoder_factor},
+                ],
+            }
+        return Response({
+            "content": page.content,
+            "version": page.version,
+            "updated_at": page.updated_at,
+            "config": config,
+        })

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { listMyParticipations, listRankings } from '@/api'
+import { listMyParticipations, listRankings, getMyBestRecord } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import type { MyParticipation, ContestPlatform, RankSnapshot } from '@/api/types'
+import type { MyParticipation, ContestPlatform, RankSnapshot, UserBestRecord } from '@/api/types'
 import RatingLineChart from '@/components/RatingLineChart.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
@@ -33,8 +33,12 @@ function load() {
 onMounted(() => {
   load()
   loadRank()
+  getMyBestRecord().then((r) => (bestRecord.value = r)).catch(() => {})
 })
 watch(platform, () => load())
+
+// 历史最佳纪录（学生榜 period=all：最高名次配对当时总 rating + 历史最高总 rating）
+const bestRecord = ref<UserBestRecord | null>(null)
 
 const myRank = ref<RankSnapshot | null>(null)
 const rankLoading = ref(false)
@@ -262,7 +266,13 @@ function accountTag(p: string) {
           <RatingLineChart :points="chartPoints" :height="240" :platform="platform" />
           <div style="display: flex; gap: var(--space-6); margin-top: var(--space-4); flex-wrap: wrap" class="caption text-tertiary">
             <span>当前 Rating: <b class="num text-cyan">{{ currentRating ?? '—' }}</b></span>
-            <span>峰值 Rating: <b class="num">{{ peakRating ?? '—' }}</b></span>
+            <template v-if="platform === ''">
+              <span>历史最佳排名: <b class="num">#{{ bestRecord?.best_rank ?? '—' }}</b><template v-if="bestRecord?.best_rank != null"> <span class="text-tertiary">（当时总 rating {{ bestRecord.best_rank_score }}）</span></template></span>
+              <span>历史最高总 rating: <b class="num">{{ bestRecord?.best_score ?? '—' }}</b></span>
+            </template>
+            <template v-else>
+              <span>峰值 Rating: <b class="num">{{ peakRating ?? '—' }}</b></span>
+            </template>
             <span>参赛场次: <b class="num">{{ chartPoints.length }}</b></span>
           </div>
         </div>

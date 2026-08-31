@@ -6,7 +6,9 @@ worker 未起时，管理命令 `recompute_ranking` 可直接同步跑。
 from celery import shared_task
 
 from apps.ranking.cache import bump_ranking_version
-from apps.ranking.engine import ALL_PERIODS, recompute_all, recompute_snapshots
+from apps.ranking.engine import (ALL_PERIODS, recompute_all,
+                                recompute_snapshots,
+                                update_user_best_records)
 from apps.ranking.models import RankSnapshot
 
 
@@ -22,6 +24,7 @@ def recompute_ranking_task(scope="all", period=None):
         result = {"period": period, "rows": total}
     else:
         result = recompute_all(periods=ALL_PERIODS)
-    # 重算完成即让旧列表缓存失效
+    # 重算完成即让旧列表缓存失效，并维护用户历史最佳纪录
     bump_ranking_version()
+    update_user_best_records()
     return result

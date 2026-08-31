@@ -8,7 +8,9 @@
 """
 from django.core.management.base import BaseCommand
 
-from apps.ranking.engine import ALL_PERIODS, recompute_all, recompute_snapshots
+from apps.ranking.engine import (ALL_PERIODS, recompute_all,
+                                recompute_snapshots,
+                                update_user_best_records)
 from apps.ranking.models import RankSnapshot
 
 
@@ -46,4 +48,5 @@ class Command(BaseCommand):
             for pd in periods:
                 n = recompute_snapshots(sc, pd)
                 self.stdout.write(f"snapshot[{sc}/{pd}]: {n} rows")
+        update_user_best_records()
         self.stdout.write(self.style.SUCCESS("done"))

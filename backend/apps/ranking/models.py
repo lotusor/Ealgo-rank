@@ -89,6 +89,36 @@ class RankSnapshot(TimeStampedModel):
         return f"[{self.get_scope_display()}/{self.period}] #{self.rank} {target}"
 
 
+class UserBestRecord(TimeStampedModel):
+    """
+    用户历史最佳纪录（学生榜 period=all 口径）。
+
+    每次积分重算后与历史纪录比较更新：
+    - best_rank 取重算历史中的最小名次，并配对达成时的总 rating；
+    - best_score 取重算历史中的最高总 rating（与最佳名次不一定同一次达成）。
+    系数调整会引起全量重算结果变化，纪录以「重算历史中最优」为准
+    （与 CF/牛客 rating 峰值同类，接受系数变更带来的口径漂移）。
+    """
+
+    user = models.OneToOneField("accounts.User", verbose_name="用户",
+                                on_delete=models.CASCADE,
+                                related_name="best_record")
+    best_rank = models.PositiveIntegerField("历史最佳名次")
+    best_rank_score = models.FloatField("最佳名次时的总积分")
+    best_rank_at = models.DateTimeField("达成最佳名次时间")
+    best_score = models.FloatField("历史最高总积分")
+    best_score_rank = models.PositiveIntegerField("最高总积分时的名次",
+                                                  null=True, blank=True)
+    best_score_at = models.DateTimeField("达成最高总积分时间")
+
+    class Meta:
+        verbose_name = "用户最佳纪录"
+        verbose_name_plural = "用户最佳纪录"
+
+    def __str__(self):
+        return f"{self.user} 最佳 #{self.best_rank} / 峰值 {self.best_score:.1f}"
+
+
 class Season(TimeStampedModel):
     """积分赛季（以年为单位）。
 

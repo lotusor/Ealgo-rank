@@ -22,22 +22,33 @@ function statusCls(s: string) {
 }
 
 onMounted(async () => {
-  try {
-    const [apps, jobs, parts, users] = await Promise.all([
-      listApplications({ page_size: 5 }),
-      listCrawlJobs({ page_size: 5 }),
-      listParticipations({ page_size: 5, is_excluded: 'false' }),
-      listUsers({ school: auth.user?.school?.id, page_size: 1 }),
-    ])
-    pendingApps.value = apps.results.filter((a) => a.status === 'pending').length
-    crawlToday.value = jobs.results.filter((j) => j.created_at.startsWith(new Date().toISOString().slice(0, 10))).length
-    partsTotal.value = parts.count
-    schoolUsers.value = users.count
-    recentApps.value = apps.results
-    recentJobs.value = jobs.results
-    recentParts.value = parts.results
-  } catch {
-    /* 忽略 */
+  // 各接口独立加载、独立容错：任一接口 403/失败不影响其余区块
+  // （此前 Promise.all 一损俱损 + 空 catch 静默，导致校管整页空白）
+  listApplications({ page_size: 5 })
+    .then((apps) => {
+      pendingApps.value = apps.results.filter((a) => a.status === 'pending').length
+      recentApps.value = apps.results
+    })
+    .catch(() => {})
+  listParticipations({ page_size: 5, is_excluded: 'false' })
+    .then((parts) => {
+      partsTotal.value = parts.count
+      recentParts.value = parts.results
+    })
+    .catch(() => {})
+  listUsers({ school: auth.user?.school?.id, page_size: 1 })
+    .then((users) => {
+      schoolUsers.value = users.count
+    })
+    .catch(() => {})
+  // 爬虫管理仅超管（/crawl-jobs/ 为超管专属接口，校管请求会 403）
+  if (auth.isSuperAdmin) {
+    listCrawlJobs({ page_size: 5 })
+      .then((jobs) => {
+        crawlToday.value = jobs.results.filter((j) => j.created_at.startsWith(new Date().toISOString().slice(0, 10))).length
+        recentJobs.value = jobs.results
+      })
+      .catch(() => {})
   }
 })
 
@@ -55,7 +66,7 @@ function fmtDateTime(s: string | null) {
         <h1 class="page-title">仪表盘</h1>
         <p class="page-subtitle">系统运营概览与待处理事项</p>
       </div>
-      <button class="btn btn-primary" @click="router.push({ name: 'crawl' })">
+      <button v-if="auth.isSuperAdmin" class="btn btn-primary" @click="router.push({ name: 'crawl' })">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M12 12a3 3 0 1 0 0 0" /></svg>
         触发爬取任务
       </button>
@@ -63,7 +74,7 @@ function fmtDateTime(s: string | null) {
 
     <div class="grid grid-4 stats-row">
       <div class="stat-card"><div class="stat-label">待审批申请</div><div class="stat-value num text-warning">{{ fmtCount(pendingApps) }}</div><div class="stat-sub">需尽快处理</div></div>
-      <div class="stat-card"><div class="stat-label">今日爬取任务</div><div class="stat-value num">{{ fmtCount(crawlToday) }}</div><div class="stat-sub">新触发</div></div>
+      <div v-if="auth.isSuperAdmin" class="stat-card"><div class="stat-label">今日爬取任务</div><div class="stat-value num">{{ fmtCount(crawlToday) }}</div><div class="stat-sub">新触发</div></div>
       <div class="stat-card"><div class="stat-label">参赛记录总数</div><div class="stat-value num">{{ fmtCount(partsTotal) }}</div><div class="stat-sub">累计</div></div>
       <div class="stat-card"><div class="stat-label">本校学生数</div><div class="stat-value num">{{ fmtCount(schoolUsers) }}</div><div class="stat-sub">已注册</div></div>
     </div>
@@ -87,7 +98,7 @@ function fmtDateTime(s: string | null) {
         </div>
       </div>
 
-      <div class="card" style="overflow: hidden">
+      <div v-if="auth.isSuperAdmin" class="card" style="overflow: hidden">
         <div class="card-header"><div class="card-title">最新爬取任务</div><a class="link caption" @click="router.push({ name: 'crawl' })">查看全部</a></div>
         <div class="table-wrap" style="border: none; border-radius: 0">
           <table class="data-table">

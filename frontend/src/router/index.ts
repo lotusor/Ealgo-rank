@@ -73,6 +73,11 @@ const router = createRouter({
           component: () => import('@/views/user/UserProfileView.vue'),
         },
         {
+          path: 'score-rules',
+          name: 'score-rules',
+          component: () => import('@/views/user/ScoreRulesView.vue'),
+        },
+        {
           path: 'contests',
           name: 'contests',
           component: () => import('@/views/user/ContestsView.vue'),

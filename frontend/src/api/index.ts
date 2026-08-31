@@ -23,6 +23,8 @@ import type {
   PlatformAccount,
   SeasonInfo,
   PastSeason,
+  UserBestRecord,
+  ScoreRules,
 } from './types'
 
 // ---------- Auth ----------
@@ -521,4 +523,15 @@ export async function getSeason(): Promise<SeasonInfo> {
 export async function getPastSeasons(): Promise<PastSeason[]> {
   const { data } = await client.get<{ results: PastSeason[] }>('/season/past/')
   return data.results
+}
+
+// ---------- 积分规则公开页 / 用户最佳纪录 ----------
+export async function getScoreRules(): Promise<ScoreRules> {
+  const { data } = await client.get<ScoreRules>('/score-rules/')
+  return data
+}
+
+export async function getMyBestRecord(): Promise<UserBestRecord> {
+  const { data } = await client.get<UserBestRecord>('/me/best/')
+  return data
 }

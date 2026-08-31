@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getUserPublicProfile } from '@/api'
-import type { UserPublicProfile } from '@/api/types'
+import type { UserPublicProfile, ContestPlatform } from '@/api/types'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import RatingLineChart from '@/components/RatingLineChart.vue'
 import { platformName } from '@/utils/format'
 
 const route = useRoute()
@@ -12,6 +14,51 @@ const router = useRouter()
 const profile = ref<UserPublicProfile | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
+const chartPlatform = ref<'' | ContestPlatform>('')
+
+const chartPlatformOptions = computed(() => {
+  const plats = new Set((profile.value?.participations || []).map((p) => p.contest_platform))
+  const opts: { label: string; value: '' | ContestPlatform }[] = [{ label: '全部', value: '' }]
+  for (const p of ['codeforces', 'atcoder', 'nowcoder'] as ContestPlatform[]) {
+    if (plats.has(p)) opts.push({ label: platformName(p), value: p })
+  }
+  return opts
+})
+
+// 折线图数据：与个人成绩页同口径——「全部」= 各平台最新一场 weighted_rating 累加；
+// 单平台 = 该平台原始 new_rating 序列
+const chartPoints = computed(() => {
+  const rows = profile.value?.participations || []
+  const all = chartPlatform.value === ''
+  const pts = rows
+    .filter((r) => {
+      if (all) return r.weighted_rating != null && r.contest_start_time != null
+      return r.new_rating != null && r.contest_start_time != null && r.contest_platform === chartPlatform.value
+    })
+    .sort((a, b) => new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime())
+  const result: { label: string; value: number; meta: { contest: string; platform: string; delta: number | null; rank: number | null } }[] = []
+  if (all) {
+    const currentByPlat = new Map<ContestPlatform, number>()
+    for (const r of pts) {
+      currentByPlat.set(r.contest_platform, r.weighted_rating as number)
+      const total = [...currentByPlat.values()].reduce((s, v) => s + v, 0)
+      result.push({
+        label: r.contest_start_time as string,
+        value: Math.round(total * 100) / 100,
+        meta: { contest: r.contest_name, platform: r.contest_platform, delta: r.rating_delta, rank: r.rank ?? null },
+      })
+    }
+  } else {
+    for (const r of pts) {
+      result.push({
+        label: r.contest_start_time as string,
+        value: r.new_rating as number,
+        meta: { contest: r.contest_name, platform: r.contest_platform, delta: r.rating_delta, rank: r.rank ?? null },
+      })
+    }
+  }
+  return result
+})
 
 onMounted(async () => {
   const id = Number(route.params.id)
@@ -83,8 +130,20 @@ function fmtDelta(v: number) {
             <p v-if="profile.bio" class="body-sm text-secondary" style="margin-top: var(--space-3)">
               {{ profile.bio }}
             </p>
+            <p v-else class="body-sm text-tertiary" style="margin-top: var(--space-3); font-style: italic">
+              这个人还没写个性签名
+            </p>
           </div>
         </div>
+      </div>
+
+      <!-- Rating 趋势折线图 -->
+      <div v-if="chartPoints.length" class="card card-pad" style="margin-bottom: var(--space-6)">
+        <div class="card-header" style="padding: 0; margin-bottom: var(--space-4); border: none">
+          <div class="card-title">Rating 趋势</div>
+          <SegmentedControl v-model="chartPlatform" :options="chartPlatformOptions" />
+        </div>
+        <RatingLineChart :points="chartPoints" :height="220" :platform="chartPlatform" />
       </div>
 
       <!-- 各平台 rating -->

@@ -11,8 +11,9 @@ from apps.ranking.engine import (
     recompute_all,
     recompute_score_records,
     recompute_snapshots,
+    update_user_best_records,
 )
-from apps.ranking.models import RankSnapshot, ScoreRecord
+from apps.ranking.models import RankSnapshot, ScoreRecord, UserBestRecord
 from apps.schools.models import ScoreConfig, School
 
 
@@ -260,3 +261,53 @@ class SeasonTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIsNotNone(r.data.get("me"))
         self.assertEqual(r.data["me"]["total_score"], 0)
+
+
+class UserBestRecordTests(TestCase):
+    """重算后维护历史最佳：rank 取最小（配对当时积分）、score 取最大。"""
+
+    @staticmethod
+    def _snap(user, rank, score):
+        from django.utils import timezone as tz
+        return RankSnapshot.objects.create(
+            scope=RankSnapshot.Scope.STUDENT, period="all", user=user,
+            rank=rank, total_score=score, computed_at=tz.now())
+
+    def test_create_and_update(self):
+        u = User.objects.create_user(username="best1", password="Test1234!")
+        self._snap(u, 5, 100.0)
+        update_user_best_records()
+        rec = UserBestRecord.objects.get(user=u)
+        self.assertEqual(rec.best_rank, 5)
+        self.assertEqual(rec.best_rank_score, 100.0)
+        self.assertEqual(rec.best_score, 100.0)
+
+        # 名次更好（rating 更低）：rank 配对更新，峰值保留
+        RankSnapshot.objects.filter(user=u).delete()
+        self._snap(u, 3, 90.0)
+        update_user_best_records()
+        rec.refresh_from_db()
+        self.assertEqual(rec.best_rank, 3)
+        self.assertEqual(rec.best_rank_score, 90.0)
+        self.assertEqual(rec.best_score, 100.0)
+        self.assertEqual(rec.best_score_rank, 5)
+
+        # 更差：纪录不变
+        RankSnapshot.objects.filter(user=u).delete()
+        self._snap(u, 8, 95.0)
+        update_user_best_records()
+        rec.refresh_from_db()
+        self.assertEqual(rec.best_rank, 3)
+        self.assertEqual(rec.best_score, 100.0)
+
+    def test_best_score_improves(self):
+        u = User.objects.create_user(username="best2", password="Test1234!")
+        self._snap(u, 4, 80.0)
+        update_user_best_records()
+        RankSnapshot.objects.filter(user=u).delete()
+        self._snap(u, 4, 95.0)
+        update_user_best_records()
+        rec = UserBestRecord.objects.get(user=u)
+        self.assertEqual(rec.best_score, 95.0)
+        self.assertEqual(rec.best_score_rank, 4)
+        self.assertEqual(rec.best_rank, 4)

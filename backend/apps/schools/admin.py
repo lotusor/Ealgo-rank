@@ -3,7 +3,8 @@ from django.utils import timezone
 
 from apps.accounts.models import UserRole
 
-from .models import (AdminApplicationStatus, AtCoderAffiliationAlias, School,
+from .models import (AdminApplicationStatus, AtCoderAffiliationAlias,
+                     ScoreRulePage, School,
                      SchoolAdminApplication, ScoreConfig)
 
 
@@ -67,3 +68,25 @@ class AtCoderAffiliationAliasAdmin(admin.ModelAdmin):
                     "note")
     list_filter = ("is_active",)
     search_fields = ("raw_affiliation", "canonical_name", "school__name")
+
+
+@admin.register(ScoreRulePage)
+class ScoreRulePageAdmin(admin.ModelAdmin):
+    """积分规则页（单例）：内容用 Markdown，保存自动升版本号。"""
+
+    list_display = ("version", "updated_at", "updated_by")
+    fields = ("content", "version", "updated_by")
+    readonly_fields = ("version", "updated_by")
+
+    def has_add_permission(self, request):
+        # 单例：已有记录则禁止再增
+        return not ScoreRulePage.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        if change:
+            obj.version = (obj.version or 1) + 1
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)

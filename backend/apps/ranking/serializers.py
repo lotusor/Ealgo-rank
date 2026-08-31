@@ -34,3 +34,14 @@ class RankSnapshotSerializer(serializers.ModelSerializer):
         if request is not None:
             return request.build_absolute_uri(url)
         return url
+
+
+class UserBestRecordSerializer(serializers.Serializer):
+    """用户历史最佳纪录（无纪录时字段为 null）。"""
+
+    best_rank = serializers.IntegerField(allow_null=True)
+    best_rank_score = serializers.FloatField(allow_null=True)
+    best_rank_at = serializers.DateTimeField(allow_null=True)
+    best_score = serializers.FloatField(allow_null=True)
+    best_score_rank = serializers.IntegerField(allow_null=True)
+    best_score_at = serializers.DateTimeField(allow_null=True)

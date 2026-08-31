@@ -383,3 +383,27 @@ export interface AppNotification {
   is_read: boolean
   created_at: string
 }
+
+// 用户历史最佳纪录（学生榜 period=all 口径；无纪录时字段为 null）
+export interface UserBestRecord {
+  best_rank: number | null
+  best_rank_score: number | null
+  best_rank_at: string | null
+  best_score: number | null
+  best_score_rank: number | null
+  best_score_at: string | null
+}
+
+// 积分规则公开页（超管维护文案 + 动态系数）
+export interface ScoreRules {
+  content: string
+  version: number
+  updated_at: string | null
+  config: {
+    platform_weight: string | number
+    contest_weight: string | number
+    default_contest_factor: string | number
+    recent_contest_limit: number
+    platforms: { platform: string; factor: string | number }[]
+  } | null
+}

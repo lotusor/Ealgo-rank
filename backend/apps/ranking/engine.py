@@ -19,7 +19,7 @@ from django.utils import timezone
 
 from apps.accounts.models import User
 from apps.contests.models import ContestDifficultyFactor
-from apps.ranking.models import RankSnapshot, ScoreRecord
+from apps.ranking.models import RankSnapshot, ScoreRecord, UserBestRecord
 from apps.schools.models import ScoreConfig, School
 
 # 生成的快照周期：全部 + 当前年份
@@ -242,3 +242,43 @@ def recompute_all(periods=None):
             snapshots[f"{scope}:{period}"] = n
     result["snapshots"] = snapshots
     return result
+
+
+def update_user_best_records():
+    """重算后维护用户历史最佳纪录（学生榜 period=all）。
+
+    best_rank 取重算历史中的最小名次并配对达成时的总 rating；
+    best_score 取重算历史中的最高总 rating。幂等、轻量（学生数量级），
+    在每次快照重算完成后调用（Celery 任务与管理命令两条路径均覆盖）。
+    """
+    now = timezone.now()
+    rows = (RankSnapshot.objects
+            .filter(scope=RankSnapshot.Scope.STUDENT, period="all",
+                    user__isnull=False)
+            .select_related("user"))
+    for row in rows:
+        rec, created = UserBestRecord.objects.get_or_create(
+            user=row.user,
+            defaults={
+                "best_rank": row.rank,
+                "best_rank_score": row.total_score,
+                "best_rank_at": now,
+                "best_score": row.total_score,
+                "best_score_rank": row.rank,
+                "best_score_at": now,
+            })
+        if created:
+            continue
+        changed = []
+        if row.rank < rec.best_rank:
+            rec.best_rank = row.rank
+            rec.best_rank_score = row.total_score
+            rec.best_rank_at = now
+            changed += ["best_rank", "best_rank_score", "best_rank_at"]
+        if row.total_score > rec.best_score:
+            rec.best_score = row.total_score
+            rec.best_score_rank = row.rank
+            rec.best_score_at = now
+            changed += ["best_score", "best_score_rank", "best_score_at"]
+        if changed:
+            rec.save(update_fields=changed)

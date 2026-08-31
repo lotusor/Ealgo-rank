@@ -20,9 +20,10 @@ from apps.ranking.cache import (
     safe_cache_set,
 )
 from apps.ranking.engine import recompute_all
-from apps.ranking.models import RankSnapshot
+from apps.ranking.models import RankSnapshot, UserBestRecord
 from apps.ranking.season import get_current_season, past_seasons, season_payload
-from apps.ranking.serializers import RankSnapshotSerializer
+from apps.ranking.serializers import (RankSnapshotSerializer,
+                                      UserBestRecordSerializer)
 from config.pagination import StandardPagination
 
 
@@ -88,3 +89,20 @@ class SeasonView(APIView):
             return Response({"results": past_seasons()})
         season = get_current_season()
         return Response(season_payload(season, user=request.user))
+
+
+class MyBestRecordView(APIView):
+    """当前登录用户的历史最佳纪录（学生榜 period=all 口径）。"""
+
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return Response({
+                "best_rank": None, "best_rank_score": None,
+                "best_rank_at": None, "best_score": None,
+                "best_score_rank": None, "best_score_at": None,
+            })
+        rec = getattr(request.user, "best_record", None)
+        ser = UserBestRecordSerializer(rec)
+        return Response(ser.data)

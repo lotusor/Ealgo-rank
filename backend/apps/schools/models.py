@@ -189,3 +189,31 @@ def normalize_atcoder_affiliation(raw, alias_map=None):
         "canonical_name": alias.canonical_name or (
             alias.school.name if alias.school_id else None),
     }
+
+
+class ScoreRulePage(TimeStampedModel):
+    """积分规则说明页（单例）。
+
+    面向所有用户的「积分规则」公开页内容：
+    - content 为超管在 Django admin 维护的 Markdown 说明文案；
+    - 动态系数（各平台系数 / 权重 / 计分上限）由公开 API 自动拼接，
+      调整系数后规则页自动同步，无需手改文案。
+    """
+
+    content = models.TextField("规则说明（Markdown）", blank=True, default="")
+    version = models.PositiveIntegerField("版本号", default=1)
+    updated_by = models.ForeignKey("accounts.User", verbose_name="最后编辑人",
+                                   null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        verbose_name = "积分规则页"
+        verbose_name_plural = "积分规则页"
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(defaults={"content": ""})
+        return obj
+
+    def __str__(self):
+        return f"积分规则页 v{self.version}"
