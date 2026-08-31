@@ -1,38 +1,38 @@
 <script setup lang="ts">
 /**
  * 莲花通行证统一登录入口（provider 无关）。
- * 点击后整页跳转 passport 统一登录页，登录方式（GitHub / QQ / 邮箱等）
- * 全部在通行证侧选择，完成后携授权码回本站完成登录。
+ * 主按钮跳转 passport 统一登录页；次入口直达密码登录页。
+ * 两种方式登录完成后都会携授权码自动回本站。
  */
 import { ref } from 'vue'
-import { startPassportGenericLogin } from '@/api'
+import { startPassportGenericLogin, startPassportPasswordLogin } from '@/api'
 
-const loading = ref(false)
+const loading = ref<'main' | 'password' | null>(null)
 const error = ref('')
 
-async function onLogin() {
+async function go(kind: 'main' | 'password') {
   if (loading.value) return
-  loading.value = true
+  loading.value = kind
   error.value = ''
   try {
-    await startPassportGenericLogin()
-    // 成功时整页跳走，不会回到这里
+    if (kind === 'main') await startPassportGenericLogin()
+    else await startPassportPasswordLogin()
   } catch (e: any) {
     error.value = e?.message || '无法发起通行证登录，请稍后重试'
-    loading.value = false
+    loading.value = null
   }
 }
 </script>
 
 <template>
   <div class="lotus-wrap">
-    <button class="lotus-entry" :disabled="loading" @click="onLogin">
+    <button class="lotus-entry" :disabled="loading !== null" @click="go('main')">
       <span class="lotus-icon-ring">
         <img class="lotus-icon" src="/lotus-icon.png" alt="Lotus Passport" draggable="false" />
       </span>
       <span class="lotus-texts">
         <span class="lotus-title">
-          {{ loading ? '正在前往莲花通行证…' : '使用 Lotus 通行证登录' }}
+          {{ loading === 'main' ? '正在前往莲花通行证…' : '使用 Lotus 通行证登录' }}
         </span>
         <span class="lotus-sub">统一身份认证 · GitHub / QQ / 邮箱等方式在通行证内选择</span>
       </span>
@@ -49,6 +49,19 @@ async function onLogin() {
         <path d="M13 6l6 6-6 6" />
       </svg>
     </button>
+
+    <div class="lotus-alt">
+      <span class="lotus-alt-divider" />
+      <button
+        class="lotus-password-link"
+        :disabled="loading !== null"
+        @click="go('password')"
+      >
+        {{ loading === 'password' ? '正在前往…' : '使用账号密码登录' }}
+      </button>
+      <span class="lotus-alt-divider" />
+    </div>
+
     <p v-if="error" class="lotus-error">{{ error }}</p>
   </div>
 </template>
@@ -116,8 +129,7 @@ async function onLogin() {
   border-radius: 12px;
   padding: 3px;
   flex-shrink: 0;
-  background: conic-gradient(from 0deg, #6366f1, #06b6d4, #d9543f, #6366f1);
-  animation: lotus-spin 6s linear infinite;
+  background: conic-gradient(from 210deg, #6366f1, #06b6d4, #d9543f, #6366f1);
 }
 .lotus-icon {
   width: 100%;
@@ -128,10 +140,7 @@ async function onLogin() {
   transition: transform 0.25s ease;
 }
 .lotus-entry:hover:not(:disabled) .lotus-icon {
-  transform: scale(1.06) rotate(-4deg);
-}
-.lotus-entry:disabled .lotus-icon-ring {
-  animation-duration: 1.2s;
+  transform: scale(1.06);
 }
 
 .lotus-texts {
@@ -163,6 +172,36 @@ async function onLogin() {
   color: var(--color-primary);
 }
 
+.lotus-alt {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+}
+.lotus-alt-divider {
+  flex: 1;
+  height: 1px;
+  background: var(--color-divider);
+}
+.lotus-password-link {
+  border: none;
+  background: none;
+  padding: 6px 2px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.lotus-password-link:hover:not(:disabled) {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.lotus-password-link:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .lotus-error {
   margin-top: 10px;
   font-size: 13px;
@@ -179,17 +218,11 @@ async function onLogin() {
     transform: translateY(0);
   }
 }
-@keyframes lotus-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .lotus-wrap,
   .lotus-entry,
   .lotus-entry::after,
   .lotus-icon,
-  .lotus-icon-ring,
   .lotus-arrow {
     animation: none !important;
     transition: none !important;

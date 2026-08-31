@@ -110,6 +110,29 @@ export async function startPassportGenericLogin(): Promise<void> {
   window.location.href = data.login_url
 }
 
+// 账号密码登录入口：同样先取一次性票据，再直达通行证的密码登录子页，
+// 登录完成后仍走 /oauth/continue/ 携授权码回本站。
+export async function startPassportPasswordLogin(): Promise<void> {
+  const pp =
+    (import.meta.env.VITE_PASSPORT_URL as string | undefined) ||
+    'https://passport.eacm.cn'
+  const cb = `${window.location.origin}/auth/callback`
+  const challenge = await createPkcePair()
+  const url =
+    `${pp}/api/v1/oauth/login/?redirect_uri=${encodeURIComponent(cb)}` +
+    `&code_challenge=${encodeURIComponent(challenge)}&code_challenge_method=S256`
+  const resp = await fetch(url, { headers: { Accept: 'application/json' } })
+  const data = (await resp.json().catch(() => ({}))) as {
+    login_url?: string
+    error?: { message?: string }
+  }
+  if (!resp.ok || !data.login_url) {
+    throw new Error(data?.error?.message || '无法发起通行证登录，请稍后重试')
+  }
+  // login_url 形如 {web}/login?oticket=xxx → 直达密码登录子页
+  window.location.href = data.login_url.replace('/login?', '/login/password?')
+}
+
 /** 授权码 + PKCE 换令牌：POST {passport}/api/v1/oauth/token/ {code, code_verifier}。 */
 export async function exchangePassportCode(code: string, codeVerifier: string): Promise<{
   access: string
