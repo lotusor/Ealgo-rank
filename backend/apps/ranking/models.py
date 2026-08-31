@@ -123,9 +123,12 @@ class Season(TimeStampedModel):
     """积分赛季（以年为单位）。
 
     每年一条记录：`2026` 赛季 = 2026-01-01 00:00 ~ 2026-12-31 23:59:59。
-    赛季切换（年度重置）时由定时任务推进 `SeasonConfig.current_season`，
-    旧赛季记录永久保留，供历史回顾。
+    赛季编号以 2026 年为第 1 赛季逐年累加（SEASON_BASE_YEAR），年度切换由
+    `get_current_season` 懒推进 current_season 指针，旧赛季记录永久保留。
     """
+
+    # 赛季序号基准：2026 年 = 第 1 赛季，2027 年 = 第 2 赛季，依此累加
+    SEASON_BASE_YEAR = 2025
 
     class Stage(models.TextChoices):
         UPCOMING = "upcoming", "未开始"
@@ -151,12 +154,17 @@ class Season(TimeStampedModel):
         verbose_name_plural = verbose_name
         ordering = ["-year"]
 
+    @property
+    def number(self) -> int:
+        """赛季序号：2026 年 = 第 1 赛季。"""
+        return max(1, self.year - self.SEASON_BASE_YEAR)
+
     def __str__(self):
         return f"{self.name or self.year} 赛季"
 
     def save(self, *args, **kwargs):
         if not self.name:
-            self.name = f"第 {self.year} 赛季"
+            self.name = f"第 {self.number} 赛季"
         super().save(*args, **kwargs)
 
 

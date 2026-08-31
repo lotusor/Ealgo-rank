@@ -225,6 +225,34 @@ class SeasonTests(TestCase):
         cfg = SeasonConfig.get_config()
         self.assertEqual(cfg.current_season, season.year)
 
+    def test_season_number_and_default_name(self):
+        """赛季序号以 2026 年为第 1 赛季逐年累加；默认名称跟随序号。"""
+        import datetime
+
+        from django.utils import timezone
+
+        from apps.ranking.models import Season
+
+        s2026 = Season.objects.create(
+            year=2026,
+            start_at=timezone.make_aware(datetime.datetime(2026, 1, 1)),
+            end_at=timezone.make_aware(datetime.datetime(2026, 12, 31, 23, 59, 59)))
+        self.assertEqual(s2026.number, 1)
+        self.assertEqual(s2026.name, "第 1 赛季")
+
+        s2027 = Season.objects.create(
+            year=2027,
+            start_at=timezone.make_aware(datetime.datetime(2027, 1, 1)),
+            end_at=timezone.make_aware(datetime.datetime(2027, 12, 31, 23, 59, 59)))
+        self.assertEqual(s2027.number, 2)
+        self.assertEqual(s2027.name, "第 2 赛季")
+
+        # 已有名称不被覆盖（管理员可自定义）
+        s2026.name = "自定义赛季名"
+        s2026.save()
+        s2026.refresh_from_db()
+        self.assertEqual(s2026.name, "自定义赛季名")
+
     def test_progress_and_countdown(self):
         import datetime
         from django.utils import timezone
