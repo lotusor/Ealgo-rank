@@ -264,50 +264,94 @@ class SeasonTests(TestCase):
 
 
 class UserBestRecordTests(TestCase):
-    """重算后维护历史最佳：rank 取最小（配对当时积分）、score 取最大。"""
+    """历史最佳 = 比赛演变重演：每个赛后时点各用户取每平台最新 final_score
+    求和并对全体用户排序，best_rank/best_score 取全部时点中的最优。"""
 
-    @staticmethod
-    def _snap(user, rank, score):
+    def _seed(self, username, platform, score, when, school=None):
+        """造一条 countable 积分记录（User+PA+Contest+Participation+ScoreRecord）。"""
+        from datetime import timedelta
+
         from django.utils import timezone as tz
-        return RankSnapshot.objects.create(
-            scope=RankSnapshot.Scope.STUDENT, period="all", user=user,
-            rank=rank, total_score=score, computed_at=tz.now())
 
-    def test_create_and_update(self):
-        u = User.objects.create_user(username="best1", password="Test1234!")
-        self._snap(u, 5, 100.0)
-        update_user_best_records()
-        rec = UserBestRecord.objects.get(user=u)
-        self.assertEqual(rec.best_rank, 5)
-        self.assertEqual(rec.best_rank_score, 100.0)
-        self.assertEqual(rec.best_score, 100.0)
+        user = User.objects.filter(username=username).first()
+        if user is None:
+            user = User.objects.create_user(username=username, password="Test1234!",
+                                            school=school)
+        pa, _ = PlatformAccount.objects.get_or_create(
+            user=user, platform=platform,
+            defaults={"handle": f"{username}_{platform}",
+                      "handle_lower": f"{username}_{platform}"})
+        day = when.date()
+        contest, _ = Contest.objects.get_or_create(
+            platform=platform, external_id=f"ex-{username}-{day.isoformat()}",
+            defaults={"name": f"C-{username}-{day}", "is_rated": True,
+                      "start_time": when, "end_time": when + timedelta(hours=2)})
+        part, _ = Participation.objects.get_or_create(
+            contest=contest, platform_account=pa,
+            defaults={"handle": pa.handle, "handle_lower": pa.handle_lower,
+                      "is_excluded": False})
+        ScoreRecord.objects.update_or_create(
+            participation=part,
+            defaults={"platform_account": pa, "platform": platform,
+                      "final_score": score, "contest_time": when})
+        return user
 
-        # 名次更好（rating 更低）：rank 配对更新，峰值保留
-        RankSnapshot.objects.filter(user=u).delete()
-        self._snap(u, 3, 90.0)
-        update_user_best_records()
-        rec.refresh_from_db()
-        self.assertEqual(rec.best_rank, 3)
-        self.assertEqual(rec.best_rank_score, 90.0)
-        self.assertEqual(rec.best_score, 100.0)
-        self.assertEqual(rec.best_score_rank, 5)
+    def test_replay_rank_history(self):
+        from datetime import datetime
 
-        # 更差：纪录不变
-        RankSnapshot.objects.filter(user=u).delete()
-        self._snap(u, 8, 95.0)
-        update_user_best_records()
-        rec.refresh_from_db()
-        self.assertEqual(rec.best_rank, 3)
-        self.assertEqual(rec.best_score, 100.0)
+        from django.utils import timezone as tz
 
-    def test_best_score_improves(self):
-        u = User.objects.create_user(username="best2", password="Test1234!")
-        self._snap(u, 4, 80.0)
+        def at(s):
+            return tz.make_aware(datetime.strptime(s, "%Y-%m-%d %H:%M"))
+
+        # A：t1 500 分（此时唯一学生 → #1）；t3 涨到 600
+        a = self._seed("rep_a", Platform.CODEFORCES, 500.0, at("2026-01-01 10:00"))
+        b = self._seed("rep_b", Platform.NOWCODER, 400.0, at("2026-01-02 10:00"))
+        self._seed("rep_a", Platform.CODEFORCES, 600.0, at("2026-01-03 10:00"))
         update_user_best_records()
-        RankSnapshot.objects.filter(user=u).delete()
-        self._snap(u, 4, 95.0)
+
+        ra = UserBestRecord.objects.get(user=a)
+        # A 从 t1 起一直 #1，同名次配对更高 rating → (1, 600.0, t3)
+        self.assertEqual(ra.best_rank, 1)
+        self.assertEqual(ra.best_rank_score, 600.0)
+        self.assertEqual(ra.best_score, 600.0)
+        rb = UserBestRecord.objects.get(user=b)
+        # B 在 t2 进入后始终低于 A → #2 / 400
+        self.assertEqual(rb.best_rank, 2)
+        self.assertEqual(rb.best_rank_score, 400.0)
+        self.assertEqual(rb.best_score, 400.0)
+        self.assertEqual(rb.best_score_rank, 2)
+
+    def test_best_rank_can_precede_higher_score(self):
+        from datetime import datetime
+
+        from django.utils import timezone as tz
+
+        def at(s):
+            return tz.make_aware(datetime.strptime(s, "%Y-%m-%d %H:%M"))
+
+        # A 先得 800（独占榜单 → #1）后跌到 300；B 在下跌后以 500 加入 → B#1, A#2
+        a = self._seed("pre_a", Platform.CODEFORCES, 800.0, at("2026-02-01 10:00"))
+        self._seed("pre_a", Platform.CODEFORCES, 300.0, at("2026-02-03 10:00"))
+        b = self._seed("pre_b", Platform.NOWCODER, 500.0, at("2026-02-03 10:00"))
         update_user_best_records()
-        rec = UserBestRecord.objects.get(user=u)
-        self.assertEqual(rec.best_score, 95.0)
-        self.assertEqual(rec.best_score_rank, 4)
-        self.assertEqual(rec.best_rank, 4)
+
+        ra = UserBestRecord.objects.get(user=a)
+        # A 的最佳名次在早期 #1（当时 rating 800），最佳 rating 也是 800
+        self.assertEqual(ra.best_rank, 1)
+        self.assertEqual(ra.best_rank_score, 800.0)
+        self.assertEqual(ra.best_score, 800.0)
+        rb = UserBestRecord.objects.get(user=b)
+        # B 首秀即 #1（500 > 300），配对 500
+        self.assertEqual(rb.best_rank, 1)
+        self.assertEqual(rb.best_rank_score, 500.0)
+
+    def test_orphan_cleanup(self):
+        from django.utils import timezone as tz
+
+        u = User.objects.create_user(username="orph", password="Test1234!")
+        UserBestRecord.objects.create(
+            user=u, best_rank=1, best_rank_score=1.0, best_rank_at=tz.now(),
+            best_score=1.0, best_score_rank=1, best_score_at=tz.now())
+        update_user_best_records()  # 无任何积分记录 → 纪录被清理
+        self.assertFalse(UserBestRecord.objects.filter(user=u).exists())

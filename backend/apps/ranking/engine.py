@@ -245,40 +245,66 @@ def recompute_all(periods=None):
 
 
 def update_user_best_records():
-    """重算后维护用户历史最佳纪录（学生榜 period=all）。
+    """维护用户历史最佳纪录（学生榜口径，基于比赛演变重演）。
 
-    best_rank 取重算历史中的最小名次并配对达成时的总 rating；
-    best_score 取重算历史中的最高总 rating。幂等、轻量（学生数量级），
-    在每次快照重算完成后调用（Celery 任务与管理命令两条路径均覆盖）。
+    对全部 countable 积分记录按比赛时间重演：每个「赛后时点」上，各用户取
+    每平台最新一场 final_score 求和（与榜单口径一致），对该时点的全体用户
+    排序得到**当时名次**。因此：
+    - best_rank = 全部赛后时点中的最小名次，配对达成时的总 rating 与达成时间；
+    - best_score = 全部赛后时点中的最高总 rating，配对当时名次与时间。
+
+    重演是确定性的（只依赖 ScoreRecord 全历史），每次重算直接覆盖写入，
+    并清理已无积分记录用户的孤儿纪录。幂等；在每次快照重算完成后调用
+    （Celery 任务与管理命令两条路径均覆盖）。
     """
-    now = timezone.now()
-    rows = (RankSnapshot.objects
-            .filter(scope=RankSnapshot.Scope.STUDENT, period="all",
-                    user__isnull=False)
-            .select_related("user"))
-    for row in rows:
-        rec, created = UserBestRecord.objects.get_or_create(
-            user=row.user,
-            defaults={
-                "best_rank": row.rank,
-                "best_rank_score": row.total_score,
-                "best_rank_at": now,
-                "best_score": row.total_score,
-                "best_score_rank": row.rank,
-                "best_score_at": now,
-            })
-        if created:
-            continue
-        changed = []
-        if row.rank < rec.best_rank:
-            rec.best_rank = row.rank
-            rec.best_rank_score = row.total_score
-            rec.best_rank_at = now
-            changed += ["best_rank", "best_rank_score", "best_rank_at"]
-        if row.total_score > rec.best_score:
-            rec.best_score = row.total_score
-            rec.best_score_rank = row.rank
-            rec.best_score_at = now
-            changed += ["best_score", "best_score_rank", "best_score_at"]
-        if changed:
-            rec.save(update_fields=changed)
+    recs = (ScoreRecord.objects
+            .filter(participation__is_excluded=False,
+                    participation__platform_account__user__isnull=False,
+                    contest_time__isnull=False)
+            .select_related("participation__platform_account__user")
+            .only("platform", "final_score", "contest_time",
+                  "participation__platform_account__user_id"))
+    # (user_id, platform) -> {contest_time: final_score}（同场重复入库取后者）
+    series = defaultdict(dict)
+    for r in recs:
+        uid = r.participation.platform_account.user_id
+        series[(uid, r.platform)][r.contest_time] = r.final_score
+    if not series:
+        UserBestRecord.objects.all().delete()
+        return
+
+    # 按时间分组事件：t -> [(uid, platform, score)]
+    events = defaultdict(list)
+    for (uid, platform), by_time in series.items():
+        for t, score in by_time.items():
+            events[t].append((uid, platform, score))
+
+    # 沿时间轴推进，每个赛后时点对全体用户求和排序，更新各用户最佳
+    totals = defaultdict(dict)  # uid -> platform -> score
+    best = {}  # uid -> dict(UserBestRecord 字段)
+    for t in sorted(events):
+        for uid, platform, score in events[t]:
+            totals[uid][platform] = score
+        board = sorted(
+            ((uid, sum(pv.values())) for uid, pv in totals.items()),
+            key=lambda x: -x[1])
+        for rank, (uid, total) in enumerate(board, 1):
+            b = best.get(uid)
+            if b is None:
+                best[uid] = {
+                    "best_rank": rank, "best_rank_score": total,
+                    "best_rank_at": t, "best_score": total,
+                    "best_score_rank": rank, "best_score_at": t,
+                }
+                continue
+            # 同名次取更高 rating（系数调整重演时口径更优者优先）
+            if rank < b["best_rank"] or (rank == b["best_rank"]
+                                         and total > b["best_rank_score"]):
+                b.update(best_rank=rank, best_rank_score=total, best_rank_at=t)
+            if total > b["best_score"]:
+                b.update(best_score=total, best_score_rank=rank, best_score_at=t)
+
+    for uid, fields in best.items():
+        UserBestRecord.objects.update_or_create(user_id=uid, defaults=fields)
+    # 清理孤儿：积分记录已不存在（数据被清/账号解绑）的旧纪录
+    UserBestRecord.objects.exclude(user_id__in=best.keys()).delete()
