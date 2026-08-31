@@ -33,7 +33,14 @@ onMounted(async () => {
 })
 
 function onFile(e: Event) {
-  const f = (e.target as HTMLInputElement).files?.[0]
+  const input = e.target as HTMLInputElement
+  const f = input.files?.[0]
+  if (f && f.size > 5 * 1024 * 1024) {
+    toast.error('证明材料不能超过 5MB')
+    input.value = ''
+    evidenceFile.value = null
+    return
+  }
   evidenceFile.value = f ?? null
 }
 

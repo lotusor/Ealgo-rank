@@ -55,25 +55,37 @@ function schoolMeta(id: number | null) {
 }
 
 onMounted(async () => {
-  try {
-    const [schools, rankings, contests, users, parts] = await Promise.all([
-      listSchools({ page_size: 100 }),
-      listRankings({ scope: 'school', period: 'all', page: 1, page_size: 5 }),
-      listContests({ page_size: 1 }),
-      listUsers({ page_size: 1 }),
-      listParticipations({ page_size: 1 }),
-    ])
-    schools.results.forEach((s) => (schoolsMap.value[s.id] = s))
-    top5.value = rankings.results
-    stats.value = {
-      schools: schools.count,
-      contests: contests.count,
-      users: users.count,
-      participations: parts.count,
-    }
-  } finally {
-    loading.value = false
-  }
+  // 各接口独立加载：普通用户无 /users/ 权限（403）不应拖垮整页统计
+  listSchools({ page_size: 100 })
+    .then((schools) => {
+      schools.results.forEach((s) => (schoolsMap.value[s.id] = s))
+      stats.value.schools = schools.count
+    })
+    .catch(() => {})
+  listRankings({ scope: 'school', period: 'all', page: 1, page_size: 5 })
+    .then((rankings) => {
+      top5.value = rankings.results
+    })
+    .catch(() => {})
+  listContests({ page_size: 1 })
+    .then((contests) => {
+      stats.value.contests = contests.count
+    })
+    .catch(() => {})
+  listUsers({ page_size: 1 })
+    .then((users) => {
+      stats.value.users = users.count
+    })
+    .catch(() => {
+      // 普通用户无权查看注册人数：显示为不可用而非 0
+      stats.value.users = -1
+    })
+  listParticipations({ page_size: 1 })
+    .then((parts) => {
+      stats.value.participations = parts.count
+    })
+    .catch(() => {})
+  loading.value = false
 })
 </script>
 
@@ -131,7 +143,7 @@ onMounted(async () => {
         <div style="display: flex; justify-content: space-between; align-items: flex-start">
           <div>
             <div class="stat-label">在册学生</div>
-            <div class="stat-value num">{{ fmtCount(stats.users) }}</div>
+            <div class="stat-value num">{{ stats.users < 0 ? '—' : fmtCount(stats.users) }}</div>
             <div class="stat-sub">名选手</div>
           </div>
           <div class="stat-icon success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></svg></div>

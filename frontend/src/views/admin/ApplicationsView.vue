@@ -140,6 +140,13 @@ onMounted(load)
               <td class="cell-ellipsis">
                 <span class="text-secondary">{{ a.reason || '—' }}</span>
                 <div v-if="a.contact" class="caption text-tertiary">联系：{{ a.contact }}</div>
+                <a
+                  v-if="a.evidence"
+                  class="caption link"
+                  :href="a.evidence"
+                  target="_blank"
+                  rel="noopener"
+                >查看证明材料</a>
               </td>
               <td class="num-cell">{{ fmtDate(a.created_at) }}</td>
               <td class="center"><span class="badge" :class="statusCls(a.status)">{{ a.status_display }}</span></td>
