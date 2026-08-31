@@ -73,6 +73,14 @@
   justify-content: center;
   box-shadow: var(--shadow-glow);
   flex-shrink: 0;
+  overflow: hidden;
+}
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
 }
 .brand-mark svg {
   width: 18px;

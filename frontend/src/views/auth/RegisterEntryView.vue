@@ -9,7 +9,7 @@ const router = useRouter()
   <div class="auth-wrap">
     <div style="position: absolute; inset: 0; background: var(--gradient-hero-glow); pointer-events: none" />
     <a class="auth-brand" @click="router.push({ name: 'home' })">
-      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M3 17l4-4 4 4 4-8 4 8" /></svg></span>
+      <span class="brand-mark"><img src="/logo-64.png" alt="E-algo Rank" /></span>
       <span>E-algo <span class="brand-accent">Rank</span></span>
     </a>
 

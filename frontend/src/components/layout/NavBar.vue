@@ -119,11 +119,7 @@ defineExpose({ drawerOpen })
     <div class="navbar-inner">
       <div class="brand" @click="go('/u')">
         <div class="brand-mark">
-          <svg viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 17l4-4 4 4 4-8 4 8" />
-            <circle cx="7" cy="13" r="1" fill="var(--color-primary)" />
-            <circle cx="19" cy="13" r="1" fill="var(--color-primary)" />
-          </svg>
+          <img src="/logo-64.png" alt="E-algo Rank" />
         </div>
         <span>E-algo <span class="brand-accent">Rank</span></span>
       </div>
