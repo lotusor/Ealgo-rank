@@ -10,7 +10,6 @@
 
 | 项目 | 值 |
 |------|-----|
-| 文件路径 | `D:\_Dev\e-algo-rank\prototype.html` |
 | 文件名 | prototype.html |
 | 总行数 | 1962 行 |
 | 文件大小 | 147,992 字节（约 145 KB） |
