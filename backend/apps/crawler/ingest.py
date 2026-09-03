@@ -221,26 +221,33 @@ def _ingest_ranks(contest, platform, ranks):
         delta = extra.get("delta")
         if delta is None and old_rating is not None and new_rating is not None:
             delta = new_rating - old_rating
+        defaults = {
+            "platform_account": account,
+            "handle": handle[:100],
+            "display_name": display_name[:150],
+            "raw_display_name": (raw_display or "")[:200],
+            "rank": r.get("rank"),
+            "solved_count": r.get("accepted_count"),
+            "total_score": r.get("total_score"),
+            "penalty_ms": r.get("penalty_time_ms"),
+            "is_excluded": excluded,
+            "exclude_reason": reason,
+            "score_detail": r.get("score_detail") or [],
+            "extra": extra,
+        }
+        # rating 涨落仅当数据源提供时写入；None 不覆盖已有值——牛客榜单本身
+        # 不含 rating（事后由 rating-history 回填），若用 None 覆盖，回填一次
+        # 静默失败（接口被拦/返回空）就会清掉已有 rating（2026-09-03 实测）。
+        if delta is not None:
+            defaults["rating_delta"] = delta
+        if old_rating is not None:
+            defaults["old_rating"] = old_rating
+        if new_rating is not None:
+            defaults["new_rating"] = new_rating
         Participation.objects.update_or_create(
             contest=contest,
             handle_lower=handle.lower(),
-            defaults={
-                "platform_account": account,
-                "handle": handle[:100],
-                "display_name": display_name[:150],
-                "raw_display_name": (raw_display or "")[:200],
-                "rank": r.get("rank"),
-                "solved_count": r.get("accepted_count"),
-                "total_score": r.get("total_score"),
-                "penalty_ms": r.get("penalty_time_ms"),
-                "rating_delta": delta,
-                "old_rating": old_rating,
-                "new_rating": new_rating,
-                "is_excluded": excluded,
-                "exclude_reason": reason,
-                "score_detail": r.get("score_detail") or [],
-                "extra": extra,
-            },
+            defaults=defaults,
         )
 
     # 增量维护「参与比赛索引」：把本场 contest.external_id 记入每位命中账号，
@@ -321,6 +328,11 @@ def backfill_nowcoder_ratings():
                 p.save(update_fields=["old_rating", "new_rating",
                                       "rating_delta", "updated_at"])
                 updated += 1
+    if updated == 0:
+        # 静默零更新 = 接口被拦/返回空的典型征兆（2026-09-03 事故：回填空跑
+        # 后榜单重爬把已有 rating 覆盖为 None）。必须显式暴露供巡检发现。
+        logger.warning(
+            "牛客 rating 回填更新 0 条——请检查 rating-history 接口是否被反爬拦截")
     logger.info("牛客 rating 回填完成，更新 %d 条", updated)
     return updated
 

@@ -496,6 +496,45 @@ class ParticipationIndexUpdateTests(TestCase):
         acc.refresh_from_db()
         self.assertIn("555111", acc.participated_contests)
 
+    def test_reingest_preserves_backfilled_rating(self):
+        """重新爬取（榜单无 rating）不得把回填的 rating 覆盖为 None
+        （2026-09-03 事故：#71 重爬后全部牛客 rating 变 None）。"""
+        school = School.objects.create(name="保rating大学", code="keep-r")
+        user = User.objects.create_user(username="keep1", password="Test1234!",
+                                        school=school)
+        acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="keeprank",
+            handle_lower="keeprank")
+        meta = {"real_contest_id": 555222, "name": "牛客周赛 Round X2",
+                "start_time": "2026-08-01 19:00:00",
+                "end_time": "2026-08-01 21:00:00", "duration_minutes": 120,
+                "is_rated": True, "is_paid": False}
+        detail = {"problems": [], "ranks": [
+            {"rank": 10, "uid": "keeprank", "user_name": "keep",
+             "accepted_count": 2, "is_cheater": False,
+             "post_contest_append": False, "score_detail": [], "extra": {}},
+        ]}
+        ingest_contest(Platform.NOWCODER, meta, detail)
+        p = Participation.objects.get(contest__external_id="555222")
+        # 模拟 rating-history 回填
+        p.new_rating = 1208
+        p.rating_delta = 46
+        p.old_rating = 1162
+        p.save()
+        # 重新爬取同一场：榜单仍不含 rating 字段
+        detail2 = {"problems": [], "ranks": [
+            {"rank": 10, "uid": "keeprank", "user_name": "keep",
+             "accepted_count": 2, "is_cheater": False,
+             "post_contest_append": False, "score_detail": [], "extra": {}},
+        ]}
+        ingest_contest(Platform.NOWCODER, meta, detail2)
+        p.refresh_from_db()
+        self.assertEqual(p.new_rating, 1208)
+        self.assertEqual(p.rating_delta, 46)
+        self.assertEqual(p.old_rating, 1162)
+        # rank 等榜单字段仍正常更新
+        self.assertEqual(p.rank, 10)
+
 
 class RebuildIndexCommandTests(TestCase):
     """A：rebuild 命令 = 参与记录表回填 ∪ 官方个人历史接口补全。"""
