@@ -395,6 +395,12 @@ def relevant_contest_ids(platform):
 
 **遗留（记录在案，牵连行为改造暂不做）**：① passport `ROTATE_REFRESH_TOKENS=False`（refresh 无 rotation，开启需前端同步存新 refresh）；② 无密码账户敏感操作无 step-up；③ 设备信任基于 UA 指纹可伪造；④ 旧 fragment 回调模式仍兼容（两端同步下线需用户重登）；⑤ Next 14.2.35 两个 high 公告（先前已评估接受）；⑥ rank.eacm.cn.conf 在 nginx 容器可写层（已导出备份至 nginx/rank.eacm.cn.conf.bak-20260901，容器重建后需恢复）。基线：rank 124 OK / passport 141 过+9 存量环境失败（与改前一致）。
 
+### 1.7.14 服务器重启故障：宿主 nginx 抢占 80 端口（2026-09-03，已修复）
+
+服务器重启后两站全挂：`lotus-passport-nginx-1` 无限重启循环（`bind 0.0.0.0:80 failed: Address in use`）。根因：**宝塔安装的系统级 nginx.service 开机自启抢占 80 端口**（宿主 LSB 服务，先于 docker 容器启动），而业务全部 TLS/分流在该 docker 容器上。处理：`systemctl stop nginx && systemctl disable nginx`（宿主 nginx 为宝塔安装残留，无任何业务承载）→ `docker restart lotus-passport-nginx-1` → 三域全部恢复（rank 200 / passport 200 / account 307），安全头经容器 restart 保留（conf 在可写层未被清理）。
+
+⚠️ **运维要点**：① 宿主 nginx.service 已禁用自启，勿重新 enable；② `rank.eacm.cn.conf` 在 lotus-passport-nginx-1 容器**可写层**（非挂载卷），`docker rm` 重建该容器会丢失——备份已导出至 `nginx/rank.eacm.cn.conf.bak-20260901`，恢复方法 `docker cp` 回容器 conf.d/ 后 reload；③ 重启后巡检顺序：`docker ps`（七容器 Up）→ `ss -tlnp | grep -E ':80|:443'`（无宿主抢占）→ curl 三域。
+
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
 - `DJANGO_SECRET_KEY` 强随机值、初始超管密码
