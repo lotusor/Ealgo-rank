@@ -401,6 +401,19 @@ def relevant_contest_ids(platform):
 
 ⚠️ **运维要点**：① 宿主 nginx.service 已禁用自启，勿重新 enable；② `rank.eacm.cn.conf` 在 lotus-passport-nginx-1 容器**可写层**（非挂载卷），`docker rm` 重建该容器会丢失——备份已导出至 `nginx/rank.eacm.cn.conf.bak-20260901`，恢复方法 `docker cp` 回容器 conf.d/ 后 reload；③ 重启后巡检顺序：`docker ps`（七容器 Up）→ `ss -tlnp | grep -E ':80|:443'`（无宿主抢占）→ curl 三域。
 
+### 1.7.15 牛客 rating 丢失事故与根治（2026-09-03，commit `101b8f0`）
+
+**现象**（重启后用户报告）：牛客参赛记录的 new_rating/rating_delta 全部变 None，个人中心积分退化为名次分。注意 09-03 00:00 的自动爬取本身正常（beat 日志实锤派发与完成，CF success/牛客 partial 均入库）——此前一度怀疑重启丢数据，实为显示时区混淆（UTC vs 北京）。
+
+**根因**：`_ingest_ranks` 的 `update_or_create` **无条件覆盖** rating 三字段——牛客榜单本身不含 rating（事后由 rating-history 回填），重爬把已有 rating 清为 None；09-03 00:00 的 #71 回填**静默空跑**（牛客接口被拦/返回空，无报错无日志），rating 因此丢失。
+
+**修复**（commit `101b8f0`）：
+1. ingest：rating 三字段仅当数据源提供时写入，**None 不覆盖**已有值（CF/AT 自带 rating 不受影响）；
+2. backfill：更新 0 条时打 WARNING（接口被拦征兆，此前静默空跑不可发现）；
+3. 数据恢复：手动 `backfill_nowcoder_ratings()` 回填 27 条 → `recompute_ranking` 全量重算，rating/快照/最佳纪录全部恢复（best #1 @ 1987.38）。
+
+**遗留**：backfill 对牛客接口拉空的深层原因（反爬策略变化？）未穷尽——观测告警已补，复发时按 WARNING 线索排查。测试 +1 例（重爬保留回填 rating），全量 126 OK。
+
 **H1 执行前仍需用户提供**
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
 - `DJANGO_SECRET_KEY` 强随机值、初始超管密码
