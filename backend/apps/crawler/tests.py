@@ -121,6 +121,27 @@ class IngestTests(TestCase):
         # 路人甲未绑定且非作弊 -> 不落库
         self.assertFalse(Participation.objects.filter(handle="99999").exists())
 
+    def test_unbound_cheater_not_stored_but_counted(self):
+        """未绑定的作弊路人：明细不落库（2026-09-07 决策，控管理成本），
+        但计数仍进 Contest.cheater_count 聚合列。"""
+        detail = {"problems": [], "ranks": [
+            {"rank": 5, "uid": "77777", "user_name": "【已被标记为作弊】路人乙",
+             "is_cheater": True, "post_contest_append": False,
+             "score_detail": [], "extra": {}},
+            {"rank": 6, "uid": "88888", "user_name": "路人丙",
+             "is_cheater": False, "post_contest_append": False,
+             "score_detail": [], "extra": {}},
+        ]}
+        stats = ingest_contest(Platform.NOWCODER, self.meta, detail)
+        # 明细一律不落
+        self.assertFalse(Participation.objects.filter(handle="77777").exists())
+        self.assertFalse(Participation.objects.filter(handle="88888").exists())
+        # 统计照常：cheaters 计 1，matched 计 0
+        self.assertEqual(stats["cheaters"], 1)
+        self.assertEqual(stats["matched"], 0)
+        c = Contest.objects.get(external_id="108888")
+        self.assertEqual(c.cheater_count, 1)
+
     def test_contest_counters(self):
         ingest_contest(Platform.NOWCODER, self.meta, self.detail)
         c = Contest.objects.get(platform=Platform.NOWCODER, external_id="108888")

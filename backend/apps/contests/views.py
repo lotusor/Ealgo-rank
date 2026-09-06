@@ -55,9 +55,11 @@ class ParticipationViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["-contest__start_time", "rank"]
 
     def get_queryset(self):
+        # 只看已绑定记录：未绑定路人/作弊路人不落库（2026-09-07 决策），
+        # 此过滤对历史遗留行同样防御性生效
         qs = Participation.objects.select_related(
             "contest", "platform_account__user", "platform_account__school"
-        ).all()
+        ).filter(platform_account__isnull=False)
         user = self.request.user
         if not user.is_super_admin:
             qs = qs.filter(platform_account__school_id=user.school_id)

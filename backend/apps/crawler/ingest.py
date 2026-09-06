@@ -191,16 +191,17 @@ def _ingest_ranks(contest, platform, ranks):
         if account:
             matched += 1
 
-        # 与我们无关且不是作弊证据的记录直接丢弃
-        if account is None and not is_cheater:
+        # 只落库「已绑定用户」的记录；未绑定的路人一律丢弃——
+        # 作弊路人明细同样不落（2026-09-07 用户决策：后台「参赛记录」被 1630 条
+        # 路人行淹没，管理成本过高），作弊统计走 Contest.cheater_count 聚合列，
+        # 需要明细证据的场景仅限「已绑定用户被标记」（申诉用，照旧保留）。
+        if account is None:
             continue
 
         if is_cheater:
             excluded, reason = True, ExcludeReason.CHEATER
         elif is_post:
             excluded, reason = True, ExcludeReason.POST_CONTEST
-        elif account is None:
-            excluded, reason = True, ExcludeReason.UNBOUND
         else:
             excluded, reason = False, ""
 

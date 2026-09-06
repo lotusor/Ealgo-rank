@@ -42,13 +42,32 @@ class ContestAdmin(admin.ModelAdmin):
 
 @admin.register(Participation)
 class ParticipationAdmin(admin.ModelAdmin):
+    """参赛记录管理。
+
+    只保留「已绑定用户」的记录（未绑定路人/作弊路人不落库——2026-09-07
+    决策，明细只服务绑定用户的积分核对与作弊申诉）。
+    默认列表仅显示已绑定记录且按状态过滤需显式选择，防全量翻页拖垮后台。
+    """
     list_display = ("handle", "display_name", "contest", "rank",
-                    "platform_account", "exclude_badge")
-    list_filter = ("is_excluded", "exclude_reason", "contest__platform")
+                    "platform_account", "user_badge", "exclude_badge")
+    list_filter = ("exclude_reason", "contest__platform", "is_excluded")
     search_fields = ("handle", "display_name", "raw_display_name")
     raw_id_fields = ("contest", "platform_account")
     readonly_fields = ("raw_display_name", "score_detail", "extra")
+    list_per_page = 50
+    list_max_show_all = 200
     actions = ["mark_excluded", "unmark_excluded"]
+
+    def get_queryset(self, request):
+        # 防御性过滤：即便历史遗留未绑定行存在（清洗前数据），后台也不展示
+        return (super().get_queryset(request)
+                .filter(platform_account__isnull=False)
+                .select_related("contest", "platform_account__user"))
+
+    @admin.display(description="用户")
+    def user_badge(self, obj):
+        u = getattr(obj.platform_account, "user", None)
+        return u.username if u else "—"
 
     @admin.display(description="状态")
     def exclude_badge(self, obj):
