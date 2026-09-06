@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { listMyParticipations, listRankings, getMyBestRecord } from '@/api'
+import { listMyParticipations, listRankings, getMyBestRecord, getRatingHistory } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import type { MyParticipation, ContestPlatform, RankSnapshot, UserBestRecord } from '@/api/types'
+import type { MyParticipation, ContestPlatform, RankSnapshot, UserBestRecord, RatingHistoryPoint } from '@/api/types'
 import RatingLineChart from '@/components/RatingLineChart.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
@@ -34,6 +34,7 @@ onMounted(() => {
   load()
   loadRank()
   getMyBestRecord().then((r) => (bestRecord.value = r)).catch(() => {})
+  getRatingHistory().then((h) => (history.value = h)).catch(() => {})
 })
 watch(platform, () => load())
 
@@ -62,17 +63,14 @@ const me = computed(() => auth.user)
 
 const countedCount = computed(() => rows.value.filter((r) => !r.is_excluded).length)
 const totalDelta = computed(() => rows.value.reduce((s, r) => s + (r.rating_delta ?? 0), 0))
-// 「全部」tab 展示归一化口径（与折线图一致）；单平台 tab 展示原始 rating
+
+// 站点 rating 时间线（后端单一事实源，与榜单口径一致；替代旧的前端聚合）
+const history = ref<RatingHistoryPoint[]>([])
 const currentRating = computed(() => {
   if (platform.value === '') {
-    // 归一化：各平台最新一场 weighted_rating 之和
-    const latest = new Map<ContestPlatform, number>()
-    const rated = rows.value
-      .filter((r) => r.weighted_rating != null && r.contest_start_time)
-      .sort((a, b) => new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime())
-    for (const r of rated) latest.set(r.contest_platform, r.weighted_rating as number)
-    const total = [...latest.values()].reduce((s, v) => s + v, 0)
-    return latest.size ? Math.round(total * 100) / 100 : null
+    return history.value.length
+      ? Math.round(history.value[history.value.length - 1].rating * 10) / 10
+      : null
   }
   const rated = rows.value
     .filter((r) => r.new_rating != null && r.contest_start_time)
@@ -81,61 +79,47 @@ const currentRating = computed(() => {
 })
 const peakRating = computed(() => {
   if (platform.value === '') {
-    const vals = rows.value.map((r) => r.weighted_rating).filter((v): v is number => v != null)
-    return vals.length ? Math.round(Math.max(...vals) * 100) / 100 : null
+    return history.value.length
+      ? Math.round(Math.max(...history.value.map((h) => h.rating)) * 10) / 10
+      : null
   }
   const vals = rows.value.map((r) => r.new_rating).filter((v): v is number => v != null)
   return vals.length ? Math.max(...vals) : null
 })
 
 const chartPoints = computed(() => {
-  // 分两种口径：
-  // - 「全部」tab：跨平台可比，用归一化 rating（weighted_rating = new_rating × 平台系数
-  //   × 比赛难度系数），按平台取最新一场后累加，带小数是正常的；
-  // - 单平台 tab：rows 已被 load() 按 platform 过滤，直接按时间展示该平台原始
-  //   new_rating（整数）序列。
-  const all = platform.value === ''
+  // 「全部」tab：站点 rating 时间线（后端 /rating-history/，含新号先验与滑动
+  // 窗口，与榜单完全同口径）；单平台 tab：该平台官方原始 new_rating 序列。
+  if (platform.value === '') {
+    return history.value.map((h, i) => ({
+      label: h.contest_time,
+      value: Math.round(h.rating * 10) / 10,
+      meta: {
+        contest: h.contest_name,
+        platform: h.platform,
+        delta: i > 0
+          ? Math.round((h.rating - history.value[i - 1].rating) * 10) / 10
+          : null,
+        rank: h.rank ?? null,
+      },
+    }))
+  }
   const pts = rows.value
-    .filter((r) => {
-      if (all) return r.weighted_rating != null && r.contest_start_time != null
-      return r.new_rating != null && r.contest_start_time != null
-    })
+    .filter((r) => r.new_rating != null && r.contest_start_time != null)
     .sort(
       (a, b) =>
         new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime(),
     )
-  const result: { label: string; value: number; meta: { contest: string; platform: string; delta: number | null; rank: number | null } }[] = []
-  if (all) {
-    const currentByPlat = new Map<ContestPlatform, number>()
-    for (const r of pts) {
-      currentByPlat.set(r.contest_platform, r.weighted_rating as number)
-      const total = [...currentByPlat.values()].reduce((s, v) => s + v, 0)
-      result.push({
-        label: r.contest_start_time as string,
-        value: Math.round(total * 100) / 100,
-        meta: {
-          contest: r.contest_name,
-          platform: r.contest_platform,
-          delta: r.rating_delta,
-          rank: r.rank ?? null,
-        },
-      })
-    }
-  } else {
-    for (const r of pts) {
-      result.push({
-        label: r.contest_start_time as string,
-        value: r.new_rating as number,
-        meta: {
-          contest: r.contest_name,
-          platform: r.contest_platform,
-          delta: r.rating_delta,
-          rank: r.rank ?? null,
-        },
-      })
-    }
-  }
-  return result
+  return pts.map((r) => ({
+    label: r.contest_start_time as string,
+    value: r.new_rating as number,
+    meta: {
+      contest: r.contest_name,
+      platform: r.contest_platform,
+      delta: r.rating_delta,
+      rank: r.rank ?? null,
+    },
+  }))
 })
 
 const accounts = computed(() => (me.value?.platform_accounts || []) as any[])
@@ -166,6 +150,10 @@ function fmtDate(s: string | null) {
 }
 function fmtDelta(v: number) {
   return v > 0 ? `+${v}` : `${v}`
+}
+// 最佳纪录数值精度（best_rank_score/best_score 为原始 float，需截断显示）
+function fmtBest(v: number | null | undefined) {
+  return v == null ? '—' : (Math.round(v * 10) / 10).toString()
 }
 function accountTag(p: string) {
   return p === 'codeforces' ? 'cf' : p === 'atcoder' ? 'atcoder' : p === 'nowcoder' ? 'nowcoder' : ''
@@ -229,15 +217,15 @@ function accountTag(p: string) {
 
     <!-- Summary metrics -->
     <div class="grid grid-4 metrics-row">
-      <div class="stat-card"><div class="stat-label text-accent">总 Rating</div><div class="stat-value num text-cyan">{{ myRank ? fmtCount(myRank.total_score) : '—' }}</div><div class="stat-sub">平台归一化</div></div>
+      <div class="stat-card"><div class="stat-label text-accent">站点 Rating</div><div class="stat-value num text-cyan">{{ myRank ? fmtCount(myRank.total_score) : '—' }}</div><div class="stat-sub">表现分口径</div></div>
       <div class="stat-card"><div class="stat-label">计入积分场数</div><div class="stat-value num">{{ countedCount }}</div><div class="stat-sub">未排除</div></div>
       <div class="stat-card"><div class="stat-label">参赛记录</div><div class="stat-value num">{{ rows.length }}</div><div class="stat-sub">全部场次</div></div>
-      <div class="stat-card"><div class="stat-label">历史最佳排名</div><div class="stat-value num">{{ bestRecord?.best_rank != null ? '#' + bestRecord.best_rank : '—' }}</div><div class="stat-sub">当时总 rating {{ bestRecord?.best_rank_score ?? '—' }}</div></div>
+      <div class="stat-card"><div class="stat-label">历史最佳排名</div><div class="stat-value num">{{ bestRecord?.best_rank != null ? '#' + bestRecord.best_rank : '—' }}</div><div class="stat-sub">当时站点 rating {{ fmtBest(bestRecord?.best_rank_score) }}</div></div>
     </div>
 
-    <!-- 各平台 Rating 分开展示 -->
+    <!-- 各平台 Rating 分开展示（平台官方口径，非站点评分） -->
     <div v-if="platformRatings.length" class="card card-pad" style="margin-bottom: var(--space-6)">
-      <div class="card-title" style="margin-bottom: var(--space-4)">各平台 Rating</div>
+      <div class="card-title" style="margin-bottom: var(--space-4)">各平台官方 Rating</div>
       <div class="grid grid-3" style="gap: var(--space-4)">
         <div v-for="pr in platformRatings" :key="pr.platform" class="stat-card">
           <div class="stat-label"><span class="platform-tag" :class="accountTag(pr.platform)">{{ platformName(pr.platform) }}</span></div>
@@ -264,8 +252,8 @@ function accountTag(p: string) {
           <div style="display: flex; gap: var(--space-6); margin-top: var(--space-4); flex-wrap: wrap" class="caption text-tertiary">
             <span>当前 Rating: <b class="num text-cyan">{{ currentRating ?? '—' }}</b></span>
             <template v-if="platform === ''">
-              <span>历史最佳排名: <b class="num">#{{ bestRecord?.best_rank ?? '—' }}</b><template v-if="bestRecord?.best_rank != null"> <span class="text-tertiary">（当时总 rating {{ bestRecord.best_rank_score }}）</span></template></span>
-              <span>历史最高总 rating: <b class="num">{{ bestRecord?.best_score ?? '—' }}</b></span>
+              <span>历史最佳排名: <b class="num">#{{ bestRecord?.best_rank ?? '—' }}</b><template v-if="bestRecord?.best_rank != null"> <span class="text-tertiary">（当时站点 rating {{ fmtBest(bestRecord.best_rank_score) }}）</span></template></span>
+              <span>历史最高站点 rating: <b class="num">{{ fmtBest(bestRecord?.best_score) }}</b></span>
             </template>
             <template v-else>
               <span>峰值 Rating: <b class="num">{{ peakRating ?? '—' }}</b></span>

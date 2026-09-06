@@ -24,6 +24,7 @@ import type {
   SeasonInfo,
   PastSeason,
   UserBestRecord,
+  RatingHistoryPoint,
   ScoreRules,
 } from './types'
 
@@ -557,6 +558,15 @@ export async function getScoreRules(): Promise<ScoreRules> {
 export async function getMyBestRecord(): Promise<UserBestRecord> {
   const { data } = await client.get<UserBestRecord>('/me/best/')
   return data
+}
+
+// ---------- 站点 rating 时间线（v3 表现分口径，折线图「全部」数据源） ----------
+export async function getRatingHistory(user?: number): Promise<RatingHistoryPoint[]> {
+  const { data } = await client.get<{ results: RatingHistoryPoint[] }>(
+    '/rating-history/',
+    user ? { params: { user } } : undefined,
+  )
+  return data.results
 }
 
 // ---------- 公开站点统计（首页数字看板） ----------

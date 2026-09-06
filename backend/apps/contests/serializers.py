@@ -43,8 +43,6 @@ class MyParticipationSerializer(serializers.ModelSerializer):
         source="platform_account.user.username", read_only=True, default="")
     exclude_reason_display = serializers.CharField(
         source="get_exclude_reason_display", read_only=True)
-    # 加权 rating = new_rating × 平台系数 × 比赛难度系数（与积分引擎同口径）
-    weighted_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = Participation
@@ -53,23 +51,11 @@ class MyParticipationSerializer(serializers.ModelSerializer):
             "contest_platform_display", "contest_start_time", "contest_is_rated",
             "contest_url", "platform", "platform_account", "user_username",
             "handle", "display_name", "rank", "solved_count", "penalty_ms",
-            "rating_delta", "old_rating", "new_rating", "weighted_rating",
+            "rating_delta", "old_rating", "new_rating",
             "is_excluded", "exclude_reason", "exclude_reason_display",
             "created_at",
         ]
         read_only_fields = fields
-
-    def get_weighted_rating(self, obj):
-        if obj.new_rating is None:
-            return None
-        from apps.contests.models import ContestDifficultyFactor
-        from apps.schools.models import ScoreConfig
-
-        config = ScoreConfig.get_config()
-        pf = float(config.platform_factor(obj.contest.platform))
-        difficulty = ContestDifficultyFactor.factor_for(
-            obj.contest.platform, obj.contest.series)
-        return round(float(obj.new_rating) * pf * difficulty, 4)
 
 
 class ParticipationSerializer(serializers.ModelSerializer):
@@ -103,7 +89,11 @@ class ParticipationSerializer(serializers.ModelSerializer):
 
 
 class ContestDifficultyFactorSerializer(serializers.ModelSerializer):
-    """比赛难度系数（平台 × 系列 → 系数），超管读写。"""
+    """比赛难度配置（平台 × 系列 → 难度基线 D），超管读写。
+
+    v3：perf_base 为表现分难度基线（rating 尺度）；factor 为旧口径乘数，
+    保留展示与回滚参考，不参与计分。
+    """
 
     platform_display = serializers.CharField(source="get_platform_display",
                                              read_only=True)
@@ -111,10 +101,18 @@ class ContestDifficultyFactorSerializer(serializers.ModelSerializer):
     class Meta:
         model = ContestDifficultyFactor
         fields = ["id", "platform", "platform_display", "series", "factor",
-                  "created_at", "updated_at"]
+                  "perf_base", "created_at", "updated_at"]
         read_only_fields = ["created_at", "updated_at"]
 
     def validate_factor(self, value):
         if value <= 0:
             raise serializers.ValidationError("难度系数必须大于 0")
+        return value
+
+    def validate_perf_base(self, value):
+        if value is None:
+            return value  # 空 = 用代码默认表
+        if not (200 <= value <= 4000):
+            raise serializers.ValidationError(
+                "难度基线 D 应在 200~4000（rating 尺度）")
         return value

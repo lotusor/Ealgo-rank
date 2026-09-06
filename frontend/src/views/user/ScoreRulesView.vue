@@ -47,7 +47,7 @@ function fmtFactor(v: string | number | null | undefined) {
         <div class="card card-pad">
           <div class="card-title" style="margin-bottom: var(--space-3)">计算策略说明</div>
           <SimpleMarkdown
-            :source="data.content || '规则内容准备中：各平台当前 rating × 平台系数，跨平台求和得到总 rating。详细说明即将上线。'"
+            :source="data.content || '规则内容准备中：按每场比赛的实际名次计算表现分（难度基线 + 名次标准分），取近期表现分的加权平均得到统一站点 Rating。详细说明即将上线。'"
           />
         </div>
 
@@ -65,9 +65,9 @@ function fmtFactor(v: string | number | null | undefined) {
             </tbody>
           </table>
           <div class="caption text-tertiary" style="margin-top: var(--space-4); line-height: 1.9">
-            <div>平台系数权重：<b class="num">{{ fmtFactor(data.config.platform_weight) }}</b> · 比赛系数权重：<b class="num">{{ fmtFactor(data.config.contest_weight) }}</b>（两者之和为 1）</div>
-            <div>比赛难度默认系数：<b class="num">{{ fmtFactor(data.config.default_contest_factor) }}</b></div>
-            <div>每平台计分场次上限：<b class="num">{{ data.config.recent_contest_limit === 0 ? '不限制' : data.config.recent_contest_limit }}</b></div>
+            <div>站点 Rating 取最近 <b class="num">{{ data.config.recent_contest_limit === 0 ? '全部' : data.config.recent_contest_limit }}</b> 场表现分加权平均</div>
+            <div>评分衰减系数：<b class="num">{{ fmtFactor(data.config.rating_decay) }}</b>（最新一场权重 1，每旧一场乘该系数）</div>
+            <div>新用户先验 Rating：<b class="num">{{ fmtFactor(data.config.rating_prior) }}</b>（随场次快速淡出）</div>
           </div>
         </div>
         <div class="card card-pad" v-else>

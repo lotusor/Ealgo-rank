@@ -13,4 +13,6 @@ urlpatterns = [
     path("season/past/", views.SeasonView.as_view(), {"past": True},
          name="season-past"),
     path("me/best/", views.MyBestRecordView.as_view(), name="me-best"),
+    path("rating-history/", views.RatingHistoryView.as_view(),
+         name="rating-history"),
 ] + router.urls

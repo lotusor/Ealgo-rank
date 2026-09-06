@@ -105,17 +105,20 @@ export interface ScoreConfig {
   platform_weight: string
   contest_weight: string
   recent_contest_limit: number
+  rating_decay: string
+  rating_prior: string
   created_at: string
   updated_at: string
 }
 
-// 比赛难度系数（平台 × 系列 → 系数）
+// 比赛难度配置（平台 × 系列 → 难度基线 D；factor 为旧口径保留展示）
 export interface ContestDifficultyFactor {
   id: number
   platform: string
   platform_display: string
   series: string
   factor: string
+  perf_base: number | null
   created_at: string
   updated_at: string
 }
@@ -335,7 +338,6 @@ export interface MyParticipation {
   rating_delta: number | null
   old_rating: number | null
   new_rating: number | null
-  weighted_rating: number | null
   is_excluded: boolean
   exclude_reason: ExcludeReason
   exclude_reason_display: string
@@ -395,16 +397,27 @@ export interface UserBestRecord {
   best_score_at: string | null
 }
 
+// 站点 rating 时间线（v3 表现分口径，折线图「全部」数据源）
+export interface RatingHistoryPoint {
+  contest_id: number
+  contest_name: string
+  contest_time: string
+  platform: ContestPlatform
+  perf: number
+  rating: number
+  rank: number | null
+  participant_count: number
+}
+
 // 积分规则公开页（超管维护文案 + 动态系数）
 export interface ScoreRules {
   content: string
   version: number
   updated_at: string | null
   config: {
-    platform_weight: string | number
-    contest_weight: string | number
-    default_contest_factor: string | number
     recent_contest_limit: number
+    rating_decay: string | number
+    rating_prior: string | number
     platforms: { platform: string; factor: string | number }[]
   } | null
 }

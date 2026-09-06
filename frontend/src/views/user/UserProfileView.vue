@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getUserPublicProfile } from '@/api'
-import type { UserPublicProfile, ContestPlatform } from '@/api/types'
+import { getUserPublicProfile, getRatingHistory } from '@/api'
+import type { UserPublicProfile, ContestPlatform, RatingHistoryPoint } from '@/api/types'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import RatingLineChart from '@/components/RatingLineChart.vue'
@@ -25,39 +25,32 @@ const chartPlatformOptions = computed(() => {
   return opts
 })
 
-// 折线图数据：与个人成绩页同口径——「全部」= 各平台最新一场 weighted_rating 累加；
+// 折线图数据：「全部」= 后端站点 rating 时间线（与榜单同口径）；
 // 单平台 = 该平台原始 new_rating 序列
+const history = ref<RatingHistoryPoint[]>([])
 const chartPoints = computed(() => {
-  const rows = profile.value?.participations || []
-  const all = chartPlatform.value === ''
-  const pts = rows
-    .filter((r) => {
-      if (all) return r.weighted_rating != null && r.contest_start_time != null
-      return r.new_rating != null && r.contest_start_time != null && r.contest_platform === chartPlatform.value
-    })
-    .sort((a, b) => new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime())
-  const result: { label: string; value: number; meta: { contest: string; platform: string; delta: number | null; rank: number | null } }[] = []
-  if (all) {
-    const currentByPlat = new Map<ContestPlatform, number>()
-    for (const r of pts) {
-      currentByPlat.set(r.contest_platform, r.weighted_rating as number)
-      const total = [...currentByPlat.values()].reduce((s, v) => s + v, 0)
-      result.push({
-        label: r.contest_start_time as string,
-        value: Math.round(total * 100) / 100,
-        meta: { contest: r.contest_name, platform: r.contest_platform, delta: r.rating_delta, rank: r.rank ?? null },
-      })
-    }
-  } else {
-    for (const r of pts) {
-      result.push({
-        label: r.contest_start_time as string,
-        value: r.new_rating as number,
-        meta: { contest: r.contest_name, platform: r.contest_platform, delta: r.rating_delta, rank: r.rank ?? null },
-      })
-    }
+  if (chartPlatform.value === '') {
+    return history.value.map((h, i) => ({
+      label: h.contest_time,
+      value: Math.round(h.rating * 10) / 10,
+      meta: {
+        contest: h.contest_name,
+        platform: h.platform,
+        delta: i > 0
+          ? Math.round((h.rating - history.value[i - 1].rating) * 10) / 10
+          : null,
+        rank: h.rank ?? null,
+      },
+    }))
   }
-  return result
+  const rows = (profile.value?.participations || [])
+    .filter((r) => r.new_rating != null && r.contest_start_time != null && r.contest_platform === chartPlatform.value)
+    .sort((a, b) => new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime())
+  return rows.map((r) => ({
+    label: r.contest_start_time as string,
+    value: r.new_rating as number,
+    meta: { contest: r.contest_name, platform: r.contest_platform, delta: r.rating_delta, rank: r.rank ?? null },
+  }))
 })
 
 onMounted(async () => {
@@ -69,6 +62,7 @@ onMounted(async () => {
   }
   try {
     profile.value = await getUserPublicProfile(id)
+    getRatingHistory(id).then((h) => (history.value = h)).catch(() => {})
   } catch (e: any) {
     error.value = e?.response?.data?.detail || '加载用户信息失败'
   } finally {
@@ -146,9 +140,9 @@ function fmtDelta(v: number) {
         <RatingLineChart :points="chartPoints" :height="220" :platform="chartPlatform" />
       </div>
 
-      <!-- 各平台 rating -->
+      <!-- 各平台 rating（平台官方口径，非站点评分） -->
       <div v-if="profile.platform_ratings.length" class="card card-pad" style="margin-bottom: var(--space-6)">
-        <div class="card-title" style="margin-bottom: var(--space-4)">各平台 Rating</div>
+        <div class="card-title" style="margin-bottom: var(--space-4)">各平台官方 Rating</div>
         <div class="grid grid-3" style="gap: var(--space-4)">
           <div v-for="pr in profile.platform_ratings" :key="pr.platform" class="stat-card">
             <div class="stat-label">

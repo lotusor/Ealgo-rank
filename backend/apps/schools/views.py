@@ -275,10 +275,9 @@ class ScoreRulesView(APIView):
         config = None
         if cfg is not None:
             config = {
-                "platform_weight": cfg.platform_weight,
-                "contest_weight": cfg.contest_weight,
-                "default_contest_factor": cfg.default_contest_factor,
                 "recent_contest_limit": cfg.recent_contest_limit,
+                "rating_decay": cfg.rating_decay,
+                "rating_prior": cfg.rating_prior,
                 "platforms": [
                     {"platform": "codeforces", "factor": cfg.cf_factor},
                     {"platform": "atcoder", "factor": cfg.atcoder_factor},

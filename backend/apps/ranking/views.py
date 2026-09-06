@@ -19,7 +19,7 @@ from apps.ranking.cache import (
     safe_cache_get,
     safe_cache_set,
 )
-from apps.ranking.engine import recompute_all
+from apps.ranking.engine import rating_history, recompute_all
 from apps.ranking.models import RankSnapshot, UserBestRecord
 from apps.ranking.season import get_current_season, past_seasons, season_payload
 from apps.ranking.serializers import (RankSnapshotSerializer,
@@ -110,3 +110,30 @@ class MyBestRecordView(APIView):
         rec = getattr(request.user, "best_record", None)
         ser = UserBestRecordSerializer(rec)
         return Response(ser.data)
+
+
+class RatingHistoryView(APIView):
+    """站点 rating 时间线（v3 表现分口径）。
+
+    GET /rating-history/            当前登录用户的跨平台站点 rating 演变
+    GET /rating-history/?user=<id>  任意用户的公开时间线
+
+    「全部」折线图的单一事实源：每场赛后重算窗口 rating（含新用户先验），
+    与榜单口径完全一致——替代前端自行的旧口径聚合。
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        uid = request.query_params.get("user")
+        if uid:
+            if not str(uid).isdigit():
+                return Response({"detail": "user 参数无效"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            uid = int(uid)
+        elif request.user.is_authenticated:
+            uid = request.user.id
+        else:
+            return Response({"detail": "缺少 user 参数或未登录"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({"results": rating_history(uid)})

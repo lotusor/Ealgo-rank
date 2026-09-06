@@ -70,7 +70,8 @@ class ScoreConfigSerializer(serializers.ModelSerializer):
         fields = [
             "id", "cf_factor", "atcoder_factor", "nowcoder_factor",
             "default_contest_factor", "platform_weight", "contest_weight",
-            "recent_contest_limit", "created_at", "updated_at",
+            "recent_contest_limit", "rating_decay", "rating_prior",
+            "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
@@ -93,6 +94,10 @@ class ScoreConfigSerializer(serializers.ModelSerializer):
         if rcl is not None and rcl < 0:
             raise serializers.ValidationError(
                 {"recent_contest_limit": "计分场次上限不能为负"})
+        rd = attrs.get("rating_decay")
+        if rd is not None and not (Decimal("0") <= rd <= Decimal("1")):
+            raise serializers.ValidationError(
+                {"rating_decay": "评分衰减系数必须在 0~1 之间"})
         return attrs
 
 

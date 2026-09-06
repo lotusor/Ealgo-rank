@@ -37,11 +37,25 @@ class RankSnapshotSerializer(serializers.ModelSerializer):
 
 
 class UserBestRecordSerializer(serializers.Serializer):
-    """用户历史最佳纪录（无纪录时字段为 null）。"""
+    """用户历史最佳纪录（无纪录时字段为 null）。
+
+    score 字段统一保留 1 位小数（重演引擎产出原始 float，如
+    1733.3024514235472，直接透传会造成前端精度展示问题）。
+    """
 
     best_rank = serializers.IntegerField(allow_null=True)
-    best_rank_score = serializers.FloatField(allow_null=True)
+    best_rank_score = serializers.SerializerMethodField(allow_null=True)
     best_rank_at = serializers.DateTimeField(allow_null=True)
-    best_score = serializers.FloatField(allow_null=True)
+    best_score = serializers.SerializerMethodField(allow_null=True)
     best_score_rank = serializers.IntegerField(allow_null=True)
     best_score_at = serializers.DateTimeField(allow_null=True)
+
+    @staticmethod
+    def _round1(v):
+        return None if v is None else round(v, 1)
+
+    def get_best_rank_score(self, obj):
+        return self._round1(obj.best_rank_score)
+
+    def get_best_score(self, obj):
+        return self._round1(obj.best_score)

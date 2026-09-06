@@ -176,10 +176,13 @@ class Participation(TimeStampedModel):
 
 
 class ContestDifficultyFactor(TimeStampedModel):
-    """比赛难度系数：按「平台 × 比赛系列」映射的独立乘区。
+    """比赛难度系数：按「平台 × 比赛系列」映射。
 
-    加权公式：final = rating × 平台系数 × 比赛难度系数。
-    难度越高系数越大（可调，超管在后台维护）。命中不到系列时回退 1.0。
+    v3（2026-09-07 统一表现分）后：
+    - perf_base：难度基线 D（rating 尺度，站点统一标度）——表现分公式
+      `perf = 平台系数 × (D + 400 × z)` 的 D。null = 用代码默认表
+      （engine.PERF_BASES，跨平台已归一）。
+    - factor：旧乘区系数，保留作展示/回滚参考，不再参与计分。
     series 取值示例：
       CF      -> Div. 1 / Div. 2 / Div. 3 / Educational / Global
       AtCoder -> ABC / ARC / AGC
@@ -190,8 +193,12 @@ class ContestDifficultyFactor(TimeStampedModel):
     platform = models.CharField("平台", max_length=20,
                                 choices=Platform.choices, db_index=True)
     series = models.CharField("比赛系列", max_length=100, db_index=True)
-    factor = models.DecimalField("难度系数", max_digits=6, decimal_places=3,
-                                 default=1.000)
+    factor = models.DecimalField("难度系数（旧口径，保留展示）", max_digits=6,
+                                 decimal_places=3, default=1.000)
+    perf_base = models.FloatField(
+        "难度基线 D（表现分）", null=True, blank=True,
+        help_text="rating 尺度；留空用代码默认表。示例：CF Div.2≈1450 / "
+                  "ABC≈800 / ARC≈1550 / 牛客周赛≈950")
 
     class Meta:
         verbose_name = "比赛难度系数"
@@ -203,7 +210,7 @@ class ContestDifficultyFactor(TimeStampedModel):
         ]
 
     def __str__(self):
-        return f"[{self.get_platform_display()}] {self.series} ×{self.factor}"
+        return f"[{self.get_platform_display()}] {self.series}"
 
     @classmethod
     def factor_for(cls, platform, series, default=1.0):

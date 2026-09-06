@@ -1,13 +1,20 @@
-"""#5 积分排名引擎单元测试。"""
-from decimal import Decimal
+﻿"""#5 积分排名引擎 v3（统一表现分）单元测试。
+
+覆盖：表现分 z 数学 / 难度基线查找链 / 先验新号机制 / 滑动窗口 /
+学校与学生榜聚合 / 并列名次 / 周期过滤 / 付费场计分 / rating-history API。
+"""
+from statistics import NormalDist
 
 from django.test import TestCase
 
 from apps.accounts.models import PlatformAccount, User, UserRole
 from apps.common.models import Platform
-from apps.contests.models import Contest, Participation
+from apps.contests.models import Contest, ContestDifficultyFactor, Participation
 from apps.ranking.engine import (
-    compute_base_score,
+    compute_performance,
+    contest_perf_base,
+    rank_z,
+    rating_history,
     recompute_all,
     recompute_score_records,
     recompute_snapshots,
@@ -17,24 +24,209 @@ from apps.ranking.models import RankSnapshot, ScoreRecord, UserBestRecord
 from apps.schools.models import ScoreConfig, School
 
 
-def make_config(recent_limit=0):
+def make_config(recent_limit=0, decay=1.0, prior=1200.0):
     """全局唯一积分配置（超管统一设置，不分学校）。"""
     return ScoreConfig.objects.create(
-        cf_factor=1.0, atcoder_factor=1.0, nowcoder_factor=0.8,
+        cf_factor=1.0, atcoder_factor=1.0, nowcoder_factor=1.0,
         default_contest_factor=1.0, platform_weight=0.5,
-        contest_weight=0.5, recent_contest_limit=recent_limit)
+        contest_weight=0.5, recent_contest_limit=recent_limit,
+        rating_decay=decay, rating_prior=prior)
 
 
-class EngineTests(TestCase):
+_NORM = NormalDist()
+
+
+class PerfMathTests(TestCase):
+    """表现分：名次百分位 → z → perf 的换算与边界。"""
+
     def setUp(self):
-        make_config(recent_limit=1)  # 全局统一配置：个人榜每平台最近 1 场
+        make_config()  # 全 1.0 系数
+        self.school = School.objects.create(name="M大学", code="m")
+        self.u = User.objects.create_user(username="mu", school=self.school)
+        self.pa = PlatformAccount.objects.create(
+            user=self.u, platform=Platform.CODEFORCES, handle="mcf",
+            handle_lower="mcf", school=self.school)
+
+    def _participation(self, rank, vp, series="Div. 2", platform=Platform.CODEFORCES):
+        from datetime import datetime, timedelta
+        from django.utils import timezone as tz
+        n = Participation.objects.filter(contest__platform=platform).count()
+        c = Contest.objects.create(
+            platform=platform, external_id=f"mp{n}",
+            name=f"MP {series} {n}", series=series,
+            start_time=tz.make_aware(datetime(2026, 1, 1) + timedelta(days=n)),
+            is_rated=True, is_paid=False, participant_count=vp)
+        return Participation.objects.create(
+            contest=c, platform_account=self.pa, handle="mcf",
+            handle_lower="mcf", rank=rank)
+
+    def test_rank_z(self):
+        # 中位：rank 501/1000 → z≈0
+        self.assertAlmostEqual(rank_z(501, 1000), 0.0, places=2)
+        # 榜首大场：z 很大
+        self.assertGreater(rank_z(1, 1000), 3.2)
+        # 垫底：z 很小
+        self.assertLess(rank_z(1000, 1000), -3.2)
+        # 无信息：缺 rank / 单人场 → 0
+        self.assertEqual(rank_z(None, 100), 0.0)
+        self.assertEqual(rank_z(1, 1), 0.0)
+        self.assertEqual(rank_z(0, 100), 0.0)
+
+    def test_median_perf_equals_base(self):
+        # 名次中位 → z≈0 → perf≈D（Div. 2 = 1450）
+        p = self._participation(500, 999)
+        perf, z, base, pf = compute_performance(p, ScoreConfig.get_config())
+        self.assertEqual(base, 1450.0)
+        self.assertAlmostEqual(z, 0.0, places=2)
+        self.assertAlmostEqual(perf, 1450.0, delta=1.0)
+
+    def test_top_rank_above_base(self):
+        p = self._participation(1, 1000)
+        perf, z, base, pf = compute_performance(p, ScoreConfig.get_config())
+        # z = Φ⁻¹(1 - 0.5/1000) ≈ 3.29 → 1450 + 400*3.29 ≈ 2766
+        self.assertAlmostEqual(perf, 1450 + 400 * _NORM.inv_cdf(0.9995), places=1)
+
+    def test_perf_clamped(self):
+        # 超管覆盖位把 D 抬到 9900，clamp 拦住
+        ContestDifficultyFactor.objects.update_or_create(
+            platform=Platform.CODEFORCES, series="Div. 2",
+            defaults={"perf_base": 9900.0})
+        p = self._participation(500, 999)
+        perf, _, _, _ = compute_performance(p, ScoreConfig.get_config())
+        self.assertEqual(perf, 4000.0)  # PERF_MAX
+
+    def test_perf_base_lookup_chain(self):
+        # ① 超管覆盖位优先
+        ContestDifficultyFactor.objects.update_or_create(
+            platform=Platform.CODEFORCES, series="Div. 2",
+            defaults={"perf_base": 2000.0})
+        c = Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id="bc1", name="BC",
+            series="Div. 2", start_time="2026-01-01T00:00:00Z",
+            is_rated=True, is_paid=False)
+        self.assertEqual(contest_perf_base(c), 2000.0)
+        # ② 精确系列默认表
+        c2 = Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id="bc2", name="BC2",
+            series="Div. 3", start_time="2026-01-02T00:00:00Z",
+            is_rated=True, is_paid=False)
+        self.assertEqual(contest_perf_base(c2), 1150.0)
+        # ③ 平台默认（未知系列）
+        c3 = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="bc3", name="BC3",
+            series="神秘系列", start_time="2026-01-03T00:00:00Z",
+            is_rated=True, is_paid=False)
+        self.assertEqual(contest_perf_base(c3), 1000.0)
+        # ④ 无系列
+        c4 = Contest.objects.create(
+            platform=Platform.ATCODER, external_id="bc4", name="BC4",
+            start_time="2026-01-04T00:00:00Z",
+            is_rated=True, is_paid=False)
+        self.assertEqual(contest_perf_base(c4), 900.0)
+
+
+class SiteRatingTests(TestCase):
+    """站点 rating：先验新号机制 + 滑动窗口。"""
+
+    def setUp(self):
+        make_config(recent_limit=3, decay=0.5, prior=1000.0)
+        self.school = School.objects.create(name="S大学", code="s")
+        self.u = User.objects.create_user(username="su", school=self.school)
+        self.pa = PlatformAccount.objects.create(
+            user=self.u, platform=Platform.CODEFORCES, handle="scf",
+            handle_lower="scf", school=self.school)
+
+    def _seed(self, perfs, platform=Platform.CODEFORCES, prefix="sc"):
+        """按时间升序造 countable 记录，用 perf_base 把 perf 钉在给定值上。
+
+        z 取 0（单人场），perf = pf × D → 直接控制 D 控制表现分。
+        """
+        from datetime import datetime, timedelta
+        from django.utils import timezone as tz
+        base = tz.make_aware(datetime(2026, 1, 1))
+        for i, perf in enumerate(perfs):
+            ContestDifficultyFactor.objects.update_or_create(
+                platform=platform, series=f"S{i}",
+                defaults={"perf_base": perf})
+            c = Contest.objects.create(
+                platform=platform, external_id=f"{prefix}{i}",
+                name=f"SC {i}", series=f"S{i}",
+                start_time=base + timedelta(days=i),
+                is_rated=True, is_paid=False, participant_count=1)
+            Participation.objects.create(
+                contest=c, platform_account=self.pa, handle="scf",
+                handle_lower="scf", rank=1)
+
+    def _student_total(self):
+        recompute_score_records()
+        recompute_snapshots(RankSnapshot.Scope.STUDENT, "all")
+        snap = RankSnapshot.objects.get(scope="student", period="all",
+                                        user=self.u)
+        return float(snap.total_score)
+
+    def test_prior_blends_first_contest(self):
+        # 首场 perf=2000，先验 1000，decay 0.5：
+        # (2000×1 + 1000×0.5) / (1+0.5) = 2500/1.5 ≈ 1666.67
+        self._seed([2000.0])
+        self.assertAlmostEqual(self._student_total(), 2500.0 / 1.5, places=3)
+
+    def test_prior_fades_with_contests(self):
+        # 两场 [2000, 2000]（旧→新），decay 0.5：
+        # (2000 + 2000×0.5 + 1000×0.25) / (1+0.5+0.25) = 3250/1.75 ≈ 1857.14
+        # （先验权重 0.25，同场越多越趋近真实水平 2000）
+        self._seed([2000.0, 2000.0])
+        self.assertAlmostEqual(self._student_total(), 3250.0 / 1.75, places=3)
+
+    def test_window_respects_n_and_decay(self):
+        # N=3：四场 [100, 200, 400, 800]（旧→新），窗口取最新 3 场 [800,400,200]
+        # (800 + 400×0.5 + 200×0.25 + 1000×0.125)/(1+0.5+0.25+0.125)
+        # = 1175/1.875 ≈ 626.67
+        self._seed([100.0, 200.0, 400.0, 800.0])
+        self.assertAlmostEqual(self._student_total(), 1175.0 / 1.875, places=3)
+
+    def test_crash_softened_by_window(self):
+        # 核心价值：一场暴跌（900→300）不再直接钉死 rating
+        # 窗口 [300, 900, 900]：(300 + 450 + 225 + 125)/1.875 ≈ 586.67
+        self._seed([900.0, 900.0, 300.0])
+        self.assertAlmostEqual(self._student_total(), 1100.0 / 1.875, places=3)
+
+    def test_new_account_strong_performance_wins(self):
+        # 新号机制：平台 rating 不参与，同场不同名次 → 表现分立见高下
+        u2 = User.objects.create_user(username="sv", school=self.school)
+        pa2 = PlatformAccount.objects.create(
+            user=u2, platform=Platform.CODEFORCES, handle="scf2",
+            handle_lower="scf2", school=self.school)
+        ContestDifficultyFactor.objects.update_or_create(
+            platform=Platform.CODEFORCES, series="W",
+            defaults={"perf_base": 1450.0})
+        c = Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id="w1", name="W1",
+            series="W", start_time="2026-01-01T00:00:00Z",
+            is_rated=True, is_paid=False, participant_count=1001)
+        # ua 的新手号（new_rating 极低）但名次第 2；u2 rating 很高但名次 500
+        Participation.objects.create(
+            contest=c, platform_account=self.pa, handle="scf",
+            handle_lower="scf", rank=2, new_rating=800.0)
+        Participation.objects.create(
+            contest=c, platform_account=pa2, handle="scf2",
+            handle_lower="scf2", rank=500, new_rating=2600.0)
+        recompute_score_records()
+        p1 = ScoreRecord.objects.get(platform_account=self.pa).final_score
+        p2 = ScoreRecord.objects.get(platform_account=pa2).final_score
+        # 平台 rating 完全不参与：第 2 名表现分远高于第 500 名
+        self.assertGreater(p1, p2 + 500)
+
+
+class SnapshotTests(TestCase):
+    """榜单聚合：学校/学生榜、并列名次、周期、付费场、全量入口。"""
+
+    def setUp(self):
+        make_config(recent_limit=1, decay=0.0, prior=0.0)
         self.school_a = School.objects.create(name="A大学", code="a")
         self.school_b = School.objects.create(name="B大学", code="b")
-
         self.ua = User.objects.create_user(username="ua", school=self.school_a)
         self.ub = User.objects.create_user(username="ub", school=self.school_a)
         self.uc = User.objects.create_user(username="uc", school=self.school_b)
-
         self.pa_cf_a = PlatformAccount.objects.create(
             user=self.ua, platform=Platform.CODEFORCES, handle="cfa",
             handle_lower="cfa", school=self.school_a)
@@ -48,142 +240,118 @@ class EngineTests(TestCase):
             user=self.uc, platform=Platform.CODEFORCES, handle="cfc",
             handle_lower="cfc", school=self.school_b)
 
-        # 三场比赛（均 2026，rated，非付费）
+        # 两场 CF Div.2（D=1450）+ 一场牛客周赛（D=950），vp=1000
         self.c1 = Contest.objects.create(
-            platform=Platform.CODEFORCES, external_id="c1",
-            name="CF1", start_time="2026-01-01T00:00:00Z",
-            is_rated=True, is_paid=False, valid_participant_count=100,
-            difficulty_factor=1.5)
+            platform=Platform.CODEFORCES, external_id="c1", name="CF1",
+            series="Div. 2", start_time="2026-01-01T00:00:00Z",
+            is_rated=True, is_paid=False, participant_count=1000)
         self.c2 = Contest.objects.create(
-            platform=Platform.CODEFORCES, external_id="c2",
-            name="CF2", start_time="2026-02-01T00:00:00Z",
-            is_rated=True, is_paid=False, valid_participant_count=100,
-            difficulty_factor=1.0)  # 1.0 -> 回退学校默认
+            platform=Platform.CODEFORCES, external_id="c2", name="CF2",
+            series="Div. 2", start_time="2026-02-01T00:00:00Z",
+            is_rated=True, is_paid=False, participant_count=1000)
         self.c3 = Contest.objects.create(
-            platform=Platform.NOWCODER, external_id="c3",
-            name="NC1", start_time="2026-03-01T00:00:00Z",
-            is_rated=True, is_paid=False, valid_participant_count=50,
-            difficulty_factor=1.2)
+            platform=Platform.NOWCODER, external_id="c3", name="NC1",
+            series="牛客周赛", start_time="2026-03-01T00:00:00Z",
+            is_rated=True, is_paid=False, participant_count=1000)
 
-        # 可计分的参赛记录
         Participation.objects.create(contest=self.c1, platform_account=self.pa_cf_a,
-                                     handle="cfa", handle_lower="cfa", rank=1)
+                                      handle="cfa", handle_lower="cfa", rank=1)
         Participation.objects.create(contest=self.c2, platform_account=self.pa_cf_a,
-                                     handle="cfa", handle_lower="cfa", rank=51)
+                                      handle="cfa", handle_lower="cfa", rank=501)
         Participation.objects.create(contest=self.c3, platform_account=self.pa_nc_a,
-                                     handle="nca", handle_lower="nca", rank=5)
+                                      handle="nca", handle_lower="nca", rank=501)
         Participation.objects.create(contest=self.c1, platform_account=self.pa_cf_b,
-                                     handle="cfb", handle_lower="cfb", rank=10)
+                                      handle="cfb", handle_lower="cfb", rank=100)
         Participation.objects.create(contest=self.c1, platform_account=self.pa_cf_c,
-                                     handle="cfc", handle_lower="cfc", rank=2)
-        # 一条被排除的（不同 handle），不应参与计分
+                                      handle="cfc", handle_lower="cfc", rank=200)
+        # 一条被排除的（作弊），不应参与计分
         Participation.objects.create(contest=self.c1, platform_account=self.pa_cf_a,
                                      handle="cfcheat", handle_lower="cfcheat",
                                      rank=3, is_excluded=True,
                                      exclude_reason="cheater")
 
-    # ---------- 基础分 ----------
-    def test_base_score_normalization(self):
-        p = Participation.objects.get(contest=self.c1,
-                                      platform_account=self.pa_cf_a,
-                                      handle_lower="cfa")
-        self.assertAlmostEqual(compute_base_score(p), 100.0)  # rank 1 / 100
-        p2 = Participation.objects.get(contest=self.c1,
-                                       platform_account=self.pa_cf_b,
-                                       handle_lower="cfb")
-        self.assertAlmostEqual(compute_base_score(p2), 91.0)  # rank 10
+    def _z(self, rank, vp=1000):
+        p = min(max((rank - 0.5) / vp, 1e-6), 1 - 1e-6)
+        return _NORM.inv_cdf(1 - p)
 
-    def test_base_score_uses_full_participant_count_not_bound_count(self):
-        """兜底分分母必须是全场参赛人数，而非本站已绑定人数。
-
-        生产真实场景：一场 CF/AT 比赛有上万人，但本站只绑定了 1 个学生。
-        ingest 会把 valid_participant_count 写成「已绑定人数」(=1)，
-        若 compute_base_score 拿它当分母，rank=10099 会算出 -1009700
-        的天文负分。这里锁定：分母应取 participant_count（全场人数）。
-        """
-        big = Contest.objects.create(
-            platform=Platform.ATCODER, external_id="big1",
-            name="AT Big", start_time="2026-05-01T00:00:00Z",
-            is_rated=True, is_paid=False,
-            participant_count=11752,          # 全场参赛人数
-            valid_participant_count=1)        # 本站已绑定人数（模拟 ingest 写入）
-        p = Participation.objects.create(
-            contest=big, platform_account=self.pa_cf_a,
-            handle="cfa", handle_lower="cfa", rank=10099)
-        base = compute_base_score(p)
-        # 100 * (1 - (10099-1)/11752) ≈ 14.08，应落在合理正数区间
-        self.assertGreater(base, 0.0)
-        self.assertLess(base, 100.0)
-        self.assertAlmostEqual(base, 100.0 * (1 - (10099 - 1) / 11752), places=2)
-
-    # ---------- ScoreRecord 算分 ----------
-    def test_score_records_computed(self):
-        res = recompute_score_records()
-        self.assertEqual(ScoreRecord.objects.count(), 5)  # 排除的那条不计
-        # ua 在 c1(cf,难度1.5): base=100, combined=0.5*1+0.5*1.5=1.25 -> 125
-        sr = ScoreRecord.objects.get(participation__contest=self.c1,
-                                     platform_account=self.pa_cf_a)
-        self.assertAlmostEqual(sr.base_score, 100.0)
-        self.assertAlmostEqual(sr.final_score, 125.0)
-        # ua 在 c2(cf,难度1.0回退默认1.0): base=50, combined=1.0 -> 50
-        sr2 = ScoreRecord.objects.get(participation__contest=self.c2,
-                                      platform_account=self.pa_cf_a)
-        self.assertAlmostEqual(sr2.final_score, 50.0)
-
-    # ---------- 学校榜聚合（成员「各平台最新 rating 加权值」求和） ----------
-    def test_school_snapshot(self):
+    def test_student_snapshot_values(self):
+        # N=1 + decay=0：站点 rating = 最新一场 perf（跨平台取最新）
+        # ua 最新一场是 c3（牛客，rank 501）→ perf = 950 + 400×z(501)
         recompute_score_records()
-        n = recompute_snapshots(RankSnapshot.Scope.SCHOOL, "all")
-        self.assertEqual(n, 2)  # 两所学校
+        recompute_snapshots(RankSnapshot.Scope.STUDENT, "all")
+        ua = RankSnapshot.objects.get(scope="student", period="all", user=self.ua)
+        self.assertAlmostEqual(float(ua.total_score),
+                               950 + 400 * self._z(501), places=1)
+        self.assertEqual(ua.contest_count, 3)  # 全部计入场次
+        ub = RankSnapshot.objects.get(scope="student", period="all", user=self.ub)
+        self.assertAlmostEqual(float(ub.total_score),
+                               1450 + 400 * self._z(100), places=1)
+        uc = RankSnapshot.objects.get(scope="student", period="all", user=self.uc)
+        self.assertAlmostEqual(float(uc.total_score),
+                               1450 + 400 * self._z(200), places=1)
+        # 名次：ub > uc > ua（ua 最新一场只是牛客中位）
+        self.assertEqual(ub.rank, 1)
+        self.assertEqual(uc.rank, 2)
+        self.assertEqual(ua.rank, 3)
+
+    def test_school_snapshot_sums_member_ratings(self):
+        recompute_score_records()
+        recompute_snapshots(RankSnapshot.Scope.SCHOOL, "all")
         a = RankSnapshot.objects.get(scope="school", period="all",
                                      school=self.school_a)
-        # 新算法：每成员各平台最新一场。ua=c2(50)+c3(92)=142 ; ub=113.75 -> 255.75
-        self.assertAlmostEqual(float(a.total_score), 255.75)
+        ua_rating = 950 + 400 * self._z(501)
+        ub_rating = 1450 + 400 * self._z(100)
+        self.assertAlmostEqual(float(a.total_score), ua_rating + ub_rating,
+                               delta=1.0)
         self.assertEqual(a.member_count, 2)
-        self.assertEqual(a.contest_count, 4)  # ua 3 场(c1,c2,c3) + ub 1 场(c1)，全部计入场次
+        self.assertEqual(a.contest_count, 4)  # ua 3 + ub 1
         b = RankSnapshot.objects.get(scope="school", period="all",
                                      school=self.school_b)
-        self.assertAlmostEqual(float(b.total_score), 123.75)
+        self.assertAlmostEqual(float(b.total_score),
+                               1450 + 400 * self._z(200), delta=1.0)
         self.assertEqual(a.rank, 1)
         self.assertEqual(b.rank, 2)
 
-    # ---------- 个人榜（每平台最近 1 场） ----------
-    def test_student_snapshot_recent_limit(self):
+    def test_tied_scores_share_rank_and_skip(self):
+        # 构造 ub/uc 同分：同名次同场次
+        Participation.objects.filter(contest=self.c1, platform_account=self.pa_cf_c)\
+            .update(rank=100)
         recompute_score_records()
-        n = recompute_snapshots(RankSnapshot.Scope.STUDENT, "all")
-        self.assertEqual(n, 3)
-        ua = RankSnapshot.objects.get(scope="student", period="all",
-                                      user=self.ua)
-        # 全局 limit=1：每平台取最新一场。cf 最新为 c2(50)，nc 为 c3(92) -> 142
-        self.assertAlmostEqual(float(ua.total_score), 142.0)
-        self.assertEqual(ua.contest_count, 3)  # ua 全部计入场次 c1/c2/c3
-        ub = RankSnapshot.objects.get(scope="student", period="all",
-                                      user=self.ub)
-        self.assertAlmostEqual(float(ub.total_score), 113.75)
-        uc = RankSnapshot.objects.get(scope="student", period="all",
-                                      user=self.uc)
-        self.assertAlmostEqual(float(uc.total_score), 123.75)
-        # 名次：ua(217) > uc(123.75) > ub(113.75)
-        self.assertEqual(ua.rank, 1)
-        self.assertEqual(uc.rank, 2)
-        self.assertEqual(ub.rank, 3)
+        recompute_snapshots(RankSnapshot.Scope.STUDENT, "all")
+        snaps = {s.user_id: s for s in RankSnapshot.objects.filter(
+            scope="student", period="all")}
+        ub, uc = snaps[self.ub.id], snaps[self.uc.id]
+        self.assertEqual(ub.rank, 1)
+        self.assertEqual(uc.rank, 1)   # 同分并列
+        self.assertEqual(snaps[self.ua.id].rank, 3)  # 跳位
 
-    # ---------- 周期过滤 ----------
+    def test_paid_rated_contest_counts(self):
+        """付费 rated 比赛同样计分（2026-09-07 用户确认：筛选只看 rated）。"""
+        paid = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="paid1",
+            name="NC Paid", series="牛客周赛",
+            start_time="2026-04-01T00:00:00Z",
+            is_rated=True, is_paid=True, participant_count=1000)
+        Participation.objects.create(
+            contest=paid, platform_account=self.pa_nc_a,
+            handle="nca", handle_lower="nca", rank=10)
+        recompute_score_records()
+        self.assertTrue(ScoreRecord.objects.filter(
+            participation__contest=paid).exists())
+
     def test_period_filter_current_year(self):
         recompute_score_records()
-        n = recompute_snapshots(RankSnapshot.Scope.STUDENT, "2026")
-        self.assertEqual(n, 3)  # 均在 2026
-        n2 = recompute_snapshots(RankSnapshot.Scope.STUDENT, "2025")
-        self.assertEqual(n2, 0)  # 无 2025 数据
+        self.assertEqual(
+            recompute_snapshots(RankSnapshot.Scope.STUDENT, "2026"), 3)
+        self.assertEqual(
+            recompute_snapshots(RankSnapshot.Scope.STUDENT, "2025"), 0)
 
-    # ---------- 全量入口 ----------
     def test_recompute_all(self):
         res = recompute_all()
         self.assertIn("snapshots", res)
-        # all + 2026 两个周期 × 2 scope = 4 个快照组
         self.assertEqual(len(res["snapshots"]), 4)
 
-    # ---------- API 只读 + 重算动作 ----------
+    # ---------- API ----------
     def test_ranking_api_list(self):
         from rest_framework.test import APIClient
         recompute_all()
@@ -193,18 +361,33 @@ class EngineTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["count"], 2)
 
+    def test_rating_history_api(self):
+        from rest_framework.test import APIClient
+        recompute_all()
+        client = APIClient()
+        # 未带 user 且未登录 → 400
+        r = client.get("/api/v1/rating-history/")
+        self.assertEqual(r.status_code, 400)
+        # 带 user 公开可读；时间线每场都有 rating 且与榜单一致
+        r = client.get("/api/v1/rating-history/", {"user": self.ua.id})
+        self.assertEqual(r.status_code, 200)
+        results = r.data["results"]
+        self.assertEqual(len(results), 3)
+        self.assertAlmostEqual(results[-1]["rating"],
+                               float(RankSnapshot.objects.get(
+                                   scope="student", period="all",
+                                   user=self.ua).total_score), places=1)
+        # decay=0：首场 rating = perf（先验 prior=0 也被 decay=0 短路）
+        self.assertEqual(results[0]["perf"], results[0]["rating"])
+
     def test_recompute_action_requires_super(self):
         from rest_framework.test import APIClient
-        from apps.accounts.models import User as AUser, UserRole
         client = APIClient()
-        # 普通用户无权限
-        normal = AUser.objects.create_user(username="normal")
+        normal = User.objects.create_user(username="normal")
         client.force_authenticate(normal)
         r = client.post("/api/v1/rankings/recompute/")
         self.assertEqual(r.status_code, 403)
-        # 超管可触发
-        sup = AUser.objects.create_user(username="sup",
-                                         role=UserRole.SUPER_ADMIN)
+        sup = User.objects.create_user(username="sup", role=UserRole.SUPER_ADMIN)
         client.force_authenticate(sup)
         r = client.post("/api/v1/rankings/recompute/")
         self.assertEqual(r.status_code, 200)
@@ -292,8 +475,12 @@ class SeasonTests(TestCase):
 
 
 class UserBestRecordTests(TestCase):
-    """历史最佳 = 比赛演变重演：每个赛后时点各用户取每平台最新 final_score
-    求和并对全体用户排序，best_rank/best_score 取全部时点中的最优。"""
+    """历史最佳 = 比赛演变重演：每个赛后时点各用户取站点 rating，
+    对全体用户排序，best_rank/best_score 取全部时点中的最优。
+    （此处锁定 decay=0 的「最新一场」口径，与既有用例语义一致）"""
+
+    def setUp(self):
+        make_config(recent_limit=1, decay=0.0, prior=0.0)
 
     def _seed(self, username, platform, score, when, school=None):
         """造一条 countable 积分记录（User+PA+Contest+Participation+ScoreRecord）。"""
@@ -383,3 +570,20 @@ class UserBestRecordTests(TestCase):
             best_score=1.0, best_score_rank=1, best_score_at=tz.now())
         update_user_best_records()  # 无任何积分记录 → 纪录被清理
         self.assertFalse(UserBestRecord.objects.filter(user=u).exists())
+
+    def test_rating_history_matches_replay(self):
+        """rating_history 与最佳纪录重演共用同一口径：最新点 = 当前窗口 rating。"""
+        from datetime import datetime
+
+        from django.utils import timezone as tz
+
+        def at(s):
+            return tz.make_aware(datetime.strptime(s, "%Y-%m-%d %H:%M"))
+
+        a = self._seed("rh_a", Platform.CODEFORCES, 500.0, at("2026-03-01 10:00"))
+        self._seed("rh_a", Platform.CODEFORCES, 700.0, at("2026-03-02 10:00"))
+        hist = rating_history(a.id)
+        self.assertEqual(len(hist), 2)
+        # decay=0：最新一场即 rating
+        self.assertEqual(hist[-1]["rating"], 700)
+        self.assertEqual(hist[-1]["perf"], 700)

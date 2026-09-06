@@ -100,13 +100,25 @@ class ScoreConfig(TimeStampedModel):
     contest_weight = models.DecimalField("比赛系数权重", max_digits=4,
                                          decimal_places=3, default=0.500)
 
-    # 只统计每个平台最近 N 场，避免老账号靠场次堆积（0 表示不限制）
-    recent_contest_limit = models.PositiveIntegerField("计分场次上限", default=0,
-                                                       help_text="0 表示不限制")
+    # 只统计每个平台最近 N 场：每平台分数 = 最近 N 场的衰减加权平均。
+    # 1 = 只看最新一场（原始口径）；0 = 不限场次（老场次权重随衰减自然趋零）。
+    recent_contest_limit = models.PositiveIntegerField(
+        "计分场次上限", default=5,
+        help_text="每平台取最近 N 场的衰减加权平均；1=只看最新一场；0=不限（由衰减系数收敛）")
+    # 衰减系数：最新一场权重 1，每往旧一场乘一次该系数
+    # （0.85 时第 5 场权重约 0.44；1=窗口内简单平均；0=等效只看最新一场）
+    rating_decay = models.DecimalField(
+        "评分衰减系数", max_digits=4, decimal_places=3, default=0.850,
+        help_text="0~1；越小越看重近期状态，1=窗口内平均，0=只看最新一场")
+    # 新用户/新号先验 rating：作为「比全部真实场次更旧的一场」参与窗口，
+    # 权重随场数衰减（1 场后约占 46%，5 场后 <11%）——同 CF 新号快收敛
+    rating_prior = models.DecimalField(
+        "新用户先验 Rating", max_digits=6, decimal_places=1, default=1200.0,
+        help_text="站点 rating 的虚拟起点；首场后影响快速衰减")
 
     class Meta:
         verbose_name = "积分系数配置"
-        verbose_name_plural = verbose_name
+        verbose_name_plural = "积分系数配置"
 
     def __str__(self):
         return "全局积分配置"
@@ -118,11 +130,13 @@ class ScoreConfig(TimeStampedModel):
             defaults={
                 "cf_factor": 1.000,
                 "atcoder_factor": 1.000,
-                "nowcoder_factor": 0.800,
+                "nowcoder_factor": 1.000,
                 "default_contest_factor": 1.000,
                 "platform_weight": 0.500,
                 "contest_weight": 0.500,
-                "recent_contest_limit": 0,
+                "recent_contest_limit": 5,
+                "rating_decay": 0.850,
+                "rating_prior": 1200.0,
             }
         )
         return obj
