@@ -1,7 +1,7 @@
 # E-algo Rank 项目接手文档
 
 > **本文件是本项目唯一的开发文档（single source of truth）。** 其他历史文档（`overview.md`、`BACKEND_HANDOFF.md`、`crawlers/VERIFICATION.md`）的内容已合并进本文，已删除，避免信息分叉。
-> 文档基准时间：**2026-09-01**（§1.7.x 逐批次增补：§1.7.3 passport 协议适配 → §1.7.4 前端修复 → §1.7.5 折线图改版 → §1.7.6 Celery 修复 → §1.7.7 牛客漏入库 → §1.7.8 六项体验 → §1.7.11 登录改版 → §1.7.12 赛季编号 → §1.7.13 安全审计）。代码路径：`D:\_Dev\e-algo-rank\`
+> 文档基准时间：**2026-09-07**（§1.7.x 逐批次增补：§1.7.3 passport 协议适配 → §1.7.4 前端修复 → §1.7.5 折线图改版 → §1.7.6 Celery 修复 → §1.7.7 牛客漏入库 → §1.7.8 六项体验 → §1.7.11 登录改版 → §1.7.12 赛季编号 → §1.7.13 安全审计 → §1.7.14 重启故障 → §1.7.15 rating 丢失 → §1.7.16 v3 口径清理 → §1.7.17 参赛记录只落库绑定用户 → §1.7.18 换绑行为审查与修复）。代码路径：`D:\_Dev\e-algo-rank\`
 > 配套设计原型（非开发文档，仅前端 UI 来源）：`prototype design for rank/{DESIGN|DELIVERY}.md` + `prototype.html`。
 
 ***
@@ -483,6 +483,40 @@ def relevant_contest_ids(platform):
 3. 数据恢复：手动 `backfill_nowcoder_ratings()` 回填 27 条 → `recompute_ranking` 全量重算，rating/快照/最佳纪录全部恢复（best #1 @ 1987.38）。
 
 **遗留**：backfill 对牛客接口拉空的深层原因（反爬策略变化？）未穷尽——观测告警已补，复发时按 WARNING 线索排查。测试 +1 例（重爬保留回填 rating），全量 126 OK。
+
+### 1.7.16 v2→v3 口径残留清理（2026-09-07，已上线验证）
+
+用户反馈数据展示面仍有旧口径残留，四处根治：① 个人中心「当时总 rating」显示未舍入原始 float——后端序列化保留 1 位小数 + 前端 `fmtBest` 格式化，文案改「当时站点 rating」；② 管理页（ScoreConfigView）仍展示 v2 概念参数（平台系数权重、加权比例公式等），全量重写为 v3 概念（站点 Rating 参数、平台系数表现分乘数、难度基线 D 编辑）；③ API 输出存在未被消费的旧口径字段 `weighted_rating`，彻底删除；④ 规则页动态系数区渲染 v2 权重字段，改为窗口/衰减/先验三项并同步 fallback 文案；「各平台 Rating」卡标题改「各平台官方 Rating」。验证：139 tests OK + vue-tsc 零错误，线上登录态截图确认精度修复、新文案生效、旧文案清零。
+
+### 1.7.17 参赛记录只落库绑定用户（2026-09-07，已上线验证，未提交）
+
+**问题**：后台「参赛记录」被未绑定路人行淹没（1723 行中 1630 条无绑定，≈95%），且无数据上限，管理成本过高。旧逻辑：未绑定非作弊者丢弃、**未绑定作弊路人落库**（exclude_reason=UNBOUND）占绝大多数。
+
+**修复**（入库层 + 管理页 + API 三层）：
+
+1. `crawler/ingest.py`：`account is None` 一律 `continue`——未绑定路人（含作弊路人）明细全部不落库；作弊统计仍走 `Contest.cheater_count` 聚合列；**已绑定用户被标记作弊照旧落库**（申诉证据保留，exclude_reason=CHEATER）；`ExcludeReason.UNBOUND` 不再有写入方；
+2. `contests/admin.py`：`get_queryset` 防御过滤 `platform_account__isnull=False`（历史遗留行即便存在也不展示）+ `list_per_page=50` / `list_max_show_all=200` + `user_badge` 列直接显示所属用户；
+3. `contests/views.py` ParticipationViewSet：`get_queryset` 同样防御过滤未绑定行（校管 API 面同步收口）。
+
+**数据清洗**：生产库删除全部未绑定历史行，1765 → 93 行（91 计分 + 2 条已绑定作弊证据）；55 场比赛 `cheater_count` 聚合共 1674 条作弊统计完整保留。清洗后触发 `recompute_ranking` 重算，排名/快照无异常。
+
+**上线验证**：部署后手动触发重爬 job 108（牛客 16 场），入库日志确认新逻辑生效（每场仅落库绑定学生行，如「榜单 920 条，作弊 16 条已排除，绑定学生 1 条」）；recompute 成功（created 14 / updated 75）；healthz 恢复 200。本地测试 +1 例（unbound cheater 只计数不落库），全量 140 OK。
+
+⚠️ **注意**：本批与 §1.7.16 的改动（含 4 个新 migration：contests 0003/0004、schools 0007/0008）均在本地工作树**未提交**，生产为文件同步部署（代码与工作树一致）；下批提交时一并入库。
+
+### 1.7.18 换绑行为审查与修复（2026-09-07，已上线验证）
+
+**审查结论**（换绑两条路径：PATCH 改 handle / DELETE+POST 解绑重绑）：
+
+- ✅ 正常项：跨用户 handle 唯一（DB+API）、一周冷却、学校变更同步平台账号、作弊行不回填、rating None 不覆盖、换绑后新 handle 历史成绩由「fill 索引 + 爬虫重放」回补（不受历史截断限制）、旧 handle 未来新比赛不再落库。
+- 🔴 P1 换绑后旧 handle 历史成绩不剥离（双算）：**用户决策维持现状**（改名语义，AtCoder username 可改场景正确；CF/牛客换号场景存在双算，已知悉）。牛客 uid/CF handle 不可变，换 handle 必然是换号——若未来要改，在 PATCH 换绑处剥离旧记录即可。
+- 🟡 P2 换绑/绑定回填记录后不触发排名重算：已修。`_dispatch_recompute()`（views.py）经 Celery 投递 `recompute_ranking_task`，失败仅 WARNING 不阻断 API（最坏退化为旧行为：等次日爬虫尾部重算）。触发点三处：① PATCH 换绑且 rebind 回填 >0；② POST 绑定且 rebind 回填 >0（serializers.create）；③ DELETE 解绑删除记录 >0。
+- 🟡 P3 解绑产生 unbound 遗留行（SET_NULL）：已修。`PlatformAccountViewSet.destroy` 覆写——先删该账号全部 Participation 再删账号，与 §1.7.17「只落绑定用户」对齐。重绑同 handle 后历史由索引重建+爬虫重放回补（牛客未打过 rated 的场次除外——无官方个人历史接口）。前端解绑确认文案已同步新语义。
+- 🟢 P4 冷却可被解绑+重绑绕过：设计明示，不堵。🟢 P5 participated_contests 索引只增不减：仅预筛带宽浪费，可接受。
+
+**部署方式修正**：backend 容器代码在**镜像内**（/app/backend/，非 bind mount，仅 crawler-data/media 挂载）——后端改动必须走「宿主源码同步 → `docker compose build backend` → `up -d backend`」三步，文件覆盖+restart 无效。前端仍走 dist 内容同步保 inode + nginx 重启。
+
+**验证**：本地 144 tests OK（+3：解绑删记录且触发重算、空账号解绑不重算、绑定回填触发重算）+ vue-tsc 零错误；线上容器内代码特征（_dispatch_recompute/destroy 逻辑）grep 确认、healthz ok、前端 asset hash 线上磁盘一致、七容器 Up。测试基线更新为 **144 OK**。
 
 **H1 执行前仍需用户提供**
 

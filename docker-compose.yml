@@ -35,6 +35,11 @@ services:
     volumes:
       - ./volumes/media:/app/backend/media
       - ./volumes/crawler-data:/app/crawlers/data
+    # 内存护栏（2026-09-06 生产事故整改）：本机仅 3.6G 内存，牛客爬虫大榜单
+    # JSON 解析存在内存放大，无限制时峰值可拖垮整机（用户态假死需强制重启）。
+    # 超限由内核 OOM 杀掉 worker 进程，容器 restart: unless-stopped 自动拉起，
+    # 任务幂等 + 渐进补抓，代价可控；宿主机与其他服务得到保护。
+    mem_limit: 1g
     restart: unless-stopped
 
   beat:
