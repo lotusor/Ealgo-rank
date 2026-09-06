@@ -21,6 +21,7 @@ from pathlib import Path
 
 from apps.accounts.models import PlatformAccount
 from apps.common.models import Platform
+from apps.contests.models import Contest, Participation
 from apps.crawler.ingest import ingest_contest
 from apps.crawler.models import CrawlConfig, CrawlJob
 
@@ -195,6 +196,52 @@ def _relevant_handles(platform):
                 .values_list("handle", flat=True))
 
 
+def _prune_ingested_history(platform, history_contests):
+    """剪掉「已入库且无新绑定用户待补行」的历史比赛。
+
+    重放一场已入库比赛的唯一价值：给新绑定的用户补参与行（ingest 幂等
+    update_or_create）。若该场所有索引指向的账号在库里都已有行，重放无
+    信息增益，直接剪掉——避免用户量增长后索引历史每轮全量重放缓存。
+
+    返回仍需抓取详情的子集；未入库的场次一律保留（含新绑定用户带出的
+    历史月，2026-09 曾因 50 场截断线被永久挡住，修复后不受上限约束）。
+    """
+    if not history_contests:
+        return []
+    ext_ids = []
+    for c in history_contests:
+        rid = str(c.get("real_contest_id") or c.get("contest_id") or "")
+        if rid:
+            ext_ids.append(rid)
+    ingested = {
+        c.external_id: c.id
+        for c in Contest.objects.filter(platform=platform, external_id__in=ext_ids)
+    }
+    # external_id -> 需要该场成绩的账号 id 集合（来自参与索引）
+    need = {}
+    for acc in PlatformAccount.objects.filter(platform=platform):
+        for cid in (acc.participated_contests or []):
+            need.setdefault(str(cid), set()).add(acc.id)
+    # 库里已存在的 (contest_id, account_id) 参与行
+    existing = set(
+        Participation.objects
+        .filter(contest_id__in=list(ingested.values()))
+        .exclude(platform_account=None)
+        .values_list("contest_id", "platform_account_id")
+    )
+    out = []
+    for c in history_contests:
+        rid = str(c.get("real_contest_id") or c.get("contest_id") or "")
+        contest_id = ingested.get(rid)
+        if contest_id is None:
+            out.append(c)          # 未入库 → 必须抓
+            continue
+        pending = need.get(rid, set())
+        if any((contest_id, aid) not in existing for aid in pending):
+            out.append(c)          # 有账号缺行 → 重放补行
+    return out
+
+
 def _run_job(job, worker):
     """统一的任务生命周期管理：状态流转 + 异常兜底 + 统计回写。"""
     job.status = CrawlJob.Status.RUNNING
@@ -324,6 +371,8 @@ def crawl_atcoder(self, job_id=None, count=20, force=False):
                 and str(c.get("contest_id")) not in recent_ids
             ]
             history = s.filter_contests(history, rated_only=True, exclude_paid=False)
+            # 已入库且无新用户的历史场剪掉，避免索引增长后每轮全量重放
+            history = _prune_ingested_history(Platform.ATCODER, history)
             contests = recent + history
         else:
             contests = recent
@@ -418,13 +467,27 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
 
         contests = [c for c in contests if _ended(c)]
 
-        # C：单次场数上限，防止索引历史比赛过多时单任务超软超时。
-        #    ⚠️ 截断前必须按开始时间降序——contests 按月份升序拼接，直接切片
-        #    会砍掉尾部「最新的比赛」（曾致 2026-08 练习赛 156 永远进不了
-        #    处理列表、用户成绩无法入库）。被截掉的最老比赛依赖落盘缓存 +
-        #    幂等入库，由后续定时任务继续补抓。
+        # C：单次场数上限只约束「窗口内比赛」，防止比赛密集月一轮抓不完
+        #    （2026-08 牛客单月超 50 场 rated）。⚠️ 截断前必须按开始时间
+        #    降序——contests 按月份升序拼接，直接切片会砍掉尾部「最新的
+        #    比赛」（曾致 2026-08 练习赛 156 永远进不了处理列表）。
+        #    窗口外的「索引历史比赛」（绑定用户索引带出的）不设上限：
+        #    已入库且无新用户的历史场被 _prune_ingested_history 剪掉，
+        #    剩余未入库/待补行的场次靠落盘缓存 + 幂等入库跨轮收敛——
+        #    否则最老的历史比赛（如 2025-10 的 Round 114）会被截断线
+        #    永久挡住，新绑定用户的历史成绩永远补不上（2026-09 缺口根因）。
         contests.sort(key=lambda c: c.get("start_time") or "", reverse=True)
-        contests = contests[:50]
+        base_set = set(base_months)
+        recent = [
+            c for c in contests
+            if (c.get("start_time") or "")[:7] in base_set
+        ][:50]
+        history = _prune_ingested_history(
+            Platform.NOWCODER,
+            [c for c in contests
+             if (c.get("start_time") or "")[:7] not in base_set],
+        )
+        contests = recent + history
         cache_dir = _crawler_cache_dir(Platform.NOWCODER)
         for c in contests:
             rid = c.get("real_contest_id")

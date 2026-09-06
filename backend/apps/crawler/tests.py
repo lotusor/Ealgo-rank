@@ -632,14 +632,16 @@ class FillParticipatedContestsTests(TestCase):
 class _FakeNC:
     """替代 NowCoderScraper：受控比赛列表，验证截断方向与未结束比赛过滤。"""
 
-    def __init__(self, contests):
+    def __init__(self, contests, rating_history=None):
         self._contests = contests
+        self._rating_history = rating_history or {}
+        self.scraped = []  # 记录 scrape_contest_detail 被调用的比赛 id
 
     def init_session(self):
         pass
 
     def user_rating_history(self, handle):
-        return []
+        return self._rating_history.get(handle, [])
 
     def fetch_contests(self, ym):
         return [c for c in self._contests if (c.get("start_time") or "")[:7] == ym]
@@ -653,6 +655,7 @@ class _FakeNC:
     def scrape_contest_detail(self, rid, filter_post_contest=False,
                               exclude_cheaters=False, cache_dir=None,
                               cache_ttl_hours=168, **kwargs):
+        self.scraped.append(str(rid))
         return {"problems": [], "ranks": [], "rank_count": 0,
                 "valid_rank_count": 0, "rank_source": "fake",
                 "crawled_at": "2026-08-29T00:00:00"}
@@ -709,6 +712,81 @@ class NowcoderWindowTests(TestCase):
             platform=Platform.NOWCODER).values_list("external_id", flat=True))
         self.assertNotIn("9999", ids)
         self.assertEqual(ids, {"9000", "9001", "9002"})
+
+
+class NowcoderHistoryPruneTests(TestCase):
+    """索引历史比赛不截断 + 已入库剪枝（2026-09 缺口修复：50 场截断线曾把
+    最老的历史比赛永久挡住，新绑定用户的历史成绩永远补不上）。"""
+
+    @staticmethod
+    def _hist_contest(rid, day):
+        from datetime import datetime, timedelta
+        st = datetime(2025, 5, day, 19, 0)
+        return {
+            "real_contest_id": rid, "name": f"NC hist {rid}",
+            "start_time": st.strftime("%Y-%m-%d %H:%M:%S"),
+            "end_time": (st + timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_minutes": 120, "is_rated": True, "is_paid": False,
+        }
+
+    @staticmethod
+    def _rating_history(ids):
+        # 全部落在 2025-05，反查只扩展这一个历史月份
+        from datetime import datetime
+        ts = datetime(2025, 5, 10).timestamp() * 1000
+        return [{"contestId": str(i), "time": ts} for i in ids]
+
+    def _bind_user(self, ids):
+        user = User.objects.create_user(username="histu", password="pwd12345")
+        return PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="u1",
+            participated_contests=[str(i) for i in ids])
+
+    def test_history_beyond_50_still_crawled(self):
+        # 60 场窗口外历史（索引指向、未入库）：不受 50 场截断，全部抓取入库
+        ids = list(range(9000, 9060))
+        contests = [self._hist_contest(i, 1 + (i % 28)) for i in ids]
+        self._bind_user(ids)
+        fake = _FakeNC(contests, {"u1": self._rating_history(ids)})
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake):
+            crawl_nowcoder(months=["2026-06"])
+        self.assertEqual(
+            Contest.objects.filter(platform=Platform.NOWCODER).count(), 60)
+
+    def test_ingested_history_pruned_and_missing_replayed(self):
+        from datetime import datetime, timedelta
+        st = datetime(2026, 6, 1, 19, 0)
+        contests = [
+            self._hist_contest(9100, 10),
+            self._hist_contest(9101, 20),
+            self._hist_contest(9102, 25),
+            {
+                "real_contest_id": 9200, "name": "NC new",
+                "start_time": st.strftime("%Y-%m-%d %H:%M:%S"),
+                "end_time": (st + timedelta(hours=2)).strftime(
+                    "%Y-%m-%d %H:%M:%S"),
+                "duration_minutes": 120, "is_rated": True, "is_paid": False,
+            },
+        ]
+        ids = [9100, 9101, 9102]
+        acc = self._bind_user(ids)
+        # 预入库 9101（绑定用户缺行）与 9102（绑定用户已有行）
+        c9101 = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="9101", name="NC 9101")
+        c9102 = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="9102", name="NC 9102")
+        Participation.objects.create(
+            contest=c9102, platform_account=acc,
+            handle="u1", handle_lower="u1")
+        self.assertIsNotNone(c9101)
+
+        fake = _FakeNC(contests, {"u1": self._rating_history(ids)})
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake):
+            crawl_nowcoder(months=["2026-06"])
+        # 9100 未入库 → 抓；9101 已入库缺行 → 重放补行；
+        # 9102 已入库且行齐 → 剪掉；9200 窗口内新赛 → 照常抓
+        self.assertEqual(set(fake.scraped), {"9100", "9101", "9200"})
+        self.assertNotIn("9102", fake.scraped)
 
 
 class CrawlConfigSignalTests(TestCase):
