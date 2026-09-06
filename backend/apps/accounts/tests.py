@@ -1,7 +1,10 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import UserRole
+from apps.contests.models import Contest, Participation
 from apps.schools.models import School
 
 User = get_user_model()
@@ -188,6 +191,60 @@ class PlatformHandleEditTests(APITestCase):
                               {"platform": "atcoder"}, format="json")
         # 允许 200（platform 未在 update 里做特殊限制），但 handle 归属应保持不变
         self.assertIn(r.status_code, (200, 400))
+
+    def _make_contest(self, ext_id, name):
+        from apps.common.models import Platform
+        return Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id=ext_id, name=name,
+            start_time="2026-08-01 20:00:00+00:00",
+            end_time="2026-08-01 22:00:00+00:00", is_rated=True)
+
+    def test_unbind_deletes_participations_and_triggers_recompute(self):
+        """解绑即删成绩（不留 unbound 遗留行）+ 数据变化触发排名重算。"""
+        r = self._bind("codeforces", "cf_alice")
+        pk = r.json()["id"]
+        from apps.accounts.models import PlatformAccount
+        acc = PlatformAccount.objects.get(pk=pk)
+        for i, ext in enumerate(["1111", "1112", "1113"]):
+            c = self._make_contest(ext, f"CF Round {i}")
+            Participation.objects.create(
+                contest=c, platform_account=acc, handle="cf_alice",
+                handle_lower="cf_alice", rank=i + 1)
+        self.assertEqual(Participation.objects.count(), 3)
+
+        with patch("apps.accounts.views._dispatch_recompute") as mock_rc:
+            r = self.client.delete(f"/api/v1/platform-accounts/{pk}/")
+        self.assertEqual(r.status_code, 204)
+        # 账号与全部参赛记录删除，不再有 SET_NULL 遗留行
+        self.assertFalse(PlatformAccount.objects.filter(pk=pk).exists())
+        self.assertEqual(Participation.objects.count(), 0)
+        # 删了记录 → 必须投递排名重算
+        mock_rc.assert_called_once()
+
+    def test_unbind_empty_account_no_recompute(self):
+        """解绑但本来就没有参赛记录 → 无数据变化，不投递重算。"""
+        r = self._bind("codeforces", "cf_alice")
+        pk = r.json()["id"]
+        with patch("apps.accounts.views._dispatch_recompute") as mock_rc:
+            r = self.client.delete(f"/api/v1/platform-accounts/{pk}/")
+        self.assertEqual(r.status_code, 204)
+        mock_rc.assert_not_called()
+
+    def test_bind_rebound_records_triggers_recompute(self):
+        """绑定即回填到历史记录 → 投递重算（回填成绩立即生效）。"""
+        # 预置一条无人认领的历史记录（模拟历史爬取数据）
+        c = self._make_contest("1111", "CF Round 0")
+        Participation.objects.create(
+            contest=c, platform_account=None, handle="cf_alice",
+            handle_lower="cf_alice", rank=1)
+        with patch("apps.accounts.views._dispatch_recompute") as mock_rc:
+            r = self._bind("codeforces", "cf_alice")
+        self.assertEqual(r.status_code, 201)
+        # 记录已回填到该用户名下
+        self.assertEqual(
+            Participation.objects.filter(
+                handle_lower="cf_alice", platform_account__user=self.user).count(), 1)
+        mock_rc.assert_called_once()
 
 
 class AvatarAndBioTests(APITestCase):

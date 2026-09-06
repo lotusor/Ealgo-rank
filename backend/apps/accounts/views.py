@@ -51,6 +51,24 @@ from apps.accounts.validators import first_error_message, validate_username
 from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin
 from config.pagination import StandardPagination
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _dispatch_recompute():
+    """绑定数据实际变化后异步重算排名（Celery 秒级）。
+
+    失败不阻断 API——最坏退化为旧行为（等次日爬虫尾部重算）。
+    延迟导入避免 apps 间循环依赖。
+    """
+    try:
+        from apps.ranking.tasks import recompute_ranking_task
+        recompute_ranking_task.delay()
+    except Exception:
+        logger.warning("绑定变化后投递 recompute_ranking 失败，排名将等下次爬虫重算",
+                       exc_info=True)
+
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
@@ -321,11 +339,28 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
                     rebind_unbound_participations,
                     fill_participated_contests_async,
                 )
-                rebind_unbound_participations(instance)
+                rebound = rebind_unbound_participations(instance)
                 fill_participated_contests_async(instance.pk)
+                if rebound:
+                    _dispatch_recompute()
             except Exception:  # 历史数据缺失不应阻断修改
                 pass
         return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        """解绑即删成绩：该账号全部参赛记录随之删除（而非 SET_NULL 遗留）。
+
+        与「Participation 只落绑定用户」决策（2026-09-07）对齐——解绑留下的
+        unbound 行没有任何消费方（admin/API 均过滤、爬虫不激活），只会积存量。
+        重新绑定同一 handle 后，历史成绩由参与索引重建 + 爬虫重放回补
+        （牛客未打过 rated 的场次除外——无官方个人历史接口）。
+        """
+        instance = self.get_object()
+        deleted, _ = instance.participations.all().delete()
+        self.perform_destroy(instance)
+        if deleted:
+            _dispatch_recompute()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ChangePasswordView(APIView):

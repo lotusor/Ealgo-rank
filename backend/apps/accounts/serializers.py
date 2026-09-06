@@ -98,7 +98,11 @@ class PlatformAccountSerializer(serializers.ModelSerializer):
         # 回填历史上无人认领的参赛记录（作弊记录不解除排除）
         try:
             from apps.crawler.ingest import rebind_unbound_participations
-            rebind_unbound_participations(pa)
+            rebound = rebind_unbound_participations(pa)
+            if rebound:
+                # 回填的历史成绩立即生效：异步重算排名，不等次日爬虫
+                from apps.accounts.views import _dispatch_recompute
+                _dispatch_recompute()
         except Exception:  # 历史数据缺失不应阻断绑定
             pass
         # 异步补全「参与比赛索引」，解决冷启动预筛死锁：

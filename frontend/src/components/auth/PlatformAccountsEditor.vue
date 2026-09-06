@@ -99,7 +99,7 @@ async function save(p: string) {
 }
 
 async function unbind(p: string, a: PlatformAccount) {
-  if (!confirm(`确定解绑 ${a.handle} 吗？解绑后其历史成绩将不再归属到你名下。`)) return
+  if (!confirm(`确定解绑 ${a.handle} 吗？解绑后其全部历史参赛记录将被移除且不再计入排名；重新绑定同一 ID 后，历史成绩会由系统自动回补（牛客未打过 rated 的场次除外）。`)) return
   busy[p] = true
   try {
     await unbindPlatformAccount(a.id)
