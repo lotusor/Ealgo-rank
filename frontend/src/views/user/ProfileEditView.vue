@@ -57,6 +57,34 @@ async function onRemoveAvatar() {
   }
 }
 
+// ---------- 真实姓名 / 学号 ----------
+const realName = ref('')
+const studentNo = ref('')
+const identityBusy = ref(false)
+
+function syncIdentity() {
+  realName.value = me.value?.real_name ?? ''
+  studentNo.value = me.value?.student_no ?? ''
+}
+onMounted(syncIdentity)
+watch(() => [me.value?.real_name, me.value?.student_no], syncIdentity)
+
+async function saveIdentity() {
+  identityBusy.value = true
+  try {
+    const user = await updateMe({
+      real_name: realName.value.trim(),
+      student_no: studentNo.value.trim(),
+    })
+    auth.setUser(user)
+    toast.success('身份信息已保存')
+  } catch (err: any) {
+    toast.error(err?.message || '保存失败，请重试')
+  } finally {
+    identityBusy.value = false
+  }
+}
+
 // ---------- 个性签名 ----------
 const bio = ref('')
 const bioBusy = ref(false)
@@ -135,6 +163,22 @@ function onAccountsChanged() {
             <input class="input" :value="me?.username" readonly placeholder="用户名" />
             <div class="field-hint">用户名用于排行榜与身份识别，已设置后不可修改</div>
           </div>
+          <div class="field-grid">
+            <div class="field">
+              <label class="field-label">真实姓名</label>
+              <input v-model="realName" class="input" maxlength="50" placeholder="选填，便于核验身份" />
+            </div>
+            <div class="field">
+              <label class="field-label">学号</label>
+              <input v-model="studentNo" class="input" maxlength="50" placeholder="选填" />
+            </div>
+          </div>
+          <div class="field-hint" style="margin-bottom: var(--space-4)">
+            真实姓名会展示在你的公开主页；学号仅本人与管理员可见
+          </div>
+          <button class="btn btn-primary btn-sm" :disabled="identityBusy" @click="saveIdentity">
+            {{ identityBusy ? '保存中…' : '保存身份信息' }}
+          </button>
         </div>
       </div>
     </div>
@@ -172,6 +216,8 @@ function onAccountsChanged() {
 </template>
 
 <style scoped>
+.field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+@media (max-width: 560px) { .field-grid { grid-template-columns: 1fr; } }
 .avatar-edit {
   display: flex;
   flex-direction: column;

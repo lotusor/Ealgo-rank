@@ -261,6 +261,31 @@ class AvatarAndBioTests(APITestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["bio"], "热爱算法竞赛")
 
+    def test_update_identity(self):
+        """真实姓名 / 学号可注册后补填、修改、清空（编辑资料页入口）。"""
+        # 补填
+        r = self.client.put("/api/v1/me/",
+                            {"real_name": "张三", "student_no": "2026010101"},
+                            format="json")
+        self.assertEqual(r.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.real_name, "张三")
+        self.assertEqual(self.user.student_no, "2026010101")
+        # 修改
+        r = self.client.put("/api/v1/me/", {"student_no": "2026010102"},
+                            format="json")
+        self.assertEqual(r.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.student_no, "2026010102")
+        self.assertEqual(self.user.real_name, "张三")  # 未传字段不动
+        # 清空（编辑页提交空字符串）
+        r = self.client.put("/api/v1/me/", {"real_name": "", "student_no": ""},
+                            format="json")
+        self.assertEqual(r.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.real_name, "")
+        self.assertEqual(self.user.student_no, "")
+
     def test_avatar_absent_by_default(self):
         r = self.client.get("/api/v1/me/")
         self.assertIsNone(r.json()["avatar"])
