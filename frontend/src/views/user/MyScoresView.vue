@@ -178,7 +178,8 @@ function accountTag(p: string) {
     <div class="card card-pad profile-card">
       <div class="profile-glow" />
       <div class="profile-head">
-        <div class="avatar lg">{{ initial(me?.real_name || me?.username || '?') }}</div>
+        <img v-if="me?.avatar" :src="me.avatar" class="avatar lg avatar-photo" alt="头像" />
+        <div v-else class="avatar lg">{{ initial(me?.real_name || me?.username || '?') }}</div>
         <div class="profile-id">
           <div style="display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap">
             <h2 class="h2" style="margin: 0">{{ me?.real_name || me?.username || '—' }}</h2>
@@ -343,6 +344,10 @@ function accountTag(p: string) {
   color: #fff;
   box-shadow: var(--shadow-glow);
   flex-shrink: 0;
+}
+.avatar.lg.avatar-photo {
+  object-fit: cover;
+  background: var(--color-surface-raised, #22304a);
 }
 .profile-id { flex: 1; min-width: 200px; }
 .profile-accounts {
