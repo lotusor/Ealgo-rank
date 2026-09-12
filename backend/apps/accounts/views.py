@@ -24,6 +24,8 @@ from apps.accounts.models import (
     NotificationType,
     PlatformAccount,
     User,
+    UserRole,
+    notify,
 )
 from apps.accounts.serializers import (
     ChangePasswordSerializer,
@@ -450,6 +452,53 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(
                 Q(username__icontains=kw) | Q(real_name__icontains=kw))
         return qs
+
+    # ---------- 超管：成员名单直接设置角色（普通用户 ↔ 学校管理员） ----------
+    SETTABLE_ROLES = (UserRole.USER, UserRole.SCHOOL_ADMIN)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsSuperAdmin])
+    def set_role(self, request, pk=None):
+        """超管直接调整成员角色。
+
+        防护：超级管理员身份不通过本接口授予/撤销（下拉不含该档）；
+        不能修改自己（防唯一超管误操作锁死）；设为学校管理员要求用户已
+        归属学校；与现状相同的角色拒绝重复设置。变更后站内信告知本人。
+        """
+        target = self.get_object()
+        role = (request.data.get("role") or "").strip()
+        if role not in self.SETTABLE_ROLES:
+            return Response(
+                {"detail": "角色仅支持 user / school_admin（超级管理员不通过成员名单授予）"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if target == request.user:
+            return Response(
+                {"detail": "不能修改自己的角色"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if role == target.role:
+            return Response(
+                {"detail": f"该用户已经是「{target.get_role_display()}」"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if role == UserRole.SCHOOL_ADMIN and target.school_id is None:
+            return Response(
+                {"detail": "该用户未归属任何学校，无法设为学校管理员"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        old_display = target.get_role_display()
+        target.role = role
+        target.save(update_fields=["role"])
+        notify(
+            target,
+            "账号角色已调整",
+            f"超级管理员已将你的账号角色由「{old_display}」调整为"
+            f"「{target.get_role_display()}」。",
+            type=NotificationType.SYSTEM,
+        )
+        return Response(
+            UserRosterSerializer(target, context={"request": request}).data)
 
 
 class UserPublicProfileView(APIView):

@@ -3,7 +3,11 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from apps.accounts.models import UserRole
+from apps.accounts.models import (
+    Notification,
+    NotificationType,
+    UserRole,
+)
 from apps.contests.models import Contest, Participation
 from apps.schools.models import School
 
@@ -362,3 +366,98 @@ class ChangePasswordTests(APITestCase):
             "new_password2": "NewPass123!",
         }, format="json")
         self.assertEqual(r.status_code, 401)
+
+
+class SetRoleTests(APITestCase):
+    """超管成员名单直接设置角色（普通用户 ↔ 学校管理员），含防护断言。"""
+
+    def setUp(self):
+        self.super = User.objects.create_superuser(
+            username="sup", email="sup@x.com", password="Sup1234!")
+        self.school = School.objects.create(
+            name="测试大学", code="TU", short_name="测大")
+        self.plain = User.objects.create_user(
+            username="plain", email="p@x.com", password="Test1234!")
+        self.schooled = User.objects.create_user(
+            username="schooled", email="s@x.com", password="Test1234!")
+        self.schooled.school = self.school
+        self.schooled.save()
+        self.admin = User.objects.create_user(
+            username="admin2", email="a2@x.com", password="Test1234!",
+            role=UserRole.SCHOOL_ADMIN, school=self.school)
+
+    def _auth(self, user):
+        pwd = "Sup1234!" if user.is_superuser else "Test1234!"
+        token = self.client.post(
+            "/api/v1/auth/token/",
+            {"username": user.username, "password": pwd}).json()["access"]
+        self.client.credentials(HTTP_AUTHORIZATION="Bearer " + token)
+
+    def test_promote_schooled_user_to_school_admin(self):
+        self._auth(self.super)
+        r = self.client.post(
+            f"/api/v1/users/{self.schooled.id}/set_role/",
+            {"role": "school_admin"})
+        self.assertEqual(r.status_code, 200, r.json())
+        self.schooled.refresh_from_db()
+        self.assertEqual(self.schooled.role, UserRole.SCHOOL_ADMIN)
+        self.assertTrue(self.schooled.is_school_admin)
+        # 站内信告知本人
+        self.assertTrue(Notification.objects.filter(
+            user=self.schooled, type=NotificationType.SYSTEM).exists())
+
+    def test_demote_school_admin_to_user(self):
+        self._auth(self.super)
+        r = self.client.post(
+            f"/api/v1/users/{self.admin.id}/set_role/", {"role": "user"})
+        self.assertEqual(r.status_code, 200, r.json())
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.role, UserRole.USER)
+        # 学校归属保留（仅角色降级）
+        self.assertEqual(self.admin.school_id, self.school.id)
+
+    def test_promote_without_school_rejected(self):
+        self._auth(self.super)
+        r = self.client.post(
+            f"/api/v1/users/{self.plain.id}/set_role/",
+            {"role": "school_admin"})
+        self.assertEqual(r.status_code, 400)
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.role, UserRole.USER)
+
+    def test_super_admin_role_not_grantable(self):
+        self._auth(self.super)
+        r = self.client.post(
+            f"/api/v1/users/{self.schooled.id}/set_role/",
+            {"role": "super_admin"})
+        self.assertEqual(r.status_code, 400)
+        self.schooled.refresh_from_db()
+        self.assertEqual(self.schooled.role, UserRole.USER)
+
+    def test_cannot_modify_self(self):
+        self._auth(self.super)
+        r = self.client.post(
+            f"/api/v1/users/{self.super.id}/set_role/", {"role": "user"})
+        self.assertEqual(r.status_code, 400)
+        self.super.refresh_from_db()
+        self.assertTrue(self.super.is_super_admin)
+
+    def test_same_role_rejected(self):
+        self._auth(self.super)
+        r = self.client.post(
+            f"/api/v1/users/{self.plain.id}/set_role/", {"role": "user"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_requires_super_admin(self):
+        # 普通用户 403
+        self._auth(self.plain)
+        r = self.client.post(
+            f"/api/v1/users/{self.schooled.id}/set_role/",
+            {"role": "school_admin"})
+        self.assertEqual(r.status_code, 403)
+        # 学校管理员（非超管）也 403
+        self._auth(self.admin)
+        r = self.client.post(
+            f"/api/v1/users/{self.schooled.id}/set_role/",
+            {"role": "user"})
+        self.assertEqual(r.status_code, 403)

@@ -305,6 +305,15 @@ export async function listUsers(params: PageQuery = {}) {
   return data
 }
 
+/** 超管：成员名单直接设置用户角色（普通用户 ↔ 学校管理员）。 */
+export async function setUserRole(
+  id: number,
+  role: 'user' | 'school_admin',
+): Promise<UserRoster> {
+  const { data } = await client.post<UserRoster>(`/users/${id}/set_role/`, { role })
+  return data
+}
+
 // ---------- Rankings (只读，用户端榜单) ----------
 export async function listRankings(params: PageQuery = {}) {
   const { data } = await client.get<Paginated<RankSnapshot>>('/rankings/', {

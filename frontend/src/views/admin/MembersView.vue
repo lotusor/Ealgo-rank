@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { listUsers, listSchools } from '@/api'
+import { listUsers, listSchools, setUserRole } from '@/api'
 import type { UserRoster, School } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import DataPagination from '@/components/ui/DataPagination.vue'
@@ -15,6 +15,12 @@ const loading = ref(false)
 const page = ref(1)
 const pageSize = 20
 const total = ref(0)
+const settling = ref<number | null>(null)
+
+const roleOptions = [
+  { value: 'user', label: '普通用户' },
+  { value: 'school_admin', label: '学校管理员' },
+] as const
 
 const keyword = ref('')
 const bind = ref<'all' | 'full' | 'partial'>('all')
@@ -43,6 +49,32 @@ async function load() {
     toast.error(e?.response?.data?.detail || '加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function onRoleChange(u: UserRoster, ev: Event) {
+  const el = ev.target as HTMLSelectElement
+  const next = el.value
+  const label = roleOptions.find((o) => o.value === next)?.label ?? next
+  if (
+    !confirm(
+      `确认将「${u.real_name || u.username}」的角色调整为「${label}」？`,
+    )
+  ) {
+    el.value = u.role
+    return
+  }
+  settling.value = u.id
+  try {
+    const updated = await setUserRole(u.id, next as 'user' | 'school_admin')
+    u.role = updated.role
+    u.role_display = updated.role_display
+    toast.success(`已将「${updated.real_name || updated.username}」调整为「${updated.role_display}」`)
+  } catch (e: any) {
+    el.value = u.role
+    toast.error(e?.response?.data?.detail || '调整失败')
+  } finally {
+    settling.value = null
   }
 }
 
@@ -122,7 +154,19 @@ onMounted(() => {
                 <span :class="u.platform_accounts_count >= 3 ? 'text-success' : 'text-warning'">{{ u.platform_accounts_count }}</span>
                 <span class="text-tertiary">/3</span>
               </td>
-              <td><span class="badge" :class="roleCls(u.role)">{{ u.role_display }}</span></td>
+              <td>
+                <select
+                  v-if="auth.isSuperAdmin && u.role !== 'super_admin'"
+                  class="input"
+                  style="width: auto; padding: 4px 8px; font-size: 13px"
+                  :value="u.role"
+                  :disabled="settling === u.id"
+                  @change="onRoleChange(u, $event)"
+                >
+                  <option v-for="o in roleOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+                </select>
+                <span v-else class="badge" :class="roleCls(u.role)">{{ u.role_display }}</span>
+              </td>
               <td class="num-cell">{{ fmtDate(u.date_joined) }}</td>
             </tr>
             <tr v-if="!data.length"><td colspan="7" class="empty-cell">暂无成员</td></tr>
