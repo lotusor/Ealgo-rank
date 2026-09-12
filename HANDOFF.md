@@ -540,6 +540,14 @@ def relevant_contest_ids(platform):
 
 **测试**：accounts +7 例（升级/降级/无学校 400/super_admin 档 400/改自己 400/同角色 400/权限隔离 403），全量 **151 OK**。生产部署：dist 保 inode 替换 + backend 镜像重建（`docker compose build backend`，服务名 backend 为 **rank** compose 特有；passport 对应服务名是 **web**，两者勿混）。
 
+### 1.7.21 积分永不重置声明 + 折线图一年窗口 + 牛客历史补抓（2026-09-13，已上线）
+
+**三需求**（用户提出）与落地：
+
+1. **赛季积分重置取消**：核查结论——后端数据层（ScoreRecord / 站点 rating）**从不因赛季清零**（`SeasonConfig.auto_reset` 无消费方；`recompute_all` 只按 period 生成两个统计视图）。用户可感知的"清零"在赛季横幅 `me` 统计（原读 `period=str(year)`，新赛季归零）。已改 `user_season_stats` 读 **`period="all"`**（横幅排名/积分/场次跨赛季连续），`engine.py` 顶部加"积分永不重置"声明注释；**年度 period 视图与赛季前端 UI 均保留原样**（用户明确要求不动前端、不动赛季模块）。
+2. **成长折线图一年窗口**：`rating_history(user_id, days=365)`——**rating 重演仍基于全部历史**（窗口口径不变），仅输出最近 365 天的数据点（一年前的旧比赛不再画入折线，但其对当前 rating 的影响完整保留）。
+3. **Chen777iii 牛客积分缺失**：定位链——NC 绑定索引 35 场（官方 rating-history 接口、全 rated）vs Participation 仅 14 场 → **21 场 rated 历史比赛因爬取窗口（months_back）限制从未入库**（每场 2024-12~2025-09，久于窗口）。修复：新增管理命令 `backfill_indexed_nowcoder`（按账号索引补抓本站未收录的 rated 比赛：contest-info 判 rated → 抓榜单 → ingest_contest → 自动全量重算）。生产补抓 **21 场全部入库**（+21 ScoreRecord，Chen777iii NC Participation 14→35），rating_history 从 21 条修正、折线图恢复。⚠️ 该命令幂等，后续其他账号出现同类缺口可直接复跑。
+
 **H1 执行前仍需用户提供**
 
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
