@@ -518,6 +518,28 @@ def relevant_contest_ids(platform):
 
 **验证**：本地 144 tests OK（+3：解绑删记录且触发重算、空账号解绑不重算、绑定回填触发重算）+ vue-tsc 零错误；线上容器内代码特征（_dispatch_recompute/destroy 逻辑）grep 确认、healthz ok、前端 asset hash 线上磁盘一致、七容器 Up。测试基线更新为 **144 OK**。
 
+### 1.7.19 个人中心自定义头像不显示修复（2026-09-08，已上线验证）
+
+**现象**：个人中心（/u/my-scores）用户卡片的自定义头像不显示，始终是首字母占位；导航栏小头像与编辑资料页（/u/profile）均正常。
+
+**排查**：四层逐一排除——静态文件（/media/avatars/*.png 200/image/png）✓、nginx /media/ 配置（attachment 仅限 admin_apply）✓、API 序列化（/me/ 与 /users/:id/profile/ 均返回完整绝对 URL）✓、真实浏览器登录态复现（agent-browser 注入 token 后 DOM 检查）→ **根因锁定**：`MyScoresView.vue` 用户卡片头像**写死首字母 fallback，没有 `me.avatar` 分支**——v3 批次重构该文件（110 行改动）时丢失了自定义头像渲染，纯前端模板回归。
+
+**修复**（commit `2bb47fc`）：与 ProfileEditView 一致的双分支——`<img v-if="me?.avatar" class="avatar lg avatar-photo">`（object-fit: cover）+ 无头像回退首字母。
+
+**验证**：vue-tsc 零错误 → 生产构建 → dist 保 inode 替换部署（无容器重启）→ 真实浏览器 DOM 断言 `hasImg: true / naturalWidth: 480 / fallback: false`。
+
+**教训**：大版本重构页面时，模板分支的「功能清单」要以 grep 全站同字段引用为基线（`grep -rn avatar views/`），避免同名功能在其他页面静默缺失。
+
+### 1.7.20 成员名单超管直接设置角色（2026-09-09，已上线验证）
+
+**需求**：超管在「成员名单」（/admin/members）直接调整单个用户角色，免去"驳回申请→让用户下月重新申请"的绕路。设计确认：下拉仅**普通用户 ↔ 学校管理员**两档（超级管理员身份不经页面授予）；学校归属不在此处改（仍走申请审批流程）。
+
+**后端**（accounts/views.py，commit `253d5c4`）：`UserViewSet` 新增超管专用动作 `POST /api/v1/users/:id/set_role/`（permission=[IsSuperAdmin]）。防护四条：① 不能修改自己（防唯一超管误操作）；② `super_admin` 档拒绝授予；③ 同角色幂等拒绝；④ 无学校用户不可设校管（校管身份与学校绑定）。变更后 `notify()` 站内信告知本人（SYSTEM 类型）。响应直接返回该用户的 UserRosterSerializer 数据供前端原位更新。
+
+**前端**（MembersView.vue）：角色列超管视角渲染两级下拉（confirm 确认，失败回滚 select 值）；学校管理员视角保持 badge 只读。
+
+**测试**：accounts +7 例（升级/降级/无学校 400/super_admin 档 400/改自己 400/同角色 400/权限隔离 403），全量 **151 OK**。生产部署：dist 保 inode 替换 + backend 镜像重建（`docker compose build backend`，服务名 backend 为 **rank** compose 特有；passport 对应服务名是 **web**，两者勿混）。
+
 **H1 执行前仍需用户提供**
 
 - 宝塔 PostgreSQL 连接账号密码、Redis 端口（默认 6379 容器内是否可达）
