@@ -95,10 +95,15 @@ def settle_countdown(season, now=None):
 
 
 def user_season_stats(user_id, season_year):
-    """用户当前赛季战绩：从学生榜快照读排名 / 总积分 / 场次。"""
+    """用户赛季战绩：读学生榜快照。
+
+    2026-09-13 起榜单只保留 period="all" 口径（v3 站点 rating 实时评估、
+    跨赛季连续，不再按年清零重计），赛季横幅里的"我的排名/积分/场次"
+    因此展示全历史口径；season_year 参数保留以兼容调用方。
+    """
     snap = (RankSnapshot.objects
             .filter(scope=RankSnapshot.Scope.STUDENT,
-                    period=str(season_year), user_id=user_id)
+                    period="all", user_id=user_id)
             .first())
     if snap is None:
         return {"rank": None, "total_score": 0, "contest_count": 0}

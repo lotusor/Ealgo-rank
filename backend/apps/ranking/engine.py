@@ -17,7 +17,7 @@
 - 周期 period：'all' + 当前年份。
 """
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from statistics import NormalDist
 
 from django.utils import timezone
@@ -27,7 +27,11 @@ from apps.contests.models import ContestDifficultyFactor
 from apps.ranking.models import RankSnapshot, ScoreRecord, UserBestRecord
 from apps.schools.models import ScoreConfig
 
-# 生成的快照周期：全部 + 当前年份
+# 生成的快照周期：全部 + 当前年份。
+# ⚠️ 2026-09-13 声明（用户决策）：v3 站点 rating 是实时水平评估，**积分数据
+# 永不因赛季切换而重置**——ScoreRecord / 站点 rating 全历史连续，赛季仅作为
+# 展示口径（年度 period 视图 = 该年度内比赛的统计切片）。SeasonConfig.auto_reset
+# 为历史遗留声明字段，无任何消费方，禁止实现"清空积分"类逻辑。
 ALL_PERIODS = ["all", str(timezone.now().year)]
 
 # 表现分离散度：名次每偏离中位 1 个 σ 对应的水平差（CF 种子公式的斜率）
@@ -332,10 +336,11 @@ def recompute_all(periods=None):
     return result
 
 
-def rating_history(user_id):
+def rating_history(user_id, days=365):
     """站点 rating 时间线：沿时间轴每场赛后重算窗口 rating（与榜单口径一致）。
 
-    返回按时间升序的列表：
+    返回按时间升序的列表（仅最近 `days` 天，默认一年；重演本身仍基于
+    全部历史——窗口 rating 是全历史口径，一年只是展示窗口）：
       [{contest_id, contest_name, contest_time, platform, perf, rating,
         rank, participant_count}]
     供「全部」折线图使用——单一事实源在后端，前端不再自行聚合。
@@ -349,14 +354,18 @@ def rating_history(user_id):
         .order_by("contest_time"))
     out = []
     perfs = []  # 时间升序累计
+    cutoff = (timezone.now() - timedelta(days=days)) if days else None
     for r in recs:
         perfs.append(r.final_score)
         rating = _site_rating(list(reversed(perfs)), config)
         p = r.participation
+        point_time = r.contest_time
+        if cutoff is not None and point_time and point_time < cutoff:
+            continue  # 展示窗口外：不输出（但 rating 链已计入）
         out.append({
             "contest_id": p.contest_id,
             "contest_name": p.contest.name,
-            "contest_time": r.contest_time,
+            "contest_time": point_time,
             "platform": r.platform,
             "perf": round(r.final_score, 1),
             "rating": round(rating, 1),
