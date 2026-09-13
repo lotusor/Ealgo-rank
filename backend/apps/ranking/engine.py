@@ -27,11 +27,7 @@ from apps.contests.models import ContestDifficultyFactor
 from apps.ranking.models import RankSnapshot, ScoreRecord, UserBestRecord
 from apps.schools.models import ScoreConfig
 
-# 生成的快照周期：全部 + 当前年份。
-# ⚠️ 2026-09-13 声明（用户决策）：v3 站点 rating 是实时水平评估，**积分数据
-# 永不因赛季切换而重置**——ScoreRecord / 站点 rating 全历史连续，赛季仅作为
-# 展示口径（年度 period 视图 = 该年度内比赛的统计切片）。SeasonConfig.auto_reset
-# 为历史遗留声明字段，无任何消费方，禁止实现"清空积分"类逻辑。
+# 生成的快照周期：全部 + 当前年份
 ALL_PERIODS = ["all", str(timezone.now().year)]
 
 # 表现分离散度：名次每偏离中位 1 个 σ 对应的水平差（CF 种子公式的斜率）

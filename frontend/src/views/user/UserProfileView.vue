@@ -45,6 +45,12 @@ const chartPoints = computed(() => {
   }
   const rows = (profile.value?.participations || [])
     .filter((r) => r.new_rating != null && r.contest_start_time != null && r.contest_platform === chartPlatform.value)
+    // 折线图只展示最近一年的波动（2026-09-13，与「全部」tab 口径一致）
+    .filter(
+      (r) =>
+        new Date(r.contest_start_time!).getTime() >=
+        Date.now() - 365 * 86400000,
+    )
     .sort((a, b) => new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime())
   return rows.map((r) => ({
     label: r.contest_start_time as string,
