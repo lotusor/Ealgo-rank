@@ -544,6 +544,8 @@ def relevant_contest_ids(platform):
 
 **三需求**（用户提出）与落地：
 
+0b. **校验错误信息透出**（同日，commit `9fd26b6`）：`api_exception_handler` 原先把字段级校验错误（`{field: [msg]}`）的 detail 写死为「参数校验失败」，真实原因（如月度限制、已是管理员）藏在 errors 里——而前端全部调用点统一读 `detail`，造成"报错信息与实际问题不符"。修复：`_first_message` 递归提取首条原因（`non_field_errors` 优先，兼容嵌套 serializer / list 嵌套）提升为 detail，errors 明细保留（表单字段级提示可用）。前端零改动自动生效。测试 +2（形态矩阵 + 端到端断言）。
+
 0. **补充修正（同日，commit `0c9dbbc`，用户澄清后）**：横幅 me 语义精确化——**rank/total_score 读 all（跨赛季连续），contest_count 读当年口径（按赛季统计）**；engine.py 声明注释按用户要求移除；**公开页与个人中心折线图的单平台 tab**（官方 new_rating 序列）补加最近一年过滤，与「全部」tab 一致；生产补跑 `backfill_nowcoder_ratings()`（补抓的 21 场此前只有积分记录没有官方 rating 涨落，回填 +35 条，Chen777iii 牛客 35 场 new_rating 全齐——**单平台折线图数据完整的前置**）。⚠️ 教训：`backfill_indexed_nowcoder` 补抓后必须补跑 rating 回填（榜单不含 rating 字段），或把该回填内聚进命令尾部。
 
 1. **赛季积分重置取消**：核查结论——后端数据层（ScoreRecord / 站点 rating）**从不因赛季清零**（`SeasonConfig.auto_reset` 无消费方；`recompute_all` 只按 period 生成两个统计视图）。用户可感知的"清零"在赛季横幅 `me` 统计（原读 `period=str(year)`，新赛季归零）。已改 `user_season_stats` 读 **`period="all"`**（横幅排名/积分/场次跨赛季连续），`engine.py` 顶部加"积分永不重置"声明注释；**年度 period 视图与赛季前端 UI 均保留原样**（用户明确要求不动前端、不动赛季模块）。
