@@ -1,9 +1,25 @@
 <script setup lang="ts">
+/**
+ * 全站顶部导航。
+ *
+ * 改造要点（2026-09-18）：
+ *  - 导航项不再写死在组件里（旧版桌面与移动抽屉各写一份，新增功能要改两处），
+ *    统一取自 `@/config/navRegistry`，三处渲染共用一份清单。
+ *  - 顶部只展示用户自定义的选项卡（`NavTabs`），其余收进「全部功能」面板
+ *    （`NavPalette`）；≤768px 时选项卡条隐藏，抽屉直接复用同一面板内容。
+ *  - 未登录时只展示公开功能，右侧降级为「登录 / 注册」。
+ */
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
+import { useNavTabs } from '@/composables/useNavTabs'
+import { toast } from '@/composables/useToast'
+import { groupedNavItems } from '@/config/navRegistry'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import Popover from '@/components/ui/Popover.vue'
+import NavTabs from '@/components/layout/NavTabs.vue'
+import NavPalette from '@/components/layout/NavPalette.vue'
 import {
   fetchNotifications,
   markNotificationRead,
@@ -17,19 +33,26 @@ const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
-const nav = [
-  { label: '首页', key: 'home', path: '/u' },
-  { label: '排名榜', key: 'rankings', path: '/u/rankings' },
-  { label: '比赛列表', key: 'contests', path: '/u/contests' },
-  { label: '积分规则', key: 'score-rules', path: '/u/score-rules' },
-  { label: '个人中心', key: 'my-scores', path: '/u/my-scores' },
-  { label: '账号安全', key: 'security', path: '/u/security' },
-]
+// 导航清单 + 用户自定义选项卡（偏好存 localStorage['nav_tabs']）
+const {
+  tabItems,
+  pinnedKeys,
+  maxTabs,
+  toggle: toggleTab,
+  moveBy,
+  moveTo,
+  reset: resetTabs,
+} = useNavTabs(auth)
+const paletteSections = computed(() => groupedNavItems(auth))
 
-const activeKey = computed(() => route.name as string)
+/** 当前高亮项：后台整体高亮「管理后台」 */
+const activeKey = computed(() => {
+  if (route.path.startsWith('/admin')) return 'dashboard'
+  return typeof route.name === 'string' ? route.name : ''
+})
 
 const menuOpen = ref(false)
-const menuRef = ref<HTMLElement | null>(null)
+const paletteOpen = ref(false)
 
 // ---------- 站内信收件箱（铃铛） ----------
 const notifOpen = ref(false)
@@ -82,19 +105,48 @@ function fmtTime(s: string) {
   return Number.isNaN(d.getTime()) ? s : d.toLocaleString()
 }
 
+// 铃铛面板仍是内联实现（外点关闭）；用户菜单与功能面板改用 Popover 统一处理
 function onDocClick(e: MouseEvent) {
   const t = e.target as Node
-  if (menuRef.value && !menuRef.value.contains(t)) menuOpen.value = false
   if (bellRef.value && !bellRef.value.contains(t)) notifOpen.value = false
 }
 onMounted(() => document.addEventListener('mousedown', onDocClick))
 onUnmounted(() => document.removeEventListener('mousedown', onDocClick))
 
 const drawerOpen = ref(false)
-function go(path: string) {
+
+function closeAll() {
   drawerOpen.value = false
   menuOpen.value = false
+  paletteOpen.value = false
+  notifOpen.value = false
+}
+
+/** 按功能键跳转（键即路由 name） */
+function goByKey(key: string) {
+  closeAll()
+  if (route.name === key) return
+  router.push({ name: key })
+}
+
+function goPath(path: string) {
+  closeAll()
   router.push(path)
+}
+
+/** 固定 / 取消固定选项卡，并给出边界提示 */
+function onToggleTab(key: string) {
+  const result = toggleTab(key)
+  if (result === 'max') {
+    toast(`最多固定 ${maxTabs} 个，可先移除一个`, 'info')
+  } else if (result === 'min') {
+    toast('至少保留 1 个选项卡', 'info')
+  }
+}
+
+function onResetTabs() {
+  resetTabs()
+  toast('已恢复默认选项卡', 'success')
 }
 
 const roleBadge = computed(() =>
@@ -117,28 +169,48 @@ defineExpose({ drawerOpen })
 <template>
   <header class="navbar">
     <div class="navbar-inner">
-      <div class="brand" @click="go('/u')">
+      <div class="brand" @click="auth.isAuthenticated ? goByKey('home') : goPath('/calendar')">
         <div class="brand-mark">
           <img src="/logo-64.png" alt="E-algo Rank" />
         </div>
-        <span>E-algo <span class="brand-accent">Rank</span></span>
+        <span class="brand-text">E-algo <span class="brand-accent">Rank</span></span>
       </div>
 
-      <nav class="nav-links">
-        <a
-          v-for="item in nav"
-          :key="item.key"
-          :class="{ active: activeKey === item.key }"
-          @click="go(item.path)"
-          >{{ item.label }}</a
-        >
-        <a
-          v-if="auth.isAdmin"
-          :class="{ active: activeKey === 'dashboard' || (route.path.startsWith('/admin') && activeKey !== 'dashboard') }"
-          @click="go('/admin/dashboard')"
-          >管理后台</a
-        >
-      </nav>
+      <NavTabs
+        :items="tabItems"
+        :active-key="activeKey"
+        @navigate="goByKey"
+      />
+
+      <Popover v-model:open="paletteOpen" align="start" panel-width="300px" class="nav-palette">
+        <template #trigger="{ toggle, open }">
+          <button
+            class="nav-palette-btn"
+            :class="{ active: open }"
+            type="button"
+            :aria-expanded="open"
+            title="全部功能"
+            @click="toggle"
+          >
+            全部功能
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+        </template>
+        <template #panel>
+          <NavPalette
+            :sections="paletteSections"
+            :pinned-keys="pinnedKeys"
+            :max-tabs="maxTabs"
+            @toggle="onToggleTab"
+            @move-by="moveBy"
+            @move-to="moveTo"
+            @reset="onResetTabs"
+            @navigate="goByKey"
+          />
+        </template>
+      </Popover>
 
       <div class="nav-actions">
         <button class="btn btn-ghost btn-icon" :title="theme === 'dark' ? '切换到浅色' : '切换到深色'" @click="toggleTheme">
@@ -172,28 +244,35 @@ defineExpose({ drawerOpen })
             </div>
           </div>
         </div>
-        <button v-if="!auth.isAuthenticated" class="btn btn-primary btn-sm" @click="go('/login')">
+
+        <button v-if="!auth.isAuthenticated" class="btn btn-primary btn-sm" @click="goPath('/login')">
           登录 / 注册
         </button>
-        <div v-else class="user-menu" ref="menuRef">
-          <button class="user-trigger" @click="menuOpen = !menuOpen">
-            <UserAvatar
-              :name="auth.user?.real_name || auth.user?.username"
-              :avatar="auth.user?.avatar"
-              :size="28"
-            />
-            <span class="user-name">{{ auth.user?.real_name || auth.user?.username }}</span>
-            <span class="badge" :class="roleBadge.cls">{{ roleBadge.text }}</span>
-          </button>
-          <div v-if="menuOpen" class="menu">
-            <a v-if="auth.isAdmin" @click="go('/admin/dashboard')">后台管理</a>
-            <a @click="go('/u/my-scores')">个人中心</a>
-            <a @click="go('/u/security')">账号安全</a>
-            <a class="danger" @click="doLogout">退出登录</a>
-          </div>
-        </div>
 
-        <button class="nav-toggle" @click="drawerOpen = !drawerOpen">
+        <Popover v-else v-model:open="menuOpen" align="end" panel-width="180px">
+          <template #trigger="{ toggle, open }">
+            <button class="user-trigger" type="button" :aria-expanded="open" @click="toggle">
+              <UserAvatar
+                :name="auth.user?.real_name || auth.user?.username"
+                :avatar="auth.user?.avatar"
+                :size="28"
+              />
+              <span class="user-name">{{ auth.user?.real_name || auth.user?.username }}</span>
+              <span class="badge" :class="roleBadge.cls">{{ roleBadge.text }}</span>
+            </button>
+          </template>
+          <template #panel>
+            <div class="menu-list">
+              <a v-if="auth.isAdmin" @click="goByKey('dashboard')">后台管理</a>
+              <a @click="goByKey('my-scores')">个人中心</a>
+              <a @click="goByKey('profile')">资料编辑</a>
+              <a @click="goByKey('security')">账号安全</a>
+              <a class="danger" @click="doLogout">退出登录</a>
+            </div>
+          </template>
+        </Popover>
+
+        <button class="nav-toggle" :aria-expanded="drawerOpen" aria-label="打开菜单" @click="drawerOpen = !drawerOpen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M3 12h18M3 6h18M3 18h18" />
           </svg>
@@ -203,20 +282,91 @@ defineExpose({ drawerOpen })
   </header>
 
   <div class="mobile-drawer" :class="{ open: drawerOpen }">
-    <a
-      v-for="item in nav"
-      :key="item.key"
-      :class="{ active: activeKey === item.key }"
-      @click="go(item.path)"
-      >{{ item.label }}</a
-    >
-    <a v-if="auth.isAdmin" :class="{ active: route.path.startsWith('/admin') }" @click="go('/admin/dashboard')">管理后台</a>
+    <NavPalette
+      :sections="paletteSections"
+      :pinned-keys="pinnedKeys"
+      :max-tabs="maxTabs"
+      @toggle="onToggleTab"
+      @move-by="moveBy"
+      @move-to="moveTo"
+      @reset="onResetTabs"
+      @navigate="goByKey"
+    />
   </div>
 </template>
 
 <style scoped>
-.user-menu {
-  position: relative;
+.user-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  transition: all var(--duration-base) var(--ease-standard);
+}
+.user-trigger:hover {
+  border-color: var(--color-border-focus);
+}
+.user-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 「全部功能」触发器：视觉上与选项卡同排 */
+.nav-palette-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--duration-base) var(--ease-standard);
+}
+.nav-palette-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.nav-palette-btn:hover,
+.nav-palette-btn.active {
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+}
+
+/* Popover 面板内的菜单列表（面板外观由 Popover 提供） */
+.menu-list {
+  padding: var(--space-2);
+}
+.menu-list a {
+  display: block;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+.menu-list a:hover {
+  background: var(--color-bg-overlay);
+  color: var(--color-text-primary);
+}
+.menu-list a.danger:hover {
+  color: var(--color-danger);
 }
 
 /* ---------- 站内信铃铛 ---------- */
@@ -316,56 +466,18 @@ defineExpose({ drawerOpen })
   font-size: 12px;
   color: var(--color-text-muted);
 }
-.user-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  height: var(--control-height);
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  transition: all var(--duration-base) var(--ease-standard);
-}
-.user-trigger:hover {
-  border-color: var(--color-border-focus);
-}
-.user-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 8px);
-  min-width: 160px;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  padding: var(--space-2);
-  z-index: var(--z-dropdown);
-}
-.menu a {
-  display: block;
-  padding: var(--space-3) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--duration-fast);
-}
-.menu a:hover {
-  background: var(--color-bg-overlay);
-  color: var(--color-text-primary);
-}
-.menu a.danger:hover {
-  color: var(--color-danger);
+
+/* 移动端：选项卡条由既有全局规则隐藏，这里同步隐藏「全部功能」按钮
+   （抽屉里已是同一份面板，无需重复入口）。
+   窄屏只保留 Logo 图形与头像：品牌文字 + 角色徽标会把导航栏撑到
+   500px 以上，在 390px 视口产生横向滚动（既有缺陷，2026-09-18 随导航改造修复）。 */
+@media (max-width: 768px) {
+  .nav-palette-btn,
+  .nav-palette,
+  .brand-text,
+  .user-name,
+  .user-trigger .badge {
+    display: none;
+  }
 }
 </style>

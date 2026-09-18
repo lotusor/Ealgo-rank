@@ -46,6 +46,20 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      // 竞赛日历（公开：未登录也能浏览赛程）
+      // optionalAuth = 未登录放行；已登录则停留原页（不像 login/register 那样按角色分流）
+      path: '/calendar',
+      component: () => import('@/layouts/PublicLayout.vue'),
+      meta: { optionalAuth: true },
+      children: [
+        {
+          path: '',
+          name: 'calendar',
+          component: () => import('@/views/user/CalendarView.vue'),
+        },
+      ],
+    },
+    {
       // 用户端（普通注册用户 + 管理员均可访问）
       path: '/u',
       component: () => import('@/layouts/PublicLayout.vue'),
@@ -179,6 +193,19 @@ router.beforeEach(async (to) => {
   if (to.meta.public) {
     if (auth.isAuthenticated && auth.isAdmin) return { name: 'dashboard' }
     if (auth.isAuthenticated && !auth.isAdmin) return { name: 'rankings' }
+    return true
+  }
+
+  // 公开但登录后停留原页（如竞赛日历）：未登录直接放行；
+  // 已登录仍受「资料补全」约束，与全站其余页面保持一致。
+  if (to.meta.optionalAuth) {
+    if (
+      auth.isAuthenticated &&
+      !auth.isProfileComplete &&
+      to.name !== 'register-complete'
+    ) {
+      return { name: 'register-complete' }
+    }
     return true
   }
 

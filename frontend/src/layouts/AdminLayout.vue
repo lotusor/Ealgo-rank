@@ -50,6 +50,20 @@ function go(name: string) {
     <NavBar />
     <SystemAnnouncement />
     <div class="admin-body">
+      <button
+        class="admin-sidebar-toggle"
+        type="button"
+        :aria-expanded="drawerOpen"
+        aria-label="切换后台菜单"
+        @click="drawerOpen = !drawerOpen"
+      >
+        <svg v-if="!drawerOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12h18M3 6h18M3 18h18" />
+        </svg>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg>
+      </button>
       <aside class="admin-sidebar" :class="{ open: drawerOpen }">
         <template v-for="grp in groups" :key="grp.label">
           <div class="sidebar-group-label">{{ grp.label }}</div>
@@ -145,7 +159,37 @@ function go(name: string) {
 .admin-backdrop {
   display: none;
 }
+
+/* 窄屏唤出后台侧栏的浮动按钮。
+   修复既有 bug：≤860px 时侧栏被 translateX(-100%) 移出屏幕，
+   而 NavBar 的汉堡只管它自己的移动抽屉，导致后台菜单无法唤出。 */
+.admin-sidebar-toggle {
+  display: none;
+}
+
 @media (max-width: 860px) {
+  .admin-sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    left: var(--space-4);
+    bottom: var(--space-4);
+    width: 46px;
+    height: 46px;
+    border: none;
+    border-radius: var(--radius-full);
+    background: var(--color-primary);
+    color: #fff;
+    box-shadow: var(--shadow-lg);
+    /* 高于侧栏与遮罩，展开时仍可点击收起 */
+    z-index: calc(var(--z-sidebar) + 1);
+    cursor: pointer;
+  }
+  .admin-sidebar-toggle svg {
+    width: 20px;
+    height: 20px;
+  }
   .admin-sidebar {
     position: fixed;
     top: var(--nav-height);
