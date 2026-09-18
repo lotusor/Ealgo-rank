@@ -49,6 +49,20 @@ export interface NavViewer {
   isSuperAdmin: boolean
 }
 
+/**
+ * ⚠️ **「竞赛日历」入口当前未开放（2026-09-18 上线导航时临时摘除）**。
+ *
+ * 原因：日历前端依赖后端新增的 `/api/v1/contests/meta/` 与 `status=` /
+ * `end_after=` 过滤，而该后端尚未部署；若此时暴露入口，用户点进去会看到加载失败。
+ *
+ * 放开步骤（后端与日历前端一起部署时）：
+ *  1. 在下方 `NAV_ITEMS` 的「赛事」分组内恢复 calendar 项：
+ *     `{ key: 'calendar', label: '竞赛日历', group: 'contest',
+ *        icon: 'M3 4h18v18H3zM16 2v4M8 2v4M3 10h18',
+ *        desc: '赛程月历与近期赛事', anonymous: true }`
+ *  2. 恢复 `router/index.ts` 里的 `/calendar` 路由（`meta: { optionalAuth: true }`）
+ *  详见 HANDOVER §1.7.22。
+ */
 export const NAV_ITEMS: NavItem[] = [
   {
     key: 'home',
@@ -56,14 +70,6 @@ export const NAV_ITEMS: NavItem[] = [
     group: 'overview',
     icon: 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10',
     desc: '数据看板与快捷入口',
-  },
-  {
-    key: 'calendar',
-    label: '竞赛日历',
-    group: 'contest',
-    icon: 'M3 4h18v18H3zM16 2v4M8 2v4M3 10h18',
-    desc: '赛程月历与近期赛事',
-    anonymous: true,
   },
   {
     key: 'contests',
@@ -149,7 +155,10 @@ export function groupedNavItems(
 
 /**
  * 首次访问（用户从未自定义过）时默认固定在顶部的项。
- * 未登录时其中多数不可见，`useNavTabs` 会自动退化为"仅日历"。
+ * 未登录时其中多数不可见，`useNavTabs` 会自动退化为"仅可见的那部分"。
+ *
+ * 注：`calendar` 当前不在 `NAV_ITEMS` 里（竞赛日历入口暂未开放，见下），
+ * 保留在此是为了放开时无需改这里；`useNavTabs` 会自动忽略清单里不存在的键。
  */
 export const DEFAULT_TAB_KEYS = ['home', 'rankings', 'calendar', 'contests']
 
