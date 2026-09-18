@@ -244,6 +244,24 @@ export interface Contest {
   created_at: string
 }
 
+// 竞赛日历所需的元数据（GET /contests/meta/）
+export interface ContestMetaPlatform {
+  key: string
+  label: string
+  count: number
+}
+
+export interface ContestMeta {
+  total: number
+  ongoing: number
+  upcoming: number
+  finished: number
+  rated: number
+  platforms: ContestMetaPlatform[]
+  series: string[]
+  latest_sync_at: string | null
+}
+
 // 榜单快照（只读）
 export type RankScope = 'school' | 'student'
 export type RankPeriod = 'all' | string // "all" 或具体年份如 "2026"

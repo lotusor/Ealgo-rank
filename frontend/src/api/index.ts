@@ -13,6 +13,7 @@ import type {
   CrawlJob,
   Participation,
   Contest,
+  ContestMeta,
   RankSnapshot,
   MyParticipation,
   UserPublicProfile,
@@ -331,6 +332,15 @@ export async function getUserPublicProfile(id: number): Promise<UserPublicProfil
 // ---------- Contests (只读，用户端比赛列表) ----------
 export async function listContests(params: PageQuery = {}) {
   const { data } = await client.get<Paginated<Contest>>('/contests/', { params })
+  return data
+}
+
+/**
+ * 竞赛日历所需的元数据（平台 + 计数 + 系列 + 最近同步时间）。
+ * 计数为全量统计、不受筛选影响，用于渲染筛选条的计数徽标。
+ */
+export async function fetchContestMeta(): Promise<ContestMeta> {
+  const { data } = await client.get<ContestMeta>('/contests/meta/')
   return data
 }
 
