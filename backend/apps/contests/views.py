@@ -4,12 +4,14 @@
 - exclude / restore 动作：人工剔除与恢复（仅改 is_excluded，原因由模型自动置 MANUAL / 清空）
 权限：学校管理员 / 超级管理员；学校管理员仅能见本校记录。
 """
+from django.db.models import Count, Max, Q
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 
-from apps.common.models import ExcludeReason
+from apps.common.models import ExcludeReason, Platform
 from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin
 from apps.contests.models import Contest, ContestDifficultyFactor, Participation
 from apps.contests.serializers import (
@@ -22,12 +24,31 @@ from config.pagination import StandardPagination
 
 
 class ContestViewSet(viewsets.ReadOnlyModelViewSet):
-    """比赛只读列表 / 详情（用户端展示）。支持平台 / rated / 名称 / 时间过滤。"""
+    """比赛只读列表 / 详情（用户端展示，匿名可读）。
+
+    过滤维度：
+      platform / is_rated / name / series        常规检索
+      start_after / start_before / end_after / end_before   时间区间（日历按月取场次）
+      status=ongoing|upcoming|finished           按当前时间派生的赛事状态（不落库）
+      search=<关键字>                             名称与赛事系列模糊匹配
+      ordering=start_time|end_time|…             白名单排序
+
+    ⚠️ 默认行为（不带任何参数）保持不变：返回全部比赛、按 `-start_time` 排序，
+    以免影响既有「比赛列表」页与难度系数设置页。
+    """
+
     serializer_class = ContestSerializer
     pagination_class = StandardPagination
     permission_classes = [IsAuthenticatedOrReadOnly]
     queryset = Contest.objects.all()
     ordering = ["-start_time"]
+    # 显式白名单：OrderingFilter 未设 ordering_fields 时会放开序列化器全部字段
+    ordering_fields = [
+        "start_time", "end_time", "duration_minutes",
+        "participant_count", "created_at",
+    ]
+    # 启用 ?search=（此前未设 search_fields，SearchFilter 是空操作）
+    search_fields = ["name", "series"]
 
     def get_queryset(self):
         qs = Contest.objects.all()
@@ -40,11 +61,70 @@ class ContestViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(is_rated=False)
         if qp.get("name"):
             qs = qs.filter(name__icontains=qp["name"])
+        if qp.get("series"):
+            qs = qs.filter(series=qp["series"])
         if qp.get("start_after"):
             qs = qs.filter(start_time__gte=qp["start_after"])
         if qp.get("start_before"):
             qs = qs.filter(start_time__lte=qp["start_before"])
+        # 结束时间区间：日历按月/周取场次时用（跨月赛事按结束时间归属）
+        if qp.get("end_after"):
+            qs = qs.filter(end_time__gte=qp["end_after"])
+        if qp.get("end_before"):
+            qs = qs.filter(end_time__lte=qp["end_before"])
+
+        # 赛事状态由时间派生，不新增数据库字段。
+        # 注：end_time 为空的记录只在不带 status 时可见（三平台爬虫均会写入
+        # end_time，为空属异常数据，不猜测其状态）。
+        status_param = (qp.get("status") or "").strip().lower()
+        if status_param:
+            now = timezone.now()
+            if status_param == "ongoing":
+                qs = qs.filter(start_time__lte=now, end_time__gt=now)
+            elif status_param == "upcoming":
+                qs = qs.filter(start_time__gt=now)
+            elif status_param == "finished":
+                qs = qs.filter(end_time__lte=now)
         return qs
+
+    @action(detail=False, methods=["get"],
+            permission_classes=[IsAuthenticatedOrReadOnly])
+    def meta(self, request):
+        """日历与筛选条所需的元数据（公开只读，与列表一致）。
+
+        计数一律按**全量**统计、不受当前筛选影响，供前端渲染筛选条徽标。
+        路径为 `/api/v1/contests/meta/`；DefaultRouter 的动态列表路由先于
+        详情路由匹配，因此不会被 `<pk>` 吃掉。
+        """
+        now = timezone.now()
+        counts = Contest.objects.aggregate(
+            total=Count("id"),
+            ongoing=Count("id", filter=Q(start_time__lte=now, end_time__gt=now)),
+            upcoming=Count("id", filter=Q(start_time__gt=now)),
+            finished=Count("id", filter=Q(end_time__lte=now)),
+            rated=Count("id", filter=Q(is_rated=True)),
+        )
+        platforms = [
+            {
+                "key": p.value,
+                "label": p.label,
+                "count": Contest.objects.filter(platform=p.value).count(),
+            }
+            for p in Platform
+        ]
+        series = list(
+            Contest.objects.exclude(series="")
+            .values_list("series", flat=True)
+            .distinct()
+            .order_by("series")
+        )
+        return Response({
+            **counts,
+            "platforms": platforms,
+            "series": series,
+            "latest_sync_at": Contest.objects.aggregate(
+                value=Max("crawled_at"))["value"],
+        })
 
 
 class ParticipationViewSet(viewsets.ReadOnlyModelViewSet):

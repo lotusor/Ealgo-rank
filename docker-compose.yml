@@ -6,6 +6,11 @@
 #   - rank-nginx 独立容器：承载前端 SPA(dist) + /api//static//media/ 反代到 backend:8001
 #   - 媒体文件用宿主机 bind mount 持久化（./volumes/media）
 #   - 爬虫落盘缓存持久化（./volumes/crawler-data -> /app/crawlers/data），容器重建不丢
+#
+# 时区（2026-09-18 加固）：三个 Python 服务均显式设置 TZ=Asia/Shanghai。
+# 爬虫用 datetime.fromtimestamp() 取"本机时区"墙钟，而 ingest._parse_dt 按
+# Django 默认时区 Asia/Shanghai 解析该串；若容器跑在 UTC，时间会整体偏 8 小时。
+# 竞赛日历对时间零容忍，故不再依赖宿主/镜像默认值。
 
 services:
   backend:
@@ -17,6 +22,7 @@ services:
       - .env.prod
     environment:
       DJANGO_ENV: prod
+      TZ: Asia/Shanghai
     volumes:
       - ./volumes/media:/app/backend/media
       - ./volumes/crawler-data:/app/crawlers/data
@@ -32,6 +38,7 @@ services:
       - .env.prod
     environment:
       DJANGO_ENV: prod
+      TZ: Asia/Shanghai
     volumes:
       - ./volumes/media:/app/backend/media
       - ./volumes/crawler-data:/app/crawlers/data
@@ -52,6 +59,7 @@ services:
       - .env.prod
     environment:
       DJANGO_ENV: prod
+      TZ: Asia/Shanghai
     restart: unless-stopped
 
   # 独立 nginx 容器：前端 SPA + 反代到 backend(:8001)。纯 HTTP，TLS 已在护照 nginx 终结。
