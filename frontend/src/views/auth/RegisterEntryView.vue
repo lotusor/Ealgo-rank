@@ -16,7 +16,7 @@ import LotusPassportEntry from '@/components/auth/LotusPassportEntry.vue'
         <p class="body-sm text-secondary">登录或注册，开启你的算法竞赛排名之旅</p>
       </div>
 
-      <!-- 注册/登录统一由莲花通行证完成：已有账号直接登录，新账号自动创建 -->
+      <!-- 注册/登录统一由lotus通行证完成：已有账号直接登录，新账号自动创建 -->
       <LotusPassportEntry />
 
       <p class="caption text-tertiary" style="text-align: center; margin-top: var(--space-6)">

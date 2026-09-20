@@ -55,7 +55,7 @@ async function onSubmit() {
         <p class="body-sm text-secondary">登录以查看你的竞赛排名与成绩</p>
       </div>
 
-      <!-- 主入口：莲花通行证（GitHub / QQ / 邮箱等方式在通行证内选择） -->
+      <!-- 主入口：lotus通行证（GitHub / QQ / 邮箱等方式在通行证内选择） -->
       <LotusPassportEntry />
 
       <!-- 次入口：本站账号密码登录（默认收起） -->

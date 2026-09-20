@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 莲花通行证统一登录入口（provider 无关）。
+ * lotus通行证统一登录入口（provider 无关）。
  * 点击后整页跳转 passport 统一登录页，登录方式（GitHub / QQ / 邮箱等）
  * 全部在通行证侧选择，完成后携授权码回本站完成登录。
  */
@@ -32,7 +32,7 @@ async function onLogin() {
       </span>
       <span class="lotus-texts">
         <span class="lotus-title">
-          {{ loading ? '正在前往莲花通行证…' : '使用 Lotus 通行证登录' }}
+          {{ loading ? '正在前往lotus通行证…' : '使用 Lotus 通行证登录' }}
         </span>
         <span class="lotus-sub">统一身份认证 · GitHub / QQ / 邮箱等方式在通行证内选择</span>
       </span>

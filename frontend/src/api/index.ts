@@ -90,7 +90,7 @@ export async function startPassportOAuth(provider: PassportProvider): Promise<vo
   window.location.href = data.authorize_url
 }
 
-// 通用（provider 无关）莲花通行证登录：点击后跳转 passport 统一登录页，
+// 通用（provider 无关）lotus通行证登录：点击后跳转 passport 统一登录页，
 // 登录方式（GitHub / QQ / 邮箱等）由通行证侧选择，完成后携授权码回本站。
 export async function startPassportGenericLogin(): Promise<void> {
   const pp =
