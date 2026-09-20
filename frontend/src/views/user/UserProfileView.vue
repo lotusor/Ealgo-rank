@@ -16,8 +16,12 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const chartPlatform = ref<'' | ContestPlatform>('')
 
+/** 有入口的平台 = 已绑定平台 ∪ 有参赛记录的平台（后端未升级时靠后者兜底） */
 const chartPlatformOptions = computed(() => {
-  const plats = new Set((profile.value?.participations || []).map((p) => p.contest_platform))
+  const plats = new Set<string>([
+    ...(profile.value?.platforms || []),
+    ...(profile.value?.participations || []).map((p) => p.contest_platform),
+  ])
   const opts: { label: string; value: '' | ContestPlatform }[] = [{ label: '全部', value: '' }]
   for (const p of ['codeforces', 'atcoder', 'nowcoder'] as ContestPlatform[]) {
     if (plats.has(p)) opts.push({ label: platformName(p), value: p })
@@ -25,9 +29,31 @@ const chartPlatformOptions = computed(() => {
   return opts
 })
 
-// 折线图数据：「全部」= 后端站点 rating 时间线（与榜单同口径）；
+// 折线图数据：「全部」= 后端站点 rating 时间线（与榜单同口径，窗口已在后端裁剪）；
 // 单平台 = 该平台原始 new_rating 序列
 const history = ref<RatingHistoryPoint[]>([])
+const CHART_WINDOW_DAYS = 365
+
+/** 当前所选平台全部可画的官方 rating 行（时间升序，未截展示窗口） */
+const platformRatingRows = computed(() =>
+  (profile.value?.participations || [])
+    .filter(
+      (r) =>
+        r.new_rating != null &&
+        r.contest_start_time != null &&
+        r.contest_platform === chartPlatform.value,
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.contest_start_time!).getTime() -
+        new Date(b.contest_start_time!).getTime(),
+    ),
+)
+
+function withinWindow(iso: string) {
+  return new Date(iso).getTime() >= Date.now() - CHART_WINDOW_DAYS * 86400000
+}
+
 const chartPoints = computed(() => {
   if (chartPlatform.value === '') {
     return history.value.map((h, i) => ({
@@ -43,21 +69,40 @@ const chartPoints = computed(() => {
       },
     }))
   }
-  const rows = (profile.value?.participations || [])
-    .filter((r) => r.new_rating != null && r.contest_start_time != null && r.contest_platform === chartPlatform.value)
-    // 折线图只展示最近一年的波动（2026-09-13，与「全部」tab 口径一致）
-    .filter(
-      (r) =>
-        new Date(r.contest_start_time!).getTime() >=
-        Date.now() - 365 * 86400000,
-    )
-    .sort((a, b) => new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime())
+  // 折线图只展示最近一年的波动（2026-09-13，与「全部」tab 口径一致）
+  const rows = platformRatingRows.value.filter((r) =>
+    withinWindow(r.contest_start_time!),
+  )
   return rows.map((r) => ({
     label: r.contest_start_time as string,
     value: r.new_rating as number,
     meta: { contest: r.contest_name, platform: r.contest_platform, delta: r.rating_delta, rank: r.rank ?? null },
   }))
 })
+
+/** 曲线为空时的说明：区分「近一年无赛」与「该平台暂无 rated 记录」 */
+const emptyChartHint = computed(() => {
+  if (chartPoints.value.length) return null
+  if (chartPlatform.value === '') {
+    return { title: '最近一年无 rating 变化', hint: '该用户近一年内没有计入排名的比赛记录' }
+  }
+  const name = platformName(chartPlatform.value)
+  const all = platformRatingRows.value
+  if (!all.length) {
+    return {
+      title: `${name} 最近一年无参赛记录`,
+      hint: '该绑定账号暂无 rated 比赛成绩，同步后将自动出现在此曲线中',
+    }
+  }
+  const last = all[all.length - 1]
+  return {
+    title: `${name} 最近一年无参赛记录`,
+    hint: `共 ${all.length} 场 rated 比赛落在一年展示窗口外，最近一场：${last.contest_name} · ${fmtDate(last.contest_start_time)}`,
+  }
+})
+
+/** 只要有任何平台入口就保留卡片与选项卡——不再随曲线为空整块消失 */
+const showRatingCard = computed(() => chartPlatformOptions.value.length > 1)
 
 onMounted(async () => {
   const id = Number(route.params.id)
@@ -137,13 +182,14 @@ function fmtDelta(v: number) {
         </div>
       </div>
 
-      <!-- Rating 趋势折线图 -->
-      <div v-if="chartPoints.length" class="card card-pad" style="margin-bottom: var(--space-6)">
+      <!-- Rating 趋势折线图：曲线可空，但已绑定平台的选项卡不能消失 -->
+      <div v-if="showRatingCard" class="card card-pad" style="margin-bottom: var(--space-6)">
         <div class="card-header" style="padding: 0; margin-bottom: var(--space-4); border: none">
           <div class="card-title">Rating 趋势</div>
           <SegmentedControl v-model="chartPlatform" :options="chartPlatformOptions" />
         </div>
-        <RatingLineChart :points="chartPoints" :height="220" :platform="chartPlatform" />
+        <RatingLineChart v-if="chartPoints.length" :points="chartPoints" :height="220" :platform="chartPlatform" />
+        <EmptyState v-else :title="emptyChartHint?.title" :hint="emptyChartHint?.hint" />
       </div>
 
       <!-- 各平台 rating（平台官方口径，非站点评分） -->

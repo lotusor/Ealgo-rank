@@ -87,6 +87,22 @@ const peakRating = computed(() => {
   return vals.length ? Math.max(...vals) : null
 })
 
+const CHART_WINDOW_DAYS = 365
+
+/** 当前平台全部可画的官方 rating 行（时间升序，未截展示窗口） */
+const platformRatingRows = computed(() =>
+  rows.value
+    .filter((r) => r.new_rating != null && r.contest_start_time != null)
+    .sort(
+      (a, b) =>
+        new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime(),
+    ),
+)
+
+function withinWindow(iso: string) {
+  return new Date(iso).getTime() >= Date.now() - CHART_WINDOW_DAYS * 86400000
+}
+
 const chartPoints = computed(() => {
   // 「全部」tab：站点 rating 时间线（后端 /rating-history/，含新号先验与滑动
   // 窗口，与榜单完全同口径）；单平台 tab：该平台官方原始 new_rating 序列。
@@ -104,18 +120,10 @@ const chartPoints = computed(() => {
       },
     }))
   }
-  const pts = rows.value
-    .filter((r) => r.new_rating != null && r.contest_start_time != null)
-    // 折线图只展示最近一年的波动（2026-09-13，与「全部」tab 口径一致）
-    .filter(
-      (r) =>
-        new Date(r.contest_start_time!).getTime() >=
-        Date.now() - 365 * 86400000,
-    )
-    .sort(
-      (a, b) =>
-        new Date(a.contest_start_time!).getTime() - new Date(b.contest_start_time!).getTime(),
-    )
+  // 折线图只展示最近一年的波动（2026-09-13，与「全部」tab 口径一致）
+  const pts = platformRatingRows.value.filter((r) =>
+    withinWindow(r.contest_start_time!),
+  )
   return pts.map((r) => ({
     label: r.contest_start_time as string,
     value: r.new_rating as number,
@@ -126,6 +134,27 @@ const chartPoints = computed(() => {
       rank: r.rank ?? null,
     },
   }))
+})
+
+/** 曲线为空时的说明：区分「近一年无赛」与「该平台暂无 rated 记录」 */
+const emptyChartHint = computed(() => {
+  if (chartPoints.value.length) return null
+  if (platform.value === '') {
+    return { title: '最近一年无 rating 变化', hint: '近一年内没有计入排名的比赛记录' }
+  }
+  const name = platformName(platform.value)
+  const all = platformRatingRows.value
+  if (!all.length) {
+    return {
+      title: `${name} 最近一年无参赛记录`,
+      hint: '该绑定账号暂无 rated 比赛成绩，同步后将自动出现在此曲线中',
+    }
+  }
+  const last = all[all.length - 1]
+  return {
+    title: `${name} 最近一年无参赛记录`,
+    hint: `共 ${all.length} 场 rated 比赛落在一年展示窗口外，最近一场：${last.contest_name} · ${fmtDate(last.contest_start_time)}`,
+  }
 })
 
 const accounts = computed(() => (me.value?.platform_accounts || []) as any[])
@@ -245,7 +274,8 @@ function accountTag(p: string) {
       </div>
     </div>
 
-    <EmptyState v-if="!loading && rows.length === 0" title="暂无参赛记录" hint="绑定平台账号并触发爬虫后将自动同步" />
+    <!-- 只有「未绑定任何平台」才整页收空态；绑定过账号时选项卡与曲线卡片必须在场 -->
+    <EmptyState v-if="!loading && accounts.length === 0" title="暂无参赛记录" hint="绑定平台账号并触发爬虫后将自动同步" />
 
     <template v-else>
       <!-- Rating chart -->
@@ -255,8 +285,9 @@ function accountTag(p: string) {
           <SegmentedControl v-model="platform" :options="platformOptions" />
         </div>
         <div class="card-body">
-          <RatingLineChart :points="chartPoints" :height="240" :platform="platform" />
-          <div style="display: flex; gap: var(--space-6); margin-top: var(--space-4); flex-wrap: wrap" class="caption text-tertiary">
+          <RatingLineChart v-if="chartPoints.length" :points="chartPoints" :height="240" :platform="platform" />
+          <EmptyState v-else :title="emptyChartHint?.title" :hint="emptyChartHint?.hint" />
+          <div v-if="chartPoints.length" style="display: flex; gap: var(--space-6); margin-top: var(--space-4); flex-wrap: wrap" class="caption text-tertiary">
             <span>当前 Rating: <b class="num text-cyan">{{ currentRating ?? '—' }}</b></span>
             <template v-if="platform === ''">
               <span>历史最佳排名: <b class="num">#{{ bestRecord?.best_rank ?? '—' }}</b><template v-if="bestRecord?.best_rank != null"> <span class="text-tertiary">（当时站点 rating {{ fmtBest(bestRecord.best_rank_score) }}）</span></template></span>
@@ -276,7 +307,9 @@ function accountTag(p: string) {
           <div class="card-title">参赛历史</div>
           <span class="caption text-tertiary">共 {{ rows.length }} 场</span>
         </div>
-        <div class="table-wrap" style="border: none; border-radius: 0">
+        <EmptyState v-if="!rows.length" title="该平台暂无 rated 参赛记录"
+                    hint="绑定账号后由爬虫按调度同步，未及时出现可等待下一轮爬取" />
+        <div v-else class="table-wrap" style="border: none; border-radius: 0">
           <table class="data-table">
             <colgroup>
               <col />

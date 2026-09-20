@@ -322,15 +322,22 @@ class UserPublicProfileSerializer(serializers.ModelSerializer):
     school_name = serializers.CharField(source="school.name", read_only=True,
                                         default="")
     role_display = serializers.CharField(source="get_role_display", read_only=True)
+    platforms = serializers.SerializerMethodField()
     platform_ratings = serializers.SerializerMethodField()
     participations = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = ["id", "username", "real_name", "avatar", "bio", "school",
-                  "school_name", "role_display", "platform_ratings",
-                  "participations"]
+                  "school_name", "role_display", "platforms",
+                  "platform_ratings", "participations"]
         read_only_fields = fields
+
+    def get_platforms(self, obj):
+        """已绑定的平台名（不含 handle 等标识）——供前端固定折线图选项卡，
+        避免账号已绑定但暂无 rated 成绩时整个平台入口消失。"""
+        return list(obj.platform_accounts.order_by("platform")
+                    .values_list("platform", flat=True))
 
     def get_avatar(self, obj):
         if not obj.avatar:

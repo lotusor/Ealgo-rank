@@ -331,6 +331,8 @@ export interface UserPublicProfile {
   school: number | null
   school_name: string
   role_display: string
+  /** 已绑定的平台名（不含 handle）；后端未升级时可能缺失，前端需回退 */
+  platforms?: string[]
   platform_ratings: { platform: string; handle: string; rating: number; delta: number | null }[]
   participations: MyParticipation[]
 }

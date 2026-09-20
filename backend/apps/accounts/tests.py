@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -6,6 +7,7 @@ from rest_framework.test import APITestCase
 from apps.accounts.models import (
     Notification,
     NotificationType,
+    PlatformAccount,
     UserRole,
 )
 from apps.contests.models import Contest, Participation
@@ -293,6 +295,40 @@ class AvatarAndBioTests(APITestCase):
     def test_avatar_absent_by_default(self):
         r = self.client.get("/api/v1/me/")
         self.assertIsNone(r.json()["avatar"])
+
+
+class PublicProfilePlatformsTests(APITestCase):
+    """公开 profile 的 platforms 字段：绑定了就要出现，且不泄露 handle。"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="platformsuser", password="Test1234!")
+        PlatformAccount.objects.create(
+            user=self.user, platform="codeforces", handle="SomeHandle")
+        PlatformAccount.objects.create(
+            user=self.user, platform="nowcoder", handle="123456789")
+        self.url = f"/api/v1/users/{self.user.id}/profile/"
+
+    def test_platforms_listed_without_any_participation(self):
+        """账号绑定了但零 rated 成绩时，平台仍要在 platforms 里 —— 前端据此保留选项卡。"""
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual(data["platforms"], ["codeforces", "nowcoder"])
+        self.assertEqual(data["platform_ratings"], [])
+        self.assertEqual(data["participations"], [])
+
+    def test_platforms_expose_no_handle(self):
+        """只暴露平台名，平台标识不出现在该字段里。"""
+        data = self.client.get(self.url).json()
+        joined = json.dumps(data["platforms"], ensure_ascii=False)
+        self.assertNotIn("SomeHandle", joined)
+        self.assertNotIn("123456789", joined)
+
+    def test_unbound_user_has_empty_platforms(self):
+        other = User.objects.create_user(username="lonely", password="Test1234!")
+        data = self.client.get(f"/api/v1/users/{other.id}/profile/").json()
+        self.assertEqual(data["platforms"], [])
 
 
 class ChangePasswordTests(APITestCase):
