@@ -273,7 +273,7 @@ def _ingest_ranks(contest, platform, ranks):
             "matched": matched, "countable": countable}
 
 
-def backfill_nowcoder_ratings():
+def backfill_nowcoder_ratings(account_ids=None):
     """从牛客 rating-history 接口回填参赛记录的 rating 涨落。
 
     牛客榜单（real-time-rank-data）不含 rating 涨落字段，只有官方个人历史
@@ -281,7 +281,10 @@ def backfill_nowcoder_ratings():
     changeValue（涨落）。按 contest.external_id 匹配回填，让牛客的
     rating_delta / old_rating / new_rating 与 CF/AtCoder 对齐。
 
-    返回回填条数。
+    account_ids 给定时只回填这些 PlatformAccount（新绑定账号定向补数）。
+    返回 {"updated", "accounts", "empty_history", "failed"}：逐账号留痕，
+    只有全局 0 更新才告警是不够的 —— 个别账号被反爬拦掉时其余账号仍有更新，
+    整体看起来"成功"，缺的那部分却永远没人知道（2026-09-22 实测漏 26 条）。
     """
     _crawler_dir()
     from nowcoder_scraper import NowCoderScraper
@@ -289,22 +292,35 @@ def backfill_nowcoder_ratings():
     scraper = NowCoderScraper()
     scraper.init_session()
 
+    qs = PlatformAccount.objects.filter(platform=Platform.NOWCODER)
+    if account_ids:
+        qs = qs.filter(pk__in=account_ids)
+
     updated = 0
-    for acc in PlatformAccount.objects.filter(platform=Platform.NOWCODER):
+    empty_history = []
+    failed = []
+    for acc in qs:
         try:
             hist = scraper.user_rating_history(acc.handle)
         except Exception:  # noqa: BLE001 - 单账号失败不阻断整体
             logger.exception("牛客 rating 回填：账号 %s 历史拉取失败", acc.handle)
+            failed.append(acc.pk)
+            continue
+        if not hist:
+            # 接口返回空 = 被拦的典型征兆（账号明明有参赛记录却零行）
+            empty_history.append(acc.pk)
+            logger.warning("牛客 rating 回填：账号 %s（user=%s）官方历史返回 0 行，"
+                           "疑似被反爬拦截", acc.handle, acc.user_id)
             continue
         by_contest = {
             str(x.get("contestId")): x
             for x in hist if x.get("contestId") not in (None, "")
         }
-        qs = Participation.objects.filter(
+        n_acc = 0
+        for p in Participation.objects.filter(
             platform_account=acc,
             contest__platform=Platform.NOWCODER,
-        )
-        for p in qs:
+        ):
             row = by_contest.get(p.contest.external_id)
             if not row:
                 continue
@@ -329,13 +345,26 @@ def backfill_nowcoder_ratings():
                 p.save(update_fields=["old_rating", "new_rating",
                                       "rating_delta", "updated_at"])
                 updated += 1
-    if updated == 0:
-        # 静默零更新 = 接口被拦/返回空的典型征兆（2026-09-03 事故：回填空跑
-        # 后榜单重爬把已有 rating 覆盖为 None）。必须显式暴露供巡检发现。
+                n_acc += 1
+        # 有官方历史、有参赛行，却一行都没补上：external_id 对不上或涨落早已有值
+        if n_acc == 0 and Participation.objects.filter(
+                platform_account=acc,
+                contest__platform=Platform.NOWCODER).exists():
+            logger.info("牛客 rating 回填：账号 %s 本次零更新（涨落已齐或场次对不上）",
+                        acc.handle)
+
+    result = {"updated": updated, "accounts": qs.count(),
+              "empty_history": empty_history, "failed": failed}
+    if updated == 0 and qs.count() and \
+            len(failed) + len(empty_history) == qs.count():
+        # 零更新且所有账号都没取到数据 = 接口被拦的确定性征兆
+        # （旧实现只看全局零更新，把"没什么可补"的正常情况也报成告警，
+        #   噪声太大反而盖掉真信号）
         logger.warning(
-            "牛客 rating 回填更新 0 条——请检查 rating-history 接口是否被反爬拦截")
-    logger.info("牛客 rating 回填完成，更新 %d 条", updated)
-    return updated
+            "牛客 rating 回填更新 0 条、%d 个账号全部失败/空返回"
+            "——请检查 rating-history 接口是否被反爬拦截", qs.count())
+    logger.info("牛客 rating 回填完成 %s", result)
+    return result
 
 
 def rebind_unbound_participations(platform_account):
@@ -371,6 +400,148 @@ def _crawler_dir():
     if base and base not in sys.path:
         sys.path.insert(0, base)
     return base
+
+
+def missing_nowcoder_contest_ids(account):
+    """该牛客账号「官方索引里有、站内却没有参赛行」的比赛 external_id。
+
+    判定口径是 (账号, 比赛) 这一行在不在，而不是比赛在不在 —— 新绑定用户的
+    历史缺失几乎都属于「比赛早就入库、只缺他这一行」（2026-09-22 实测：
+    学生榜第一名 21 场缺失里 20 场的 Contest 早已在库）。只按「比赛未入库」
+    筛选的旧补抓命令因此永远修不掉这类缺口。
+    """
+    idx = {str(x) for x in (account.participated_contests or [])}
+    if not idx:
+        return set()
+    have = set(Participation.objects.filter(
+        platform_account=account,
+        contest__platform=Platform.NOWCODER,
+    ).values_list("contest__external_id", flat=True))
+    return idx - have
+
+
+def _meta_from_contest(contest):
+    """用库里的 Contest 还原一份 ingest 需要的 meta（沿用 raw_meta 保原貌）。"""
+    meta = dict(contest.raw_meta or {})
+    meta.update({
+        "real_contest_id": contest.external_id,
+        "contest_id": contest.external_id,
+        "name": contest.name,
+        "link": contest.url,
+        "is_rated": contest.is_rated,
+        "is_paid": contest.is_paid,
+        "duration_minutes": contest.duration_minutes,
+        "series": contest.series,
+        "rated_source": contest.rated_source,
+        "rated_comment": contest.rated_comment,
+    })
+    if not meta.get("start_time") and contest.start_time:
+        meta["start_time"] = contest.start_time.isoformat()
+    if not meta.get("end_time") and contest.end_time:
+        meta["end_time"] = contest.end_time.isoformat()
+    return meta
+
+
+def backfill_account_history(account, *, scraper=None, limit=0,
+                             dry_run=False, log=None):
+    """定向补齐一个牛客账号的历史参赛记录，结尾连带回填其 rating 涨落。
+
+    存在的理由：每日全量爬取受「窗口月份 + 55 分钟软超时」约束，待补历史按
+    时间降序排在最后，越老的越永远排不到（2026-09 Chen777iii、2026-09-22
+    不知名小帅是同一失效模式的两次复现）。抓取顺序把「本地已有榜单原文」的
+    场次排前面——那些一场只要几毫秒，而重新下载要 90~300 秒。
+    """
+    from apps.crawler.tasks import _contest_cache_ttl, _crawler_cache_dir
+
+    log = log or (lambda msg: None)
+    if account.platform != Platform.NOWCODER:
+        raise ValueError("backfill_account_history 目前只支持牛客账号")
+
+    _crawler_dir()
+    from cache_util import cache_path
+    # dry-run 只用「索引 vs 在库行 + 本地是否有原文」判断，一次外网请求都不该发
+    if scraper is None and not dry_run:
+        from nowcoder_scraper import NowCoderScraper
+        scraper = NowCoderScraper()
+        scraper.init_session()
+
+    missing = missing_nowcoder_contest_ids(account)
+    if not missing:
+        log(f"账号 {account.handle} 无待补场次")
+        if not dry_run:
+            backfill_nowcoder_ratings(account_ids=[account.pk])
+        return {"pending": 0, "ingested": 0, "skipped": 0, "failed": 0}
+
+    cache_dir = _crawler_cache_dir(Platform.NOWCODER)
+    in_db = {c.external_id: c for c in Contest.objects.filter(
+        platform=Platform.NOWCODER, external_id__in=missing)}
+
+    def _has_cache(eid):
+        return bool(cache_dir) and cache_path(cache_dir, eid).exists()
+
+    # 牛客 contestId 随时间单调递增，降序即「最新优先」；零网络场次排最前
+    ordered = sorted(missing, key=lambda e: (0 if _has_cache(e) else 1,
+                                             -int(e) if e.isdigit() else 0))
+    if dry_run:
+        for eid in ordered:
+            log(f"  待补 src={eid} {'[本地缓存]' if _has_cache(eid) else '[需联网]'} "
+                f"{in_db[eid].name if eid in in_db else '(比赛未入库)'}")
+        return {"pending": len(ordered), "ingested": 0, "skipped": 0,
+                "failed": 0, "dry_run": True}
+
+    limit = limit or len(ordered)
+    ingested = skipped = failed = 0
+    for i, eid in enumerate(ordered[:limit], 1):
+        try:
+            contest = in_db.get(eid)
+            if contest is not None:
+                # 已入库 = rated/付费早已判过，直接复用，省一次 contest-info
+                meta = _meta_from_contest(contest)
+            else:
+                info = scraper.fetch_contest_info(eid, use_cache=False)
+                if not info:
+                    failed += 1
+                    log(f"[{i}/{len(ordered)}] {eid} 详情获取失败")
+                    continue
+                meta = scraper.check_rated({"real_contest_id": eid})
+                start_ts, end_ts = info.get("startTime"), info.get("endTime")
+                meta.update({
+                    "real_contest_id": eid,
+                    "contest_id": eid,
+                    "name": info.get("name") or str(eid),
+                    "start_time": scraper._ts2str(start_ts),
+                    "end_time": scraper._ts2str(end_ts),
+                    "duration_minutes": (int((end_ts - start_ts) / 60000)
+                                         if start_ts and end_ts else None),
+                    "link": f"https://www.nowcoder.com/acm/contest/{eid}",
+                })
+                if not meta.get("is_rated"):
+                    skipped += 1
+                    log(f"[{i}/{len(ordered)}] {eid} 非 rated 跳过"
+                        f"（{meta.get('rated_comment')}）")
+                    continue
+            detail = scraper.scrape_contest_detail(
+                eid, filter_post_contest=True, exclude_cheaters=False,
+                cache_dir=cache_dir, cache_ttl_hours=_contest_cache_ttl(meta))
+            result = ingest_contest(Platform.NOWCODER, meta, detail)
+            if result.get("skipped"):
+                skipped += 1
+                log(f"[{i}/{len(ordered)}] {eid} 跳过: {result.get('reason')}")
+                continue
+            ingested += 1
+            log(f"[{i}/{len(ordered)}] {eid} {meta.get('name', '')[:24]} "
+                f"入库 计分 {result['countable']} 条")
+        except Exception as exc:  # noqa: BLE001 - 单场失败不阻断其余场次
+            failed += 1
+            log(f"[{i}/{len(ordered)}] {eid} 异常: {exc}")
+            logger.exception("牛客历史定向补抓失败 account=%s src=%s",
+                             account.pk, eid)
+
+    rating = backfill_nowcoder_ratings(account_ids=[account.pk])
+    log(f"补齐完成: 入库 {ingested} / 跳过 {skipped} / 失败 {failed}，"
+        f"rating 回填 {rating}")
+    return {"pending": len(ordered), "ingested": ingested,
+            "skipped": skipped, "failed": failed, "rating": rating}
 
 
 def fill_participated_contests(platform_account):
@@ -411,30 +582,4 @@ def fill_participated_contests(platform_account):
         platform_account.save(update_fields=["participated_contests", "updated_at"])
         return True, len(ids)
     return False, len(ids)
-
-
-def fill_participated_contests_async(platform_account_id):
-    """后台线程补全参与比赛索引（绑定接口即时返回，不阻塞用户）。
-
-    失败不抛出，仅记录日志；CF/AT 限速决定单账号耗时约 1~5s。
-    """
-    import threading
-    from django.db import connection
-
-    def _run():
-        try:
-            # 线程内关闭旧连接，避免复用父线程的 SQLite/PG 连接造成状态污染
-            connection.close()
-            acc = PlatformAccount.objects.get(pk=platform_account_id)
-            updated, n = fill_participated_contests(acc)
-            logger.info("异步补全 %s 参与比赛索引: 官方接口返回 %d 场, 更新=%s",
-                        acc, n, updated)
-        except Exception:  # noqa: BLE001 - 后台线程不得抛出到调用方
-            logger.exception("异步补全参与比赛索引失败 (account_id=%s)",
-                             platform_account_id)
-        finally:
-            connection.close()
-
-    threading.Thread(target=_run, daemon=True,
-                     name=f"fill-idx-{platform_account_id}").start()
 

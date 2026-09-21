@@ -328,7 +328,7 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(
             instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        # 改 handle 后回填历史成绩 + 异步补全参与比赛索引（与创建时一致）
+        # 改 handle 后回填历史成绩 + 派发定向补数（与创建时一致）
         handle_changed = (
             "handle" in serializer.validated_data and
             (serializer.validated_data["handle"] or "").strip().lower() !=
@@ -337,12 +337,10 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
         self.perform_update(serializer)
         if handle_changed:
             try:
-                from apps.crawler.ingest import (
-                    rebind_unbound_participations,
-                    fill_participated_contests_async,
-                )
+                from apps.crawler.ingest import rebind_unbound_participations
+                from apps.crawler.tasks import dispatch_account_history_backfill
                 rebound = rebind_unbound_participations(instance)
-                fill_participated_contests_async(instance.pk)
+                dispatch_account_history_backfill(instance.pk)
                 if rebound:
                     _dispatch_recompute()
             except Exception:  # 历史数据缺失不应阻断修改
@@ -354,8 +352,9 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
 
         与「Participation 只落绑定用户」决策（2026-09-07）对齐——解绑留下的
         unbound 行没有任何消费方（admin/API 均过滤、爬虫不激活），只会积存量。
-        重新绑定同一 handle 后，历史成绩由参与索引重建 + 爬虫重放回补
-        （牛客未打过 rated 的场次除外——无官方个人历史接口）。
+        重新绑定同一 handle 后，历史成绩由定向补数任务（含官方个人历史索引）
+        与每日巡检回放补回；牛客未打过 rated 的场次除外—— rated 场次可由
+        rating-history 接口反查，非 rated 场次没有个人历史可查。
         """
         instance = self.get_object()
         deleted, _ = instance.participations.all().delete()

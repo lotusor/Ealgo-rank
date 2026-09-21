@@ -105,13 +105,11 @@ class PlatformAccountSerializer(serializers.ModelSerializer):
                 _dispatch_recompute()
         except Exception:  # 历史数据缺失不应阻断绑定
             pass
-        # 异步补全「参与比赛索引」，解决冷启动预筛死锁：
-        # 否则新账号索引为空，爬虫预筛永远跳过其历史比赛。
-        try:
-            from apps.crawler.ingest import fill_participated_contests_async
-            fill_participated_contests_async(pa.pk)
-        except Exception:  # 后台派发失败不阻断绑定
-            pass
+        # 定向补数：官方历史索引 → 站内缺失场次 → rating 涨落，交给 Celery 任务。
+        # helper 内部已吞异常并记日志；派发失败只影响时效，
+        # 每日牛客历史巡检（nowcoder-history-sweep）会兜住。
+        from apps.crawler.tasks import dispatch_account_history_backfill
+        dispatch_account_history_backfill(pa.pk)
         return pa
 
 

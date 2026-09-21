@@ -258,6 +258,13 @@ CRAWLER_DIR = REPO_ROOT / "crawlers"
 CRAWLER_CACHE_DIR = CRAWLER_DIR / "data"
 # 缓存有效期（小时），过期自动重新下载。默认 7 天。
 CRAWLER_CACHE_TTL_HOURS = int(os.environ.get("CRAWLER_CACHE_TTL_HOURS", "168"))
+# 比赛结束后超过这么多天，其榜单视为不可变：落盘缓存不再过期、不重新下载。
+# 榜单原文单场 1~17MB，重新下载要按 50 条/页翻几十页（实测 90~300 秒/场），
+# 一周 TTL 会让每轮爬取把历史场次全部重下一遍，55 分钟软超时内新绑定用户的
+# 老历史永远排不到（2026-09-22 学生榜第一名缺口）。
+# 取 7 天=与旧 TTL 同窗口，只是「到期后不再重下」，作弊补标等晚期变化仍能被
+# 一周内的重爬纠正。设为 0 可退回「一律按 CRAWLER_CACHE_TTL_HOURS 重下」。
+CRAWLER_IMMUTABLE_AFTER_DAYS = int(os.environ.get("CRAWLER_IMMUTABLE_AFTER_DAYS", "7"))
 
 # 初始超级管理员（首次 migrate 后由 bootstrap 命令创建）
 ROOT_ADMIN_USERNAME = env("ROOT_ADMIN_USERNAME", "root")

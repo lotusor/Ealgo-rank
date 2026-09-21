@@ -190,6 +190,36 @@ def _crawler_cache_dir(platform):
     return str(Path(base) / platform)
 
 
+def _contest_end_dt(contest_meta):
+    """比赛结束时间（aware）；解析失败返回 None。"""
+    raw = (contest_meta or {}).get("end_time") or (contest_meta or {}).get("start_time")
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+    return dt
+
+
+def _contest_cache_ttl(contest_meta):
+    """落盘缓存有效期：已结束满 N 天的比赛榜单已冻结，缓存不再失效。
+
+    否则每轮爬取都要把整场榜单重新分页下载（牛客每页 50 条 + 1.5~3.5s 延时，
+    实测单场 90~300 秒）， crawl_nowcoder 的 55 分钟软超时只够处理最新几十场，
+    「已入库但缺新绑定用户行」的历史场次永远排不到 —— 2026-09-22 学生榜
+    第一名 21 场历史缺失即此因（榜单原文其实已在本地缓存里）。
+    """
+    ttl = getattr(settings, "CRAWLER_CACHE_TTL_HOURS", 168)
+    days = getattr(settings, "CRAWLER_IMMUTABLE_AFTER_DAYS", 7)
+    if not days:
+        return ttl
+    end = _contest_end_dt(contest_meta)
+    if end is None:
+        return ttl
+    return None if timezone.now() - end > timezone.timedelta(days=days) else ttl
+
+
 def _relevant_handles(platform):
     """本平台全部已关联平台ID用户的 handle（用于只为这些人补齐每题明细）。"""
     return list(PlatformAccount.objects.filter(platform=platform)
@@ -292,8 +322,176 @@ def _run_job(job, worker):
             except Exception as exc:  # noqa: BLE001
                 logger.warning("爬取后积分重算派发失败: %s", exc)
 
+    # 牛客榜单不含 rating，必须事后走 rating-history 回填涨落。
+    # 回填挂在「独立任务」而不是爬取生成器的尾部：爬取被 SoftTimeLimitExceeded
+    # 打断时生成器直接作废，尾部代码一行都不会执行（2026-09-21/22 两次实测），
+    # 于是所有新入库的牛客记录都没有涨落、折线图空、平台 rating 卡片消失。
+    # 无论爬取 success / partial / failed，只要跑过就派发，新任务有独立时间预算。
+    if job.platform == Platform.NOWCODER and _broker_reachable():
+        try:
+            backfill_nowcoder_ratings_task.delay()
+            logger.info("已派发牛客 rating 涨落回填任务")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("牛客 rating 回填派发失败: %s", exc)
+
     return {"job_id": job.pk, "status": job.status,
             "contests": contest_n, "countable": part_n, "cheaters": cheat_n}
+
+
+@shared_task
+def backfill_nowcoder_ratings_task(account_ids=None):
+    """牛客 rating 涨落回填（独立任务）。
+
+    必须独立于爬取任务：爬取被软超时打断时，写在爬取生成器尾部的回填一行
+    都不会执行，实测 2026-09-21/22 两轮连续如此，导致新入库的牛客成绩全部
+    没有涨落、个人页平台 rating 卡片整块消失。
+    """
+    from apps.crawler.ingest import backfill_nowcoder_ratings
+    return backfill_nowcoder_ratings(account_ids=account_ids)
+
+
+@shared_task(bind=True, soft_time_limit=60 * 50, time_limit=60 * 55)
+def backfill_account_history_task(self, platform_account_id):
+    """新绑定账号的定向补数：官方历史索引 → 缺失场次入库 → rating 涨落回填。
+
+    承载方必须是 Celery 而不是 gunicorn 进程内的 daemon 线程：线程会随 worker
+    回收被静默杀掉，索引为空的用户在爬取预筛里就永远隐形了。
+    """
+    from apps.crawler.ingest import (backfill_account_history,
+                                     fill_participated_contests)
+
+    try:
+        acc = PlatformAccount.objects.get(pk=platform_account_id)
+    except PlatformAccount.DoesNotExist:
+        logger.info("定向补数：账号 %s 已不存在，跳过", platform_account_id)
+        return {"skipped": "gone"}
+
+    filled = False
+    try:
+        filled, n = fill_participated_contests(acc)
+        logger.info("定向补数：账号 %s 官方历史返回 %d 场，索引更新=%s",
+                    acc.handle, n, filled)
+    except Exception as exc:  # noqa: BLE001 - 索引补全失败仍可尝试已有索引
+        logger.warning("定向补数：账号 %s 索引补全失败: %s", acc.handle, exc)
+
+    # 只有牛客需要「按账号定向补场次」：CF/AtCoder 榜单自带 rating，且历史场次
+    # 由预筛索引带出后在本轮爬取里就能抓到。
+    if acc.platform != Platform.NOWCODER:
+        return {"platform": acc.platform, "index_filled": filled}
+
+    result = backfill_account_history(acc)
+    if result.get("ingested"):
+        if _broker_reachable():
+            try:
+                from apps.ranking.tasks import recompute_ranking_task
+                recompute_ranking_task.delay()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("补数后重算派发失败: %s", exc)
+        else:
+            logger.warning("补数完成但 broker 不可达，积分待每日重算兜底")
+    result["index_filled"] = filled
+    return result
+
+
+def reap_stale_crawl_jobs(after_hours=3):
+    """把卡在 running/pending 超过 after_hours 的爬取任务判为失败。
+
+    worker 被回收或重启会把在跑的任务一起带走，`_run_job` 的 finally 没机会执行
+    → 状态永久停在 running（生产实测 job #109 卡了 15 天），管理端因此误报
+    「进行中」，去重逻辑也可能被误导。任何爬取的最长预算是 55 分钟，3 小时是安全边界。
+    """
+    cutoff = timezone.now() - timezone.timedelta(hours=after_hours)
+    stale = CrawlJob.objects.filter(
+        status__in=[CrawlJob.Status.PENDING, CrawlJob.Status.RUNNING],
+        updated_at__lt=cutoff)
+    reaped = []
+    for job in stale:
+        job.status = CrawlJob.Status.FAILED
+        job.error_message = ((job.error_message or "") +
+                             f"\n状态收割：超过 {after_hours} 小时未结束，"
+                             "判定 worker 被回收/重启导致任务中断").strip()
+        job.finished_at = timezone.now()
+        job.save(update_fields=["status", "error_message", "finished_at",
+                                "updated_at"])
+        reaped.append(job.pk)
+    if reaped:
+        logger.warning("收割卡死的爬取任务: %s", reaped)
+    return reaped
+
+
+@shared_task(bind=True, soft_time_limit=60 * 50, time_limit=60 * 55)
+def sweep_nowcoder_history(self, max_accounts=5):
+    """每日兜底巡检：补齐「官方索引里有、站内却没有行」的牛客历史场次。
+
+    定向补数解决「即时」，本任务解决「最终一致」：任何一次派发失败都不该让
+    某个用户的历史永远缺着。索引为空的账号顺带补索引——索引为空意味着爬取
+    预筛永远看不到他的比赛（冷启动死锁），这类账号靠爬取补不出来。
+    """
+    from apps.crawler.ingest import (backfill_account_history,
+                                     fill_participated_contests,
+                                     missing_nowcoder_contest_ids)
+
+    reap_stale_crawl_jobs()
+    touched = []
+    still_pending = []
+    budget = max_accounts
+    for acc in PlatformAccount.objects.filter(
+            platform=Platform.NOWCODER).order_by("id"):
+        if budget <= 0:
+            break
+        try:
+            if not (acc.participated_contests or []):
+                fill_participated_contests(acc)
+                acc.refresh_from_db(fields=["participated_contests"])
+            if not missing_nowcoder_contest_ids(acc):
+                continue
+            budget -= 1
+            r = backfill_account_history(acc)
+            touched.append({"account": acc.pk, "pending": r["pending"],
+                            "ingested": r["ingested"], "failed": r["failed"]})
+            if r["pending"] and not r["ingested"]:
+                # 补不动的缺口（例：官方个人历史列出的场次被本站 rated 规则判为
+                # 非 rated）每天都会被重新扫到，必须显式报出来，否则既浪费预算
+                # 又永远看不出「已收敛」
+                still_pending.append({"account": acc.pk, "pending": r["pending"]})
+        except Exception:  # noqa: BLE001 - 单账号异常不影响其余账号
+            logger.exception("牛客历史巡检失败 account=%s", acc.pk)
+
+    if still_pending:
+        logger.warning("牛客历史巡检：以下账号的缺口本次未补上（多为 rated 口径差异）: %s",
+                       still_pending)
+    if any(t["ingested"] for t in touched):
+        logger.info("牛客历史巡检完成: %s", touched)
+        if _broker_reachable():
+            try:
+                from apps.ranking.tasks import recompute_ranking_task
+                recompute_ranking_task.delay()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("巡检补数后重算派发失败: %s", exc)
+    else:
+        logger.info("牛客历史巡检：本次无新入库场次，跳过积分重算")
+    return {"accounts": touched, "still_pending": still_pending}
+
+
+def dispatch_account_history_backfill(platform_account_id):
+    """绑定/换绑成功后派发定向补数任务；派发失败只影响时效（有每日巡检兜底）。
+
+    先探 broker 再发布，和 _dispatch_crawl 同理：本沙箱连未监听的 Redis 是黑洞
+    而非 refused，在请求线程里直接 .delay() 会把绑定接口卡住几十秒。
+    """
+    def _run():
+        if not _broker_reachable():
+            logger.warning("消息队列不可达，牛客定向补数交由每日巡检兜底 account=%s",
+                           platform_account_id)
+            return
+        try:
+            backfill_account_history_task.delay(platform_account_id)
+        except Exception:  # noqa: BLE001 - 派发失败只影响时效
+            logger.warning("牛客定向补数派发失败 account=%s",
+                           platform_account_id, exc_info=True)
+
+    threading.Thread(target=_run, name=f"nc-backfill-{platform_account_id}",
+                     daemon=True).start()
 
 
 @shared_task(bind=True)
@@ -339,7 +537,7 @@ def crawl_codeforces(self, job_id=None, count=20, mode="rating", force=False):
             yield c, s.scrape_contest_detail(
                 cid, mode=mode, handles=handles,
                 cache_dir=cache_dir,
-                cache_ttl_hours=getattr(settings, "CRAWLER_CACHE_TTL_HOURS", 168))
+                cache_ttl_hours=_contest_cache_ttl(c))
 
     return _run_job(job, worker)
 
@@ -381,7 +579,7 @@ def crawl_atcoder(self, job_id=None, count=20, force=False):
             cid = c.get("contest_id")
             yield c, s.scrape_contest_detail(
                 cid, cache_dir=cache_dir,
-                cache_ttl_hours=getattr(settings, "CRAWLER_CACHE_TTL_HOURS", 168))
+                cache_ttl_hours=_contest_cache_ttl(c))
 
     return _run_job(job, worker)
 
@@ -421,8 +619,10 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
         relevant = set() if force else relevant_contest_ids(Platform.NOWCODER)
         target = set(base_months)
         if relevant:
-            try:
-                for acc in PlatformAccount.objects.filter(platform=Platform.NOWCODER):
+            for acc in PlatformAccount.objects.filter(platform=Platform.NOWCODER):
+                # 逐账号兜异常：一个账号的 rating-history 被拦/超时，不能连带
+                # 丢掉后面所有账号的历史月份（历史月份缺失=该用户历史成绩永久抓不到）
+                try:
                     for row in s.user_rating_history(acc.handle):
                         cid = str(row.get("contestId"))
                         t = row.get("time")
@@ -430,8 +630,9 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
                             ym = datetime.fromtimestamp(
                                 t / 1000).strftime("%Y-%m")
                             target.add(ym)
-            except Exception as exc:  # noqa: BLE001 - 历史反查失败不阻断主流程
-                logger.warning("牛客历史月份反查失败: %s", exc)
+                except Exception as exc:  # noqa: BLE001 - 单账号失败不阻断其余账号
+                    logger.warning("牛客历史月份反查失败（handle=%s）: %s",
+                                   acc.handle, exc)
 
         contests = []
         for ym in sorted(target):
@@ -456,14 +657,8 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
         #    入库会产生脏数据且落盘缓存一周内不会自愈（CF 侧有 phase=FINISHED
         #    过滤；牛客日历无 phase 字段，按 endTime 对齐）。
         def _ended(c):
-            raw = c.get("end_time") or c.get("start_time")
-            try:
-                dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-            except (TypeError, ValueError):
-                return True  # 解析失败保守放行，交由详情层兜底
-            if timezone.is_naive(dt):
-                dt = timezone.make_aware(dt, timezone.get_current_timezone())
-            return dt <= timezone.now()
+            dt = _contest_end_dt(c)
+            return True if dt is None else dt <= timezone.now()
 
         contests = [c for c in contests if _ended(c)]
 
@@ -498,13 +693,7 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
             yield c, s.scrape_contest_detail(
                 rid, filter_post_contest=True, exclude_cheaters=False,
                 cache_dir=cache_dir,
-                cache_ttl_hours=getattr(settings, "CRAWLER_CACHE_TTL_HOURS", 168))
-        # 榜单全部入库后，回填牛客 rating 涨落（榜单本身不含 rating，需走 rating-history）
-        try:
-            from apps.crawler.ingest import backfill_nowcoder_ratings
-            backfill_nowcoder_ratings()
-        except Exception as exc:  # noqa: BLE001 - 回填失败不阻断爬取主流程
-            logger.warning("牛客 rating 回填失败: %s", exc)
+                cache_ttl_hours=_contest_cache_ttl(c))
 
     return _run_job(job, worker)
 

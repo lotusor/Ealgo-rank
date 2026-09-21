@@ -657,6 +657,7 @@ class _FakeNC:
         self._contests = contests
         self._rating_history = rating_history or {}
         self.scraped = []  # 记录 scrape_contest_detail 被调用的比赛 id
+        self.ttl_calls = []  # (比赛 id, 传入的 cache_ttl_hours)
 
     def init_session(self):
         pass
@@ -677,6 +678,7 @@ class _FakeNC:
                               exclude_cheaters=False, cache_dir=None,
                               cache_ttl_hours=168, **kwargs):
         self.scraped.append(str(rid))
+        self.ttl_calls.append((str(rid), cache_ttl_hours))
         return {"problems": [], "ranks": [], "rank_count": 0,
                 "valid_rank_count": 0, "rank_source": "fake",
                 "crawled_at": "2026-08-29T00:00:00"}
@@ -862,3 +864,395 @@ class CrawlConfigSignalTests(TestCase):
         cfg.save()
         pt.refresh_from_db()
         self.assertFalse(pt.enabled)
+
+
+# ---------- 牛客历史缺失 / rating 涨落回填（2026-09-22 学生榜第一名案例）----------
+
+import tempfile  # noqa: E402
+from datetime import datetime, timedelta, timezone as dt_tz  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from django.conf import settings  # noqa: E402
+from django.test import override_settings  # noqa: E402
+from django.utils import timezone as dj_tz  # noqa: E402
+
+from apps.crawler import ingest as ingest_mod  # noqa: E402
+from apps.crawler.ingest import (backfill_account_history,  # noqa: E402
+                                 missing_nowcoder_contest_ids)
+from apps.crawler.tasks import (_contest_cache_ttl,  # noqa: E402
+                               reap_stale_crawl_jobs, sweep_nowcoder_history)
+
+
+def _dt_str(dt):
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _nc_contest(rid, days_ago):
+    st = dj_tz.now() - timedelta(days=days_ago)
+    return {
+        "real_contest_id": rid, "name": f"NC {rid}",
+        "start_time": _dt_str(st),
+        "end_time": _dt_str(st + timedelta(hours=2)),
+        "duration_minutes": 120, "is_rated": True, "is_paid": False,
+    }
+
+
+def _nc_detail(uid="1001", rank=7, score=300.0):
+    return {
+        "problems": [],
+        "ranks": [{
+            "rank": rank, "uid": int(uid), "user_name": "不知名小帅",
+            "school": None, "team": False, "accepted_count": 4,
+            "total_score": score, "full_score": 600.0, "penalty_time_ms": 0,
+            "color_level": 3, "post_contest_append": False,
+            "is_cheater": False, "score_detail": [], "extra": {},
+        }],
+        "rank_count": 1, "valid_rank_count": 1, "crawled_at": "2026-09-22T00:00:00",
+    }
+
+
+class _FakeHistoryScraper:
+    """只实现 backfill_account_history 用到的接口面，全程不联网。"""
+
+    def __init__(self, detail=None, rated_ids=(), info=None):
+        self.detail = detail or _nc_detail()
+        self.rated_ids = {str(i) for i in rated_ids}
+        self._info = info or {}
+        self.scraped = []      # (external_id, cache_ttl_hours)
+        self.info_calls = []
+
+    def init_session(self):
+        pass
+
+    def fetch_contest_info(self, rid, use_cache=True):
+        self.info_calls.append(str(rid))
+        return self._info.get(str(rid))
+
+    def check_rated(self, meta):
+        rid = str(meta.get("real_contest_id"))
+        return {"is_rated": rid in self.rated_ids,
+                "rated_comment": "fake", "name": f"NC {rid}"}
+
+    @staticmethod
+    def _ts2str(ts):
+        if not ts:
+            return None
+        return datetime.fromtimestamp(int(ts) / 1000, tz=dt_tz.utc) \
+            .strftime("%Y-%m-%d %H:%M:%S")
+
+    def scrape_contest_detail(self, rid, filter_post_contest=False,
+                              exclude_cheaters=False, cache_dir=None,
+                              cache_ttl_hours=168, **kwargs):
+        self.scraped.append((str(rid), cache_ttl_hours))
+        return self.detail
+
+
+class ContestCacheTtlTests(TestCase):
+    """已结束足够久的比赛：榜单原文已冻结，落盘缓存不该再判过期。"""
+
+    @staticmethod
+    def _meta(days_ago):
+        return {"end_time": _dt_str(dj_tz.now() - timedelta(days=days_ago))}
+
+    def test_old_contest_cache_never_expires(self):
+        # 阈值取 7 天：结束满 7 天即视为不可变
+        self.assertIsNone(_contest_cache_ttl(self._meta(8)))
+        self.assertIsNone(_contest_cache_ttl(self._meta(60)))
+
+    def test_recent_contest_keeps_ttl(self):
+        self.assertEqual(_contest_cache_ttl(self._meta(6)),
+                         settings.CRAWLER_CACHE_TTL_HOURS)
+        self.assertEqual(_contest_cache_ttl(self._meta(2)),
+                         settings.CRAWLER_CACHE_TTL_HOURS)
+
+    def test_unparsable_end_time_falls_back_to_ttl(self):
+        self.assertEqual(_contest_cache_ttl({"name": "没有时间字段"}),
+                         settings.CRAWLER_CACHE_TTL_HOURS)
+
+    @override_settings(CRAWLER_IMMUTABLE_AFTER_DAYS=0)
+    def test_policy_can_be_switched_off(self):
+        self.assertEqual(_contest_cache_ttl(self._meta(600)),
+                         settings.CRAWLER_CACHE_TTL_HOURS)
+
+
+class NowcoderCrawlTtlTests(TestCase):
+    """爬取调用侧按场次新旧下发不同 TTL —— 历史场次必须靠本地缓存重放。"""
+
+    def test_old_contest_scraped_with_infinite_ttl(self):
+        old, fresh = _nc_contest(9001, 60), _nc_contest(9002, 2)
+        months = sorted({old["start_time"][:7], fresh["start_time"][:7]})
+        fake = _FakeNC([old, fresh])
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake):
+            crawl_nowcoder(months=months)
+        ttl_by_id = dict(fake.ttl_calls)
+        self.assertEqual(ttl_by_id.get("9001"), None)
+        self.assertEqual(ttl_by_id.get("9002"), settings.CRAWLER_CACHE_TTL_HOURS)
+
+
+class NowcoderBackfillDispatchTests(TestCase):
+    """爬取被打断时牛客 rating 涨落回填必须照跑。
+
+    回归缺陷：回填原先写在爬取生成器 `for … yield` 之后，任务被
+    SoftTimeLimitExceeded 打断时生成器直接作废、尾部一行都不执行（实测
+    09-21/09-22 两轮皆如此），结果是那之后所有新入库的牛客成绩都没有涨落，
+    个人页「各平台官方 Rating」卡片整块消失。
+    """
+
+    class _BoomNC:
+        """第一场抓成功、第二场抛软超时 —— 与生产 job #130/#131 的形态一致。"""
+
+        def __init__(self, contests):
+            self._contests = contests
+            self.scraped = []
+
+        def init_session(self):
+            pass
+
+        def fetch_contests(self, ym):
+            return [c for c in self._contests if c["start_time"][:7] == ym]
+
+        def parse_contests(self, lst, only_nowcoder=True):
+            return lst
+
+        def filter_contests(self, contests, rated_only=True, exclude_paid=True):
+            return [c for c in contests if c.get("is_rated")]
+
+        def scrape_contest_detail(self, rid, **kwargs):
+            from billiard.exceptions import SoftTimeLimitExceeded
+            self.scraped.append(str(rid))
+            if len(self.scraped) > 1:
+                raise SoftTimeLimitExceeded()
+            return {"problems": [], "ranks": [], "rank_count": 0,
+                    "valid_rank_count": 0, "crawled_at": "2026-09-22T00:00:00"}
+
+    @staticmethod
+    def _months_of(*contests):
+        return sorted({c["start_time"][:7] for c in contests})
+
+    def _run(self, fake, months):
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake), \
+                mock.patch.object(tasks_mod, "_broker_reachable", return_value=True), \
+                mock.patch("apps.ranking.tasks.recompute_ranking_task"), \
+                mock.patch.object(tasks_mod, "backfill_nowcoder_ratings_task") as bf:
+            crawl_nowcoder(months=months)
+        return bf
+
+    def test_soft_timeout_still_dispatches_rating_backfill(self):
+        c1, c2 = _nc_contest(9001, 100), _nc_contest(9002, 90)
+        bf = self._run(self._BoomNC([c1, c2]), self._months_of(c1, c2))
+        job = CrawlJob.objects.filter(platform=Platform.NOWCODER).latest("id")
+        # 入库了一半就被打断：旧实现里回填写在生成器尾部，这一步会整段跳过
+        self.assertEqual(job.status, CrawlJob.Status.PARTIAL)
+        self.assertEqual(job.contest_count, 1)
+        bf.delay.assert_called_once()
+
+    def test_success_also_dispatches_rating_backfill(self):
+        c1 = _nc_contest(9001, 100)
+        bf = self._run(_FakeNC([c1]), self._months_of(c1))
+        job = CrawlJob.objects.filter(platform=Platform.NOWCODER).latest("id")
+        self.assertEqual(job.status, CrawlJob.Status.SUCCESS)
+        bf.delay.assert_called_once()
+
+
+class MissingNowcoderContestIdsTests(TestCase):
+    """缺口口径 = 「该账号缺这一行」，比赛早已入库同样算缺。
+
+    旧补抓命令按「比赛未入库」筛选，所以「已入库但缺新绑定用户行」这类
+    缺口（2026-09-22 实测：21 场缺失里 20 场属于此类）永远修不掉。
+    """
+
+    def setUp(self):
+        user = User.objects.create_user(username="mstu", password="pwd12345")
+        self.acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="1001",
+            participated_contests=["9001", "9002", "9003"])
+        c9001 = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="9001", name="NC 9001",
+            is_rated=True)
+        Contest.objects.create(platform=Platform.NOWCODER, external_id="9002",
+                               name="NC 9002", is_rated=True)
+        Participation.objects.create(contest=c9001, platform_account=self.acc,
+                                     handle="1001")
+
+    def test_missing_covers_ingested_contest_without_row(self):
+        self.assertEqual(missing_nowcoder_contest_ids(self.acc),
+                         {"9002", "9003"})
+
+    def test_complete_account_has_no_gap(self):
+        """索引里的场次都有行 → 无缺口（9002/9003 不在索引里就不该被算作缺）。"""
+        self.acc.participated_contests = ["9001"]
+        self.acc.save()
+        self.assertEqual(missing_nowcoder_contest_ids(self.acc), set())
+
+
+class BackfillAccountHistoryTests(TestCase):
+    """定向补数：按账号补齐历史行，非牛客账号拒绝，dry-run 零写入。"""
+
+    def setUp(self):
+        user = User.objects.create_user(username="bfu", password="pwd12345")
+        self.acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="1001")
+        self.contest = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="9001", name="NC 9001",
+            is_rated=True, start_time=dj_tz.now() - timedelta(days=200),
+            end_time=dj_tz.now() - timedelta(days=200) + timedelta(hours=2),
+            raw_meta={"origin": "原样保留"})
+
+    def test_creates_missing_row_for_ingested_contest(self):
+        self.acc.participated_contests = ["9001"]
+        self.acc.save()
+        fake = _FakeHistoryScraper()
+        with mock.patch.object(ingest_mod, "backfill_nowcoder_ratings",
+                               return_value={"updated": 1}) as rb:
+            stats = backfill_account_history(self.acc, scraper=fake)
+        self.assertEqual(stats["ingested"], 1)
+        row = Participation.objects.get(contest=self.contest,
+                                        platform_account=self.acc)
+        self.assertEqual(row.rank, 7)
+        self.assertEqual(row.total_score, 300.0)
+        # 200 天前结束 → 缓存不失效，重放不再下载整场榜单
+        self.assertEqual(fake.scraped, [("9001", None)])
+        # 补完行必须接着回填涨落，否则折线图依然空
+        rb.assert_called_once_with(account_ids=[self.acc.pk])
+        self.contest.refresh_from_db()
+        self.assertEqual(self.contest.raw_meta["origin"], "原样保留")
+
+    def test_prefers_contests_with_local_cache(self):
+        # 9002 比 9001 新，但 9001 的榜单原文已在本地 → 零网络的必须先做，
+        # 这样在固定的时间预算内能补完更多场次
+        Contest.objects.create(platform=Platform.NOWCODER, external_id="9002",
+                               name="NC 9002", is_rated=True)
+        self.acc.participated_contests = ["9001", "9002"]
+        self.acc.save()
+        fake = _FakeHistoryScraper()
+        with tempfile.TemporaryDirectory() as tmp:
+            # 缓存按平台分子目录：crawlers/data/<platform>/contest_<id>.json
+            nc_dir = Path(tmp) / Platform.NOWCODER
+            nc_dir.mkdir()
+            (nc_dir / "contest_9001.json").write_text("{}", encoding="utf-8")
+            with override_settings(CRAWLER_CACHE_DIR=tmp), \
+                    mock.patch.object(ingest_mod, "backfill_nowcoder_ratings",
+                                      return_value={"updated": 0}):
+                backfill_account_history(self.acc, scraper=fake)
+        self.assertEqual([rid for rid, _ in fake.scraped], ["9001", "9002"])
+
+    def test_dry_run_writes_nothing(self):
+        self.acc.participated_contests = ["9001"]
+        self.acc.save()
+        with mock.patch.object(ingest_mod, "backfill_nowcoder_ratings") as rb:
+            stats = backfill_account_history(self.acc, scraper=_FakeHistoryScraper(),
+                                             dry_run=True)
+        self.assertEqual(stats["pending"], 1)
+        self.assertEqual(stats["ingested"], 0)
+        self.assertFalse(Participation.objects.exists())
+        rb.assert_not_called()
+
+    def test_non_rated_unknown_contest_skipped(self):
+        self.acc.participated_contests = ["8888"]
+        self.acc.save()
+        fake = _FakeHistoryScraper(rated_ids=(), info={
+            "8888": {"name": "NC 8888", "startTime": None, "endTime": None}})
+        with mock.patch.object(ingest_mod, "backfill_nowcoder_ratings",
+                               return_value={"updated": 0}):
+            stats = backfill_account_history(self.acc, scraper=fake)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertFalse(Contest.objects.filter(external_id="8888").exists())
+        self.assertEqual(fake.scraped, [])
+
+    def test_new_rated_contest_created_and_ingested(self):
+        self.acc.participated_contests = ["8888"]
+        self.acc.save()
+        ts = int((dj_tz.now() - timedelta(days=40)).timestamp() * 1000)
+        fake = _FakeHistoryScraper(rated_ids=["8888"], info={
+            "8888": {"name": "NC 8888", "startTime": ts,
+                     "endTime": ts + 7200000}})
+        with mock.patch.object(ingest_mod, "backfill_nowcoder_ratings",
+                               return_value={"updated": 0}):
+            stats = backfill_account_history(self.acc, scraper=fake)
+        self.assertEqual(stats["ingested"], 1)
+        new = Contest.objects.get(external_id="8888")
+        self.assertTrue(new.is_rated)
+        self.assertEqual(new.duration_minutes, 120)
+        self.assertEqual(fake.scraped, [("8888", None)])
+
+    def test_refuses_non_nowcoder_account(self):
+        user = User.objects.create_user(username="bfu2", password="pwd12345")
+        cf = PlatformAccount.objects.create(user=user, platform=Platform.CODEFORCES,
+                                            handle="alice")
+        with self.assertRaises(ValueError):
+            backfill_account_history(cf, scraper=_FakeHistoryScraper())
+
+
+class SweepNowcoderHistoryTests(TestCase):
+    """每日巡检兜底：只处理确有缺口的账号，索引为空的先补索引，预算生效。"""
+
+    def _account(self, username, handle, index):
+        user = User.objects.create_user(username=username, password="pwd12345")
+        return PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle=handle,
+            participated_contests=index)
+
+    def test_only_gap_accounts_processed_and_budget_respected(self):
+        cold = self._account("cold", "2001", [])          # 索引为空
+        gap = self._account("gap", "1001", ["9001"])      # 有缺口
+        Contest.objects.create(platform=Platform.NOWCODER, external_id="9001",
+                               name="NC 9001", is_rated=True)
+        with mock.patch.object(ingest_mod, "fill_participated_contests",
+                               return_value=(False, 0)) as fill, \
+                mock.patch.object(ingest_mod, "backfill_account_history",
+                                  return_value={"pending": 1, "ingested": 1,
+                                                "skipped": 0, "failed": 0}) as bf, \
+                mock.patch.object(tasks_mod, "_broker_reachable",
+                                  return_value=False):
+            res = sweep_nowcoder_history(max_accounts=5)
+        fill.assert_called_once()
+        self.assertEqual(fill.call_args[0][0].pk, cold.pk)
+        self.assertEqual([c[0][0].pk for c in bf.call_args_list], [gap.pk])
+        self.assertEqual(res["accounts"][0]["account"], gap.pk)
+
+    def test_budget_limits_accounts_per_run(self):
+        for i in range(3):
+            self._account(f"u{i}", f"100{i}", ["9001"])
+        Contest.objects.create(platform=Platform.NOWCODER, external_id="9001",
+                               name="NC 9001", is_rated=True)
+        with mock.patch.object(ingest_mod, "backfill_account_history",
+                               return_value={"pending": 1, "ingested": 0,
+                                             "skipped": 0, "failed": 0}) as bf, \
+                mock.patch.object(tasks_mod, "_broker_reachable",
+                                  return_value=False):
+            sweep_nowcoder_history(max_accounts=2)
+        self.assertEqual(bf.call_count, 2)
+
+    def test_no_recompute_when_nothing_ingested(self):
+        """补不动的缺口（rated 口径差异）不该每天触发一次全站重算。"""
+        acc = self._account("gap2", "1009", ["9001"])
+        Contest.objects.create(platform=Platform.NOWCODER, external_id="9001",
+                               name="NC 9001", is_rated=True)
+        with mock.patch.object(ingest_mod, "backfill_account_history",
+                               return_value={"pending": 1, "ingested": 0,
+                                             "skipped": 1, "failed": 0}), \
+                mock.patch.object(tasks_mod, "_broker_reachable",
+                                  return_value=True), \
+                mock.patch("apps.ranking.tasks.recompute_ranking_task") as rc:
+            res = sweep_nowcoder_history(max_accounts=5)
+        rc.delay.assert_not_called()
+        self.assertEqual(res["still_pending"], [{"account": acc.pk, "pending": 1}])
+
+
+class ReapStaleCrawlJobsTests(TestCase):
+    """worker 被重启打断的爬取任务会永久停在 running，巡检要把它们判死。"""
+
+    def test_stale_running_marked_failed_recent_untouched(self):
+        stale = CrawlJob.objects.create(platform=Platform.NOWCODER,
+                                        status=CrawlJob.Status.RUNNING)
+        CrawlJob.objects.filter(pk=stale.pk).update(
+            updated_at=dj_tz.now() - timedelta(hours=5))
+        live = CrawlJob.objects.create(platform=Platform.CODEFORCES,
+                                       status=CrawlJob.Status.RUNNING)
+        self.assertEqual(reap_stale_crawl_jobs(), [stale.pk])
+        stale.refresh_from_db()
+        live.refresh_from_db()
+        self.assertEqual(stale.status, CrawlJob.Status.FAILED)
+        self.assertIsNotNone(stale.finished_at)
+        self.assertIn("状态收割", stale.error_message)
+        self.assertEqual(live.status, CrawlJob.Status.RUNNING)
