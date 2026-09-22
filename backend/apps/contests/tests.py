@@ -221,3 +221,84 @@ class ContestApiTests(APITestCase):
         self.assertEqual(counts[Platform.CODEFORCES], 1)
         self.assertEqual(set(resp.data["series"]), {"Div. 2", "ABC", "牛客周赛"})
         self.assertIn("latest_sync_at", resp.data)
+
+
+class ProfileOnlyContestVisibilityTests(APITestCase):
+    """主页派生的「不计分锚点赛次」不得出现在公共比赛列表。
+
+    它们存在的唯一理由是让个人主页参赛记录能显示校内赛/同步赛（C 阶段）；
+    「比赛列表」与「难度系数设置页」都走这个接口，混进来就是脏数据。
+    """
+
+    LIST = f"{BASE}/contests/"
+
+    def setUp(self):
+        cache.clear()
+        now = timezone.now()
+        self.real = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="real", name="真比赛",
+            is_rated=True, start_time=now - timedelta(days=3),
+            end_time=now - timedelta(days=3) + timedelta(hours=2))
+        self.anchor = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="anchor", name="校内选拔赛",
+            is_rated=False, start_time=now - timedelta(days=30),
+            end_time=now - timedelta(days=30) + timedelta(hours=2),
+            rated_source="profile-joined-history",
+            raw_meta={"source": "profile_joined"})
+
+    def tearDown(self):
+        cache.clear()
+
+    def _ids(self, **qp):
+        resp = self.client.get(self.LIST, qp)
+        return {r["id"] for r in resp.data["results"]}
+
+    def test_default_list_hides_anchor(self):
+        self.assertEqual(self._ids(), {self.real.pk})
+
+    def test_derived_filters_also_hide_anchor(self):
+        self.assertEqual(self._ids(status="finished"), {self.real.pk})
+        # 锚点赛次本身就是 is_rated=False，但按 rated 筛也拿不到它：
+        # 它不是「一场未判 rated 的真实比赛」，而是只为展示而存在的派生行
+        self.assertEqual(self._ids(is_rated="false"), set())
+
+    def test_include_profile_only_brings_it_back(self):
+        self.assertEqual(self._ids(include_profile_only="1"),
+                         {self.real.pk, self.anchor.pk})
+
+
+class PublicProfileShowsUnratedTests(APITestCase):
+    """个人主页参赛记录与牛客对齐：不计 Rating 的场次也展示，并带解题数。"""
+
+    def setUp(self):
+        cache.clear()
+        self.user = make_user("profileu")
+        self.acc = PlatformAccount.objects.create(
+            user=self.user, platform=Platform.NOWCODER, handle="9001")
+        now = timezone.now()
+        self.rated = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="1", name="周赛",
+            is_rated=True, start_time=now - timedelta(days=5))
+        self.anchor = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="2", name="校内赛",
+            is_rated=False, start_time=now - timedelta(days=300),
+            rated_source="profile-joined-history",
+            raw_meta={"source": "profile_joined"})
+        for c, rank, ac, delta in ((self.rated, 10, 6, 41), (self.anchor, 4, 5, None)):
+            Participation.objects.create(
+                contest=c, platform_account=self.acc, handle="9001",
+                handle_lower="9001", rank=rank, solved_count=ac,
+                rating_delta=delta)
+
+    def tearDown(self):
+        cache.clear()
+
+    def test_profile_lists_both_and_exposes_solved_count(self):
+        resp = self.client.get(f"{BASE}/users/{self.user.pk}/profile/")
+        self.assertEqual(resp.status_code, 200)
+        rows = {r["contest_name"]: r for r in resp.data["participations"]}
+        self.assertEqual(set(rows), {"周赛", "校内赛"})
+        self.assertEqual(rows["校内赛"]["solved_count"], 5)
+        self.assertFalse(rows["校内赛"]["contest_is_rated"])
+        self.assertIsNone(rows["校内赛"]["rating_delta"])
+        self.assertEqual(rows["周赛"]["rating_delta"], 41)

@@ -224,6 +224,7 @@ function fmtDelta(v: number) {
                 <th>平台</th>
                 <th class="num-cell">时间</th>
                 <th class="num-cell">排名</th>
+                <th class="num-cell hide-mobile">解题数</th>
                 <th class="num-cell">Rating 变化</th>
               </tr>
             </thead>
@@ -236,8 +237,12 @@ function fmtDelta(v: number) {
                 <td><span class="platform-tag" :class="accountTag(p.contest_platform)">{{ platformName(p.contest_platform) }}</span></td>
                 <td class="num-cell">{{ fmtDate(p.contest_start_time) }}</td>
                 <td class="num-cell">{{ p.rank != null ? '#' + p.rank : '—' }}</td>
+                <td class="num-cell hide-mobile">{{ p.solved_count != null ? p.solved_count : '—' }}</td>
                 <td class="num-cell">
-                  <template v-if="p.rating_delta == null">—</template>
+                  <template v-if="p.rating_delta == null">
+                    <span v-if="!p.contest_is_rated" class="caption text-tertiary">不计 Rating</span>
+                    <template v-else>—</template>
+                  </template>
                   <span v-else :class="p.rating_delta >= 0 ? 'up' : 'down'">
                     {{ p.rating_delta >= 0 ? '▲' : '▼' }} {{ fmtDelta(p.rating_delta) }}
                   </span>

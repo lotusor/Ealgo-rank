@@ -367,13 +367,17 @@ class UserPublicProfileSerializer(serializers.ModelSerializer):
         return ratings
 
     def get_participations(self, obj):
-        """公开的参赛记录（未排除的 rated 比赛 + rating 涨跌）。"""
+        """公开的参赛记录（未排除的场次 + rating 涨跌）。
+
+        不按 `contest.is_rated` 过滤：牛客个人主页的参赛记录本就包含不计 Rating 的
+        校内赛/同步赛，本站口径与之对齐（这类行来自 profile_joined，
+        `countable()` 会把它们挡在积分之外，所以展示放宽不影响任何计分口径）。
+        """
         from apps.contests.models import Participation
         from apps.contests.serializers import MyParticipationSerializer
 
         qs = (Participation.objects
-              .filter(platform_account__user=obj, is_excluded=False,
-                      contest__is_rated=True)
+              .filter(platform_account__user=obj, is_excluded=False)
               .select_related("contest", "platform_account")
               .order_by("-contest__start_time"))
         return MyParticipationSerializer(qs, many=True,

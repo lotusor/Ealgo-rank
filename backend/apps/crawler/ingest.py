@@ -441,6 +441,29 @@ def _as_int(value):
         return None
 
 
+# 牛客把「作弊罚分」做成一张名为「比赛违规」的伪赛次（contestId 11052 类：
+# category=10、起止只差 5 分钟、无榜单、contest-info 直接报 1001），它只出现在
+# rating-history 折线源里，个人主页参赛记录列表**不含**它。收进索引就会变成一个
+# 永远补不出行的假缺口，每天吃掉一份巡检预算并淹没真缺口告警。
+VIOLATION_NAME_RE = re.compile("违规")
+
+
+def rating_history_index_ids(rows):
+    """rating-history 行 → (可进索引的 contestId, 识别出的伪赛次 contestId)。
+
+    只按名称正向识别伪赛次，不用「不在主页列表里」反推 —— 按平台规则，真比赛
+    也可能因整场取消成绩而从参赛记录列表消失，反推会把这类已知场次误删。
+    """
+    ids, violations = set(), set()
+    for row in rows or []:
+        cid = row.get("contestId") if isinstance(row, dict) else None
+        if cid in (None, ""):
+            continue
+        name = str(row.get("contestName") or "")
+        (violations if VIOLATION_NAME_RE.search(name) else ids).add(str(cid))
+    return ids, violations
+
+
 def joined_index_contest_ids(rows):
     """个人主页参赛行 → 该并进「参赛索引」的 contestId 集合。
 
@@ -505,6 +528,90 @@ def compare_nowcoder_history(account, rows, *, min_rank_diff=5):
     return out
 
 
+# 个人主页来源标记：既是锚点赛次的识别依据（公共比赛列表按它排除），也写进
+# Participation.extra，用于区分「榜单来的」与「主页来的」。
+PROFILE_SOURCE = "profile_joined"
+# 排除条件必须落在非空列上：JSONField 键查找在 SQLite 下会让「没有这个键」的行
+# 参与 NOT 运算后得到 NULL，三值逻辑把全部行一起排除掉（实测列表返回 0 行）。
+PROFILE_RATED_SOURCE = "profile-joined-history"
+
+
+def _ts_to_dt(ms):
+    try:
+        return datetime.fromtimestamp(int(ms) / 1000, tz=dt_timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def materialize_profile_rows(account, rows, *, log=None):
+    """把「官方不计 Rating、但确有其场」的主页行落库，只服务参赛记录展示。
+
+    为什么可以这样做：积分引擎唯一入口 `Participation.objects.countable()` 要求
+    `contest.is_rated=True`，而这些锚点赛次一律 is_rated=False，所以既不进积分、
+    也不进「参赛场次」统计，纯展示。锚点 Contest 带 `raw_meta.source=profile_joined`
+    标记，公共比赛列表默认排除它，避免校内赛/同步赛混进「比赛列表」和难度系数页。
+
+    已存在的赛次若是 rated（例：平台对该用户取消计分的周赛），交回榜单正常补数
+    路径处理，这里不建半成品行。
+    """
+    log = log or (lambda msg: None)
+    created = skipped = 0
+    mine = {p.contest.external_id for p in Participation.objects.filter(
+        platform_account=account,
+        contest__platform=Platform.NOWCODER,
+    ).select_related("contest")}
+    for row in rows or []:
+        cid = str(row.get("contestId") or "")
+        if not cid:
+            continue
+        if _joined_is_rated(row) or cid in mine:
+            skipped += 1          # 计分层交给榜单补数路径；已有行不重复建
+            continue
+        rank = _as_int(row.get("rank"))
+        if rank is None:
+            skipped += 1           # 无名次 = 没有可展示的成绩
+            continue
+        setting = row.get("settingInfo") or {}
+        start, end = _ts_to_dt(row.get("startTime")), _ts_to_dt(row.get("endTime"))
+        contest = Contest.objects.filter(platform=Platform.NOWCODER,
+                                         external_id=cid).first()
+        if contest is None:
+            contest = Contest.objects.create(
+                platform=Platform.NOWCODER, external_id=cid,
+                name=str(row.get("contestName") or cid)[:255],
+                url=f"https://ac.nowcoder.com/acm/contest/{cid}",
+                start_time=start, end_time=end,
+                duration_minutes=(int((end - start).total_seconds() // 60)
+                                  if start and end else None),
+                problem_count=_as_int(row.get("problemCount")) or 0,
+                participant_count=_as_int(row.get("userCount")) or 0,
+                is_rated=False, is_paid=bool(setting.get("needCharge")),
+                rated_source=PROFILE_RATED_SOURCE,
+                rated_comment="官方行级 ratingStatus=NO（不计分场次，仅展示）",
+                raw_meta={"source": PROFILE_SOURCE})
+        elif contest.is_rated:
+            skipped += 1
+            continue
+        Participation.objects.create(
+            contest=contest, platform_account=account,
+            handle=account.handle, handle_lower=account.handle.lower(),
+            display_name=str(row.get("teamName") or account.handle)[:150],
+            raw_display_name=str(row.get("teamName") or "")[:200],
+            rank=rank,
+            solved_count=_as_int(row.get("acceptedCount")),
+            total_score=row.get("totalScore") if isinstance(row.get("totalScore"),
+                                                            (int, float)) else None,
+            extra={"source": PROFILE_SOURCE,
+                   "problem_count": _as_int(row.get("problemCount")),
+                   "full_score": row.get("fullScore"),
+                   "sign_up_count": _as_int(row.get("signUpCnt"))})
+        created += 1
+        log(f"  展示行落库 src={cid} rank={rank} {contest.name[:24]}")
+    if created:
+        logger.info("牛客主页不计分场次建行 account=%s 新增 %s 行", account.pk, created)
+    return {"created": created, "skipped": skipped}
+
+
 def refresh_nowcoder_history(account, *, scraper=None):
     """刷新单个牛客账号的参赛索引，并顺带做逐行交叉校验（B）。
 
@@ -522,8 +629,7 @@ def refresh_nowcoder_history(account, *, scraper=None):
         scraper.init_session()
 
     hist = scraper.user_rating_history(account.handle)
-    rh_ids = {str(x.get("contestId")) for x in hist
-              if isinstance(x, dict) and x.get("contestId") not in (None, "")}
+    rh_ids, violations = rating_history_index_ids(hist)
     joined = scraper.contest_joined_history(account.handle)
     rows, complete, ok = [], False, bool(rh_ids)
     if joined is None:
@@ -545,19 +651,25 @@ def refresh_nowcoder_history(account, *, scraper=None):
     index_ids = rh_ids | joined_index_contest_ids(rows)
     mismatch = compare_nowcoder_history(account, rows)
     before = {str(x) for x in (account.participated_contests or [])}
-    added = sorted(index_ids - before, key=lambda s: int(s) if s.isdigit() else 0)
+    # 伪赛次（比赛违规）即使在旧索引里也要剔出去，否则变成一个永远补不出的假缺口
+    target = (before | index_ids) - violations
+    added = sorted(target - before, key=lambda s: int(s) if s.isdigit() else 0)
+    removed = sorted(before - target, key=lambda s: int(s) if s.isdigit() else 0)
     updated = False
-    if index_ids and (before | index_ids) != before:
-        merged = before | index_ids
+    if target != before:
         account.participated_contests = sorted(
-            merged, key=lambda s: int(s) if s.isdigit() else 0)
+            target, key=lambda s: int(s) if s.isdigit() else 0)
         account.save(update_fields=["participated_contests", "updated_at"])
         updated = True
         if added:
             logger.info("牛客参赛索引换源后新增 account=%s %s 场: %s",
                         account.pk, len(added), added[:10])
+    if removed:
+        logger.info("牛客参赛索引剔除伪赛次 account=%s: %s", account.pk, removed)
+    materialized = materialize_profile_rows(account, rows)
     return {"ok": ok, "complete": complete, "rows": rows,
-            "index_count": len(index_ids), "added": added,
+            "index_count": len(index_ids), "added": added, "removed": removed,
+            "materialized": materialized,
             "mismatch": mismatch, "updated": updated}
 
 

@@ -1004,7 +1004,9 @@ from apps.crawler.ingest import (_crawler_dir,  # noqa: E402
                                  backfill_account_history,
                                  compare_nowcoder_history,
                                  joined_index_contest_ids,
+                                 materialize_profile_rows,
                                  missing_nowcoder_contest_ids,
+                                 rating_history_index_ids,
                                  refresh_nowcoder_history)
 from apps.crawler.tasks import (_contest_cache_ttl,  # noqa: E402
                                reap_stale_crawl_jobs, sweep_nowcoder_history)
@@ -1053,9 +1055,10 @@ class _FakeHistoryScraper:
     """只实现 backfill_account_history 用到的接口面，全程不联网。"""
 
     def __init__(self, detail=None, rated_ids=(), info=None,
-                 joined_rows=None, joined_fail=False):
+                 joined_rows=None, joined_fail=False, violation_ids=()):
         self.detail = detail or _nc_detail()
         self.rated_ids = [str(i) for i in rated_ids]
+        self.violation_ids = [str(i) for i in violation_ids]
         self._info = info or {}
         self.scraped = []      # (external_id, cache_ttl_hours)
         self.info_calls = []
@@ -1069,7 +1072,10 @@ class _FakeHistoryScraper:
         pass
 
     def user_rating_history(self, uid):
-        return [{"contestId": i, "time": 1747000000000} for i in self.rated_ids]
+        rows = [{"contestId": i, "time": 1747000000000} for i in self.rated_ids]
+        rows += [{"contestId": i, "contestName": "比赛违规", "changeValue": -216,
+                  "rank": 1, "time": 1747000000000} for i in self.violation_ids]
+        return rows
 
     def user_rating_history_contest_ids(self, uid):
         return list(self.rated_ids)
@@ -1574,3 +1580,95 @@ class RefreshNowcoderHistoryTests(TestCase):
         # 补完之后主页那行已在站内 → 校验不该再报缺行
         self.assertEqual(stats["verify"]["missing_rows"], [])
         self.assertEqual(stats["verify"]["checked"], 1)
+
+
+class ViolationEventIndexTests(TestCase):
+    """「比赛违规」伪赛次：只进折线图、不进参赛索引，旧索引里的要剔掉。
+
+    2026-09-22 取证：contestId 11052 名「比赛违规」，category=10、起止只差 5 分钟、
+    无榜单，三个账号的 rating-history 各带一条 -216/-247/-207 的罚分行，而它们
+    个人主页参赛记录列表都不含该场 —— 收进索引就是一个永远补不出行的假缺口。
+    """
+
+    def setUp(self):
+        user = User.objects.create_user(username="vio", password="pwd12345")
+        self.acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="6001",
+            participated_contests=["11052", "7001"])
+
+    def test_split_by_name(self):
+        ids, violations = rating_history_index_ids([
+            {"contestId": 7001, "contestName": "牛客周赛 Round 100"},
+            {"contestId": 11052, "contestName": "比赛违规"},
+            {"contestId": 11053}])           # 无名不误伤
+        self.assertEqual(ids, {"7001", "11053"})
+        self.assertEqual(violations, {"11052"})
+
+    def test_refresh_prunes_stored_violation(self):
+        fake = _FakeHistoryScraper(rated_ids=["7001"], violation_ids=["11052"])
+        res = refresh_nowcoder_history(self.acc, scraper=fake)
+        self.acc.refresh_from_db()
+        self.assertEqual(self.acc.participated_contests, ["7001"])
+        self.assertEqual(res["removed"], ["11052"])
+        # 剔掉的是伪赛次，真比赛那一行仍按正常路径补 → 缺口保持可见
+        self.assertEqual(missing_nowcoder_contest_ids(self.acc), {"7001"})
+
+
+class MaterializeProfileRowsTests(TestCase):
+    """C：不计 Rating 的真实场次按主页行直接建展示行。"""
+
+    def setUp(self):
+        user = User.objects.create_user(username="mat", password="pwd12345")
+        self.acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="7001")
+
+    @staticmethod
+    def _unrated_row(cid="90889", **kw):
+        base = dict(rating_status="NO", origin_rating_status="NO", rank=4,
+                    acceptedCount=5, totalScore=1200.0, problemCount=10,
+                    userCount=59, signUpCnt=89, teamName="不知名小帅_",
+                    settingInfo={"needCharge": False})
+        base.update(kw)
+        return _nc_row(cid, **base)
+
+    def test_creates_anchor_contest_and_display_row(self):
+        out = materialize_profile_rows(self.acc, [self._unrated_row()])
+        self.assertEqual(out["created"], 1)
+        c = Contest.objects.get(platform=Platform.NOWCODER, external_id="90889")
+        self.assertFalse(c.is_rated)
+        self.assertEqual(c.raw_meta["source"], "profile_joined")
+        self.assertEqual(c.rated_source, "profile-joined-history")
+        self.assertEqual(c.participant_count, 59)
+        self.assertEqual(c.problem_count, 10)
+        self.assertEqual(c.duration_minutes, 120)
+        p = Participation.objects.get(contest=c, platform_account=self.acc)
+        self.assertEqual((p.rank, p.solved_count, p.total_score), (4, 5, 1200.0))
+        self.assertIsNone(p.rating_delta)
+        self.assertEqual(p.extra["source"], "profile_joined")
+        # 关键回归：展示行绝不能进积分
+        self.assertFalse(Participation.objects.countable().filter(pk=p.pk).exists())
+
+    def test_idempotent_and_skips_wrong_shapes(self):
+        rows = [self._unrated_row("90889"),
+                self._unrated_row("90890", rank=None),        # 无名次
+                _nc_row("90891")]                             # rated → 交给榜单路径
+        first = materialize_profile_rows(self.acc, rows)
+        self.assertEqual((first["created"], first["skipped"]), (1, 2))
+        second = materialize_profile_rows(self.acc, rows)
+        self.assertEqual(second["created"], 0)
+        self.assertFalse(Contest.objects.filter(external_id="90890").exists())
+        self.assertFalse(Contest.objects.filter(external_id="90891").exists())
+
+    def test_existing_rated_contest_untouched(self):
+        c = Contest.objects.create(platform=Platform.NOWCODER,
+                                   external_id="90889", name="周赛", is_rated=True)
+        out = materialize_profile_rows(self.acc, [self._unrated_row()])
+        self.assertEqual(out["skipped"], 1)
+        self.assertFalse(Participation.objects.filter(contest=c).exists())
+
+    def test_refresh_calls_it(self):
+        fake = _FakeHistoryScraper(rated_ids=[], joined_rows=[self._unrated_row("90899")])
+        res = refresh_nowcoder_history(self.acc, scraper=fake)
+        self.assertEqual(res["materialized"]["created"], 1)
+        self.acc.refresh_from_db()
+        self.assertEqual(self.acc.participated_contests, [])  # 不计分场不进索引

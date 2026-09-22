@@ -51,8 +51,15 @@ class ContestViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ["name", "series"]
 
     def get_queryset(self):
+        from apps.crawler.ingest import PROFILE_RATED_SOURCE
+
         qs = Contest.objects.all()
         qp = self.request.query_params
+        # 个人主页派生的「不计分锚点赛次」不是真实赛事目录成员：它们存在只是为了
+        # 让参赛记录能展示校内赛/同步赛，出现在「比赛列表」里会误导用户。
+        # 后台排障要看全量时带 ?include_profile_only=1。
+        if qp.get("include_profile_only") not in ("1", "true"):
+            qs = qs.exclude(rated_source=PROFILE_RATED_SOURCE)
         if qp.get("platform"):
             qs = qs.filter(platform=qp["platform"])
         if qp.get("is_rated") in ("true", "1"):
