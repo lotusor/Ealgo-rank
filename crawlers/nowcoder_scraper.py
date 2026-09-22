@@ -39,6 +39,10 @@ import requests
 
 from cache_util import load_cached_detail, save_cached_detail
 
+# {(uid, rated_only): {"at": 时间戳, "result": dict}} —— 进程级，见
+# NowCoderScraper.contest_joined_history 的说明（避免一次任务内重复打同一路由）。
+_JOINED_CACHE = {}
+
 
 class NowCoderScraper:
     """牛客比赛信息爬虫"""
@@ -169,6 +173,101 @@ class NowCoderScraper:
         """取某 uid 参加过的所有 rated 比赛 real_contest_id 列表。"""
         return [str(x.get("contestId")) for x in self.user_rating_history(uid)
                 if x.get("contestId") not in (None, "")]
+
+    # ---------- 按账号取全量参赛记录（个人主页「参赛记录」同源接口） ----------
+    # rating-history 只列「真的计入了 rating」的场次，个人主页列表列全部已结束
+    # 场次，且每行自带 rank / userCount / acceptedCount / changeValue / ratingStatus。
+    JOINED_HISTORY_PATH = "/acm-heavy/acm/contest/profile/contest-joined-history"
+    joined_page_size = 50      # 页面自身只发 10；服务端 200 以内可用，取 50 保守
+    joined_max_pages = 20      # 单账号上限 1000 行，防御异常 totalCount
+    joined_retry_base = 5.0    # 风控退避基数（秒），指数增长 + 抖动
+    joined_retry_times = 3
+    # 同一账号在 TTL 内只打一次：索引刷新与定向补数会各自建 scraper 实例，
+    # 进程级缓存才能避免一次任务里、一天里对同一路由重复请求。
+    joined_cache_ttl = 6 * 3600
+
+    def _get_json(self, url, params=None, referer=None):
+        """带风控退避的 JSON GET，返回 dict | None（None = 没拿到，不等于「没数据」）。
+
+        牛客识别到异常流量时倾向回 200 + HTML 而非 4xx，只看 HTTP 状态会漏判，
+        所以「拿不到合法 JSON 信封」一律按被拦处理：指数退避后重试，最终放弃。
+        """
+        headers = {"Referer": referer} if referer else None
+        for attempt in range(1, self.joined_retry_times + 1):
+            try:
+                payload = self._get(url, params=params, headers=headers).json()
+            except Exception as exc:  # noqa: BLE001 - 非 JSON/超时/HTTP 错误同待处置
+                detail = f"{type(exc).__name__}: {exc}"
+            else:
+                if isinstance(payload, dict) and "code" in payload:
+                    return payload
+                detail = "响应不是接口 JSON 信封（疑似被拦或返回 HTML）"
+            if attempt < self.joined_retry_times:
+                wait = self.joined_retry_base * (2 ** (attempt - 1)) + random.uniform(0, 3)
+                print(f"[_get_json] 第 {attempt}/{self.joined_retry_times} 次失败 "
+                      f"({detail})，退避 {wait:.1f}s 后重试")
+                time.sleep(wait)
+            else:
+                print(f"[_get_json] {self.joined_retry_times} 次均失败 ({detail})，放弃本次取数")
+        return None
+
+    def contest_joined_history(self, uid, rated_only=False, use_cache=True):
+        """某 uid 的全部「已结束」参赛场次（含不计 Rating 的场次）。
+
+        返回 {"rows": [...], "total": int|None, "complete": bool} | None（取不到）。
+        rows 字段：contestId contestName rank userCount signUpCnt acceptedCount
+        problemCount totalScore fullScore rating changeValue ratingStatus
+        originRatingStatus startTime endTime settingInfo。
+        """
+        key = (str(uid), bool(rated_only))
+        now = time.time()
+        hit = _JOINED_CACHE.get(key)
+        if use_cache and hit and now - hit["at"] < self.joined_cache_ttl:
+            return hit["result"]
+
+        rows, total, complete = [], None, False
+        page = 1
+        while page <= self.joined_max_pages:
+            payload = self._get_json(
+                f"{self.base}{self.JOINED_HISTORY_PATH}",
+                params={
+                    "uid": uid,
+                    "page": page,
+                    "pageSize": self.joined_page_size,
+                    "onlyJoinedFilter": "true",
+                    "searchContestName": "",
+                    "onlyRatingFilter": "true" if rated_only else "false",
+                    # contestEndFilter 缺省时服务端对所有账号都返回空 dataList，
+                    # 与风控静默置空同形 —— 这一项不是可选过滤，是必需参数。
+                    "contestEndFilter": "true",
+                    "_": int(now * 1000),
+                },
+                referer=f"{self.base}/acm/contest/profile/{uid}")
+            if payload is None:
+                print(f"[contest_joined_history] uid={uid} 取数失败（第 {page} 页）")
+                return None
+            if payload.get("code") != 0:
+                print(f"[contest_joined_history] uid={uid} 返回错误码 "
+                      f"{payload.get('code')}: {str(payload.get('msg'))[:80]}")
+                return None
+            data = payload.get("data") or {}
+            chunk = data.get("dataList") or []
+            info = data.get("pageInfo") or {}
+            rows.extend(chunk)
+            total = info.get("totalCount")
+            page_count = int(info.get("pageCount") or 1)
+            reached_end = (not chunk) or page >= page_count
+            complete = total is None or len(rows) >= int(total)
+            if reached_end or complete:
+                break
+            page += 1
+        else:
+            print(f"[contest_joined_history] uid={uid} 达翻页上限 "
+                  f"{self.joined_max_pages}，total={total} 仅取到 {len(rows)}")
+
+        result = {"rows": rows, "total": total, "complete": bool(complete)}
+        _JOINED_CACHE[key] = {"at": now, "result": result}
+        return result
 
     def fetch_contest_info(self, real_contest_id, use_cache=True):
         """抓取比赛详情（含 category / uid / needCharge），失败返回 None"""

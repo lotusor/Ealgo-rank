@@ -366,20 +366,25 @@ def backfill_account_history_task(self, platform_account_id):
         logger.info("定向补数：账号 %s 已不存在，跳过", platform_account_id)
         return {"skipped": "gone"}
 
-    filled = False
-    try:
-        filled, n = fill_participated_contests(acc)
-        logger.info("定向补数：账号 %s 官方历史返回 %d 场，索引更新=%s",
-                    acc.handle, n, filled)
-    except Exception as exc:  # noqa: BLE001 - 索引补全失败仍可尝试已有索引
-        logger.warning("定向补数：账号 %s 索引补全失败: %s", acc.handle, exc)
-
     # 只有牛客需要「按账号定向补场次」：CF/AtCoder 榜单自带 rating，且历史场次
     # 由预筛索引带出后在本轮爬取里就能抓到。
     if acc.platform != Platform.NOWCODER:
-        return {"platform": acc.platform, "index_filled": filled}
+        try:
+            filled, n = fill_participated_contests(acc)
+            logger.info("官方历史索引刷新：账号 %s 返回 %d 场，更新=%s",
+                        acc.handle, n, filled)
+        except Exception as exc:  # noqa: BLE001 - 索引补全失败仍可等每日爬取
+            logger.warning("索引补全失败 account=%s: %s", acc.handle, exc)
+        return {"platform": acc.platform, "index_filled": True}
 
+    # 牛客：backfill_account_history 内部会先 refresh_nowcoder_history（换源索引
+    # + 逐行对账），这里再调一次 fill/refresh 就是同一组接口打两遍，故不重复调用。
     result = backfill_account_history(acc)
+    v = result.get("verify") or {}
+    logger.info("定向补数：账号 %s 待补 %s / 入库 %s，主页对账差异 %s",
+                acc.handle, result.get("pending"), result.get("ingested"),
+                {k: len(v[k]) for k in
+                 ("missing_rows", "rank_diff", "delta_diff", "ac_diff") if v.get(k)})
     if result.get("ingested"):
         if _broker_reachable():
             try:
@@ -389,7 +394,7 @@ def backfill_account_history_task(self, platform_account_id):
                 logger.warning("补数后重算派发失败: %s", exc)
         else:
             logger.warning("补数完成但 broker 不可达，积分待每日重算兜底")
-    result["index_filled"] = filled
+    result["index_filled"] = True
     return result
 
 
@@ -424,29 +429,45 @@ def sweep_nowcoder_history(self, max_accounts=5):
     """每日兜底巡检：补齐「官方索引里有、站内却没有行」的牛客历史场次。
 
     定向补数解决「即时」，本任务解决「最终一致」：任何一次派发失败都不该让
-    某个用户的历史永远缺着。索引为空的账号顺带补索引——索引为空意味着爬取
-    预筛永远看不到他的比赛（冷启动死锁），这类账号靠爬取补不出来。
+    某个用户的历史永远缺着。
+
+    每轮对**所有**牛客账号做一次索引刷新 + 官方主页逐行对账（B）：索引换源后
+    缺口口径才是全集，对账不挑账号才有信号。`max_accounts` 限制的是**昂贵的
+    补数**（要重放榜单）账号数，不限制这条便宜的巡检线。
     """
     from apps.crawler.ingest import (backfill_account_history,
-                                     fill_participated_contests,
-                                     missing_nowcoder_contest_ids)
+                                     missing_nowcoder_contest_ids,
+                                     refresh_nowcoder_history)
 
     reap_stale_crawl_jobs()
+    # 一个 scraper 实例跑完整轮：主页接口有进程级缓存，账号也不会被重复握手
+    scraper = _load_scraper(Platform.NOWCODER)
+    scraper.init_session()
+
     touched = []
     still_pending = []
+    drift = []
+    checked = 0
     budget = max_accounts
     for acc in PlatformAccount.objects.filter(
             platform=Platform.NOWCODER).order_by("id"):
-        if budget <= 0:
-            break
         try:
-            if not (acc.participated_contests or []):
-                fill_participated_contests(acc)
-                acc.refresh_from_db(fields=["participated_contests"])
+            res = refresh_nowcoder_history(acc, scraper=scraper)
+            acc.refresh_from_db(fields=["participated_contests"])
+            m = res["mismatch"]
+            if res["rows"]:
+                checked += 1
+            hits = {k: len(m[k]) for k in
+                    ("missing_rows", "rank_diff", "delta_diff", "ac_diff") if m[k]}
+            if hits:
+                drift.append({"account": acc.pk, **hits,
+                              "unrated_rows": len(m["unrated_rows"])})
             if not missing_nowcoder_contest_ids(acc):
                 continue
+            if budget <= 0:
+                break
             budget -= 1
-            r = backfill_account_history(acc)
+            r = backfill_account_history(acc, scraper=scraper)
             touched.append({"account": acc.pk, "pending": r["pending"],
                             "ingested": r["ingested"], "failed": r["failed"]})
             if r["pending"] and not r["ingested"]:
@@ -460,6 +481,11 @@ def sweep_nowcoder_history(self, max_accounts=5):
     if still_pending:
         logger.warning("牛客历史巡检：以下账号的缺口本次未补上（多为 rated 口径差异）: %s",
                        still_pending)
+    if drift:
+        logger.warning("牛客历史巡检：%s 个账号与官方主页数据有差异（仅告警不改库）: %s",
+                       len(drift), drift[:8])
+    else:
+        logger.info("牛客历史巡检：与官方主页对账无差异（已比对 %s 个账号）", checked)
     if any(t["ingested"] for t in touched):
         logger.info("牛客历史巡检完成: %s", touched)
         if _broker_reachable():
@@ -470,7 +496,8 @@ def sweep_nowcoder_history(self, max_accounts=5):
                 logger.warning("巡检补数后重算派发失败: %s", exc)
     else:
         logger.info("牛客历史巡检：本次无新入库场次，跳过积分重算")
-    return {"accounts": touched, "still_pending": still_pending}
+    return {"accounts": touched, "still_pending": still_pending,
+            "drift": drift, "checked": checked}
 
 
 def dispatch_account_history_backfill(platform_account_id):
@@ -614,18 +641,23 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
 
         # A：预筛 = 窗口 ∪ 索引历史。
         #    牛客没有「整月全量」外的廉价全量列表，故先按窗口月份 fetch；
-        #    若索引（relevant）里有更早的历史比赛，通过 rating-history 反查
-        #    其所在月份并扩展抓取范围，避免用户历史成绩永远抓不到。
+        #    若索引（relevant）里有更早的历史比赛，通过个人主页参赛记录 +
+        #    rating-history 反查其所在月份并扩展抓取范围，避免用户历史成绩永远抓不到。
+        #    两个源都要看：主页列表是超集，rating-history 不列的场次（如平台对该
+        #    用户取消计分的周赛）只在前者里有时间戳。
         relevant = set() if force else relevant_contest_ids(Platform.NOWCODER)
         target = set(base_months)
         if relevant:
             for acc in PlatformAccount.objects.filter(platform=Platform.NOWCODER):
-                # 逐账号兜异常：一个账号的 rating-history 被拦/超时，不能连带
+                # 逐账号兜异常：一个账号的历史接口被拦/超时，不能连带
                 # 丢掉后面所有账号的历史月份（历史月份缺失=该用户历史成绩永久抓不到）
                 try:
-                    for row in s.user_rating_history(acc.handle):
-                        cid = str(row.get("contestId"))
-                        t = row.get("time")
+                    stamps = [(str(r.get("contestId")), r.get("time"))
+                              for r in s.user_rating_history(acc.handle)]
+                    joined = s.contest_joined_history(acc.handle) or {}
+                    stamps += [(str(r.get("contestId")), r.get("startTime"))
+                               for r in joined.get("rows") or []]
+                    for cid, t in stamps:
                         if cid in relevant and t:
                             ym = datetime.fromtimestamp(
                                 t / 1000).strftime("%Y-%m")

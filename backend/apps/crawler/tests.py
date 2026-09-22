@@ -640,14 +640,132 @@ class FillParticipatedContestsTests(TestCase):
         self.assertIn("999", acc.participated_contests)
         self.assertIn("111", acc.participated_contests)
 
-    def test_nowcoder_returns_false(self):
+    def test_nowcoder_index_not_wiped_on_failure(self):
+        """主页接口取不到时宁可不写索引，也不能把「被静默置空」当成「无历史」。"""
         user = User.objects.create_user(username="fillnc", password="pwd12345")
         acc = PlatformAccount.objects.create(
             user=user, platform=Platform.NOWCODER, handle="123456",
             participated_contests=[])
-        updated, n = fill_participated_contests(acc)
+        fake = mock.MagicMock()
+        fake.user_rating_history.return_value = []
+        fake.contest_joined_history.return_value = None
+        with mock.patch("nowcoder_scraper.NowCoderScraper", return_value=fake):
+            updated, n = fill_participated_contests(acc)
         self.assertFalse(updated)
         self.assertEqual(n, 0)
+        acc.refresh_from_db()
+        self.assertEqual(acc.participated_contests, [])
+
+    def test_nowcoder_fills_index_from_both_sources(self):
+        """索引 = rating-history ∪ 主页已结束场次；主页里不计分的那几场不进索引。"""
+        user = User.objects.create_user(username="fillnc2", password="pwd12345")
+        acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="123456",
+            participated_contests=["7000"])
+        fake = mock.MagicMock()
+        fake.user_rating_history.return_value = [{"contestId": 7001}]
+        fake.contest_joined_history.return_value = {
+            "rows": [_nc_row(7002), _nc_row(7003, rating_status="NO",
+                                             origin_rating_status="NO")],
+            "total": 3, "complete": True}
+        with mock.patch("nowcoder_scraper.NowCoderScraper", return_value=fake):
+            updated, n = fill_participated_contests(acc)
+        self.assertTrue(updated)
+        acc.refresh_from_db()
+        self.assertEqual(sorted(acc.participated_contests),
+                         ["7000", "7001", "7002"])
+        self.assertNotIn("7003", acc.participated_contests)
+        self.assertEqual(n, 2)   # 本次取到的索引场次数（不含原有 7000）
+
+
+class _NCRawResponse:
+    """最小响应桩：只需 .json()。"""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class ContestJoinedHistoryScraperTests(TestCase):
+    """scraper 层：翻页、风控退避、必需参数、进程级缓存。"""
+
+    def setUp(self):
+        _crawler_dir()
+        from nowcoder_scraper import NowCoderScraper
+        import nowcoder_scraper as nc_mod
+        nc_mod._JOINED_CACHE.clear()
+        self.scraper = NowCoderScraper(delay=(0, 0))
+        self.scraper.joined_retry_base = 0
+        self.urls = []
+        self.params = []
+
+    def _stub(self, responses):
+        """按调用顺序返回响应列表；元素可为 dict 或 Exception。"""
+        calls = {"i": 0}
+
+        def fake_get(url, params=None, headers=None, **kwargs):
+            self.urls.append(url)
+            self.params.append(params or {})
+            item = responses[min(calls["i"], len(responses) - 1)]
+            calls["i"] += 1
+            if isinstance(item, Exception):
+                raise item
+            return _NCRawResponse(item)
+
+        self.scraper._get = fake_get
+
+    @staticmethod
+    def _envelope(rows, total=None, page_count=1, page_size=50):
+        return {"code": 0, "data": {
+            "dataList": rows,
+            "pageInfo": {"totalCount": total if total is not None else len(rows),
+                         "pageCount": page_count, "pageSize": page_size,
+                         "pageCurrent": 1}}}
+
+    def test_sends_required_filters(self):
+        self._stub([self._envelope([_nc_row(1)])])
+        self.scraper.contest_joined_history("42")
+        p = self.params[0]
+        self.assertEqual(p["contestEndFilter"], "true")   # 缺它服务端恒返回空
+        self.assertEqual(p["onlyRatingFilter"], "false")  # 要的是全量，含不计分
+        self.assertEqual(p["uid"], "42")
+        self.assertIn("contest-joined-history", self.urls[0])
+
+    def test_paginates_until_total(self):
+        page1 = self._envelope([_nc_row(i) for i in range(50)],
+                               total=60, page_count=2)
+        page2 = self._envelope([_nc_row(i) for i in range(50, 60)],
+                               total=60, page_count=2)
+        self._stub([page1, page2])
+        res = self.scraper.contest_joined_history("42")
+        self.assertEqual(len(res["rows"]), 60)
+        self.assertTrue(res["complete"])
+        self.assertEqual([p["page"] for p in self.params], [1, 2])
+
+    def test_html_instead_of_json_is_treated_as_blocked(self):
+        """被风控时牛客回 200 + HTML：非 JSON 信封必须当失败，不能当空历史。"""
+        self._stub([RuntimeError("响应不是 JSON"),
+                    RuntimeError("响应不是 JSON"),
+                    RuntimeError("响应不是 JSON")])
+        with mock.patch("time.sleep"):
+            self.assertIsNone(self.scraper.contest_joined_history("42"))
+        self.assertEqual(len(self.urls), 3)   # 重试次数受 joined_retry_times 约束
+
+    def test_non_zero_code_returns_none(self):
+        self._stub([{"code": 1001, "msg": "服务器错误"}])
+        self.assertIsNone(self.scraper.contest_joined_history("42"))
+
+    def test_second_call_hits_cache(self):
+        self._stub([self._envelope([_nc_row(1)]),
+                    self._envelope([_nc_row(2)])])
+        first = self.scraper.contest_joined_history("42")
+        second = self.scraper.contest_joined_history("42")
+        self.assertEqual(len(first["rows"]), 1)
+        self.assertEqual(first["rows"][0]["contestId"], 1)
+        self.assertEqual(second, first)      # 同账号一次任务内只打一次
+        self.assertEqual(len(self.urls), 1)
 
 
 class _FakeNC:
@@ -664,6 +782,11 @@ class _FakeNC:
 
     def user_rating_history(self, handle):
         return self._rating_history.get(handle, [])
+
+    def contest_joined_history(self, handle, rated_only=False, use_cache=True):
+        """主页列表按 rating-history 桩同构生成；真实差异由显式 rows 覆盖。"""
+        rows = [_nc_row(r.get("contestId")) for r in self._rating_history.get(handle, [])]
+        return {"rows": rows, "total": len(rows), "complete": True}
 
     def fetch_contests(self, ym):
         return [c for c in self._contests if (c.get("start_time") or "")[:7] == ym]
@@ -877,14 +1000,29 @@ from django.test import override_settings  # noqa: E402
 from django.utils import timezone as dj_tz  # noqa: E402
 
 from apps.crawler import ingest as ingest_mod  # noqa: E402
-from apps.crawler.ingest import (backfill_account_history,  # noqa: E402
-                                 missing_nowcoder_contest_ids)
+from apps.crawler.ingest import (_crawler_dir,  # noqa: E402
+                                 backfill_account_history,
+                                 compare_nowcoder_history,
+                                 joined_index_contest_ids,
+                                 missing_nowcoder_contest_ids,
+                                 refresh_nowcoder_history)
 from apps.crawler.tasks import (_contest_cache_ttl,  # noqa: E402
                                reap_stale_crawl_jobs, sweep_nowcoder_history)
 
 
 def _dt_str(dt):
     return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _nc_row(cid, rating_status="FINISHED", origin_rating_status="FINISHED",
+            **extra):
+    """个人主页「参赛记录」的一行，字段形状对齐 contest-joined-history。"""
+    row = {"contestId": cid, "contestName": f"NC {cid}",
+           "ratingStatus": rating_status,
+           "originRatingStatus": origin_rating_status,
+           "startTime": 1747000000000, "endTime": 1747007200000}
+    row.update(extra)
+    return row
 
 
 def _nc_contest(rid, days_ago):
@@ -914,15 +1052,34 @@ def _nc_detail(uid="1001", rank=7, score=300.0):
 class _FakeHistoryScraper:
     """只实现 backfill_account_history 用到的接口面，全程不联网。"""
 
-    def __init__(self, detail=None, rated_ids=(), info=None):
+    def __init__(self, detail=None, rated_ids=(), info=None,
+                 joined_rows=None, joined_fail=False):
         self.detail = detail or _nc_detail()
-        self.rated_ids = {str(i) for i in rated_ids}
+        self.rated_ids = [str(i) for i in rated_ids]
         self._info = info or {}
         self.scraped = []      # (external_id, cache_ttl_hours)
         self.info_calls = []
+        # 主页行默认与 rating-history 同构（索引口径不变），需要测差异时显式传入
+        self._joined_rows = (joined_rows if joined_rows is not None
+                             else [_nc_row(i) for i in self.rated_ids])
+        self.joined_fail = joined_fail
+        self.joined_calls = []
 
     def init_session(self):
         pass
+
+    def user_rating_history(self, uid):
+        return [{"contestId": i, "time": 1747000000000} for i in self.rated_ids]
+
+    def user_rating_history_contest_ids(self, uid):
+        return list(self.rated_ids)
+
+    def contest_joined_history(self, uid, rated_only=False, use_cache=True):
+        self.joined_calls.append(str(uid))
+        if self.joined_fail:
+            return None
+        return {"rows": list(self._joined_rows), "total": len(self._joined_rows),
+                "complete": True}
 
     def fetch_contest_info(self, rid, use_cache=True):
         self.info_calls.append(str(rid))
@@ -1192,32 +1349,63 @@ class SweepNowcoderHistoryTests(TestCase):
             user=user, platform=Platform.NOWCODER, handle=handle,
             participated_contests=index)
 
-    def test_only_gap_accounts_processed_and_budget_respected(self):
+    def test_every_account_reconciled_and_gaps_repaired(self):
+        """巡检对**所有**账号做索引刷新 + 主页对账，补数才受预算约束。"""
         cold = self._account("cold", "2001", [])          # 索引为空
         gap = self._account("gap", "1001", ["9001"])      # 有缺口
         Contest.objects.create(platform=Platform.NOWCODER, external_id="9001",
                                name="NC 9001", is_rated=True)
-        with mock.patch.object(ingest_mod, "fill_participated_contests",
-                               return_value=(False, 0)) as fill, \
+        fake = _FakeHistoryScraper(rated_ids=["9001"])
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake), \
                 mock.patch.object(ingest_mod, "backfill_account_history",
                                   return_value={"pending": 1, "ingested": 1,
-                                                "skipped": 0, "failed": 0}) as bf, \
+                                                "skipped": 0, "failed": 0,
+                                                "verify": None}) as bf, \
                 mock.patch.object(tasks_mod, "_broker_reachable",
                                   return_value=False):
             res = sweep_nowcoder_history(max_accounts=5)
-        fill.assert_called_once()
-        self.assertEqual(fill.call_args[0][0].pk, cold.pk)
-        self.assertEqual([c[0][0].pk for c in bf.call_args_list], [gap.pk])
-        self.assertEqual(res["accounts"][0]["account"], gap.pk)
+        # 两个账号都做过一次主页取数（对账线不挑账号）
+        self.assertEqual(sorted(fake.joined_calls), ["1001", "2001"])
+        cold.refresh_from_db()
+        self.assertEqual(cold.participated_contests, ["9001"])  # 冷启动索引补上
+        self.assertEqual([c[0][0].pk for c in bf.call_args_list], [cold.pk, gap.pk])
+        self.assertEqual(res["accounts"][0]["account"], cold.pk)
+        self.assertEqual(res["checked"], 2)
+
+    def test_drift_reported_without_touching_data(self):
+        """对账差异只进结果与日志，巡检绝不因此改库。"""
+        acc = self._account("drifty", "3001", ["9001"])
+        contest = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="9001", name="NC 9001",
+            is_rated=True, participant_count=2000)
+        Participation.objects.create(
+            contest=contest, platform_account=acc, handle="3001",
+            handle_lower="3001", rank=100, solved_count=3, rating_delta=20)
+        fake = _FakeHistoryScraper(rated_ids=["9001"], joined_rows=[
+            _nc_row("9001", rank=900, acceptedCount=3, changeValue=20)])
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake), \
+                mock.patch.object(ingest_mod, "backfill_nowcoder_ratings",
+                                  return_value={"updated": 0}), \
+                mock.patch.object(tasks_mod, "_broker_reachable",
+                                  return_value=False):
+            res = sweep_nowcoder_history(max_accounts=5)
+        acc.refresh_from_db()
+        row = Participation.objects.get(contest=contest, platform_account=acc)
+        self.assertEqual(row.rank, 100)                     # 未被官方值覆盖
+        self.assertEqual(res["drift"], [{"account": acc.pk, "rank_diff": 1,
+                                         "unrated_rows": 0}])
+        self.assertEqual(res["accounts"], [])               # 无缺口 → 不补数
 
     def test_budget_limits_accounts_per_run(self):
         for i in range(3):
             self._account(f"u{i}", f"100{i}", ["9001"])
         Contest.objects.create(platform=Platform.NOWCODER, external_id="9001",
                                name="NC 9001", is_rated=True)
-        with mock.patch.object(ingest_mod, "backfill_account_history",
-                               return_value={"pending": 1, "ingested": 0,
-                                             "skipped": 0, "failed": 0}) as bf, \
+        fake = _FakeHistoryScraper(rated_ids=["9001"])
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake), \
+                mock.patch.object(ingest_mod, "backfill_account_history",
+                                  return_value={"pending": 1, "ingested": 0,
+                                                "skipped": 0, "failed": 0}) as bf, \
                 mock.patch.object(tasks_mod, "_broker_reachable",
                                   return_value=False):
             sweep_nowcoder_history(max_accounts=2)
@@ -1228,9 +1416,11 @@ class SweepNowcoderHistoryTests(TestCase):
         acc = self._account("gap2", "1009", ["9001"])
         Contest.objects.create(platform=Platform.NOWCODER, external_id="9001",
                                name="NC 9001", is_rated=True)
-        with mock.patch.object(ingest_mod, "backfill_account_history",
-                               return_value={"pending": 1, "ingested": 0,
-                                             "skipped": 1, "failed": 0}), \
+        fake = _FakeHistoryScraper(rated_ids=["9001"])
+        with mock.patch.object(tasks_mod, "_load_scraper", return_value=fake), \
+                mock.patch.object(ingest_mod, "backfill_account_history",
+                                  return_value={"pending": 1, "ingested": 0,
+                                                "skipped": 1, "failed": 0}), \
                 mock.patch.object(tasks_mod, "_broker_reachable",
                                   return_value=True), \
                 mock.patch("apps.ranking.tasks.recompute_ranking_task") as rc:
@@ -1256,3 +1446,131 @@ class ReapStaleCrawlJobsTests(TestCase):
         self.assertIsNotNone(stale.finished_at)
         self.assertIn("状态收割", stale.error_message)
         self.assertEqual(live.status, CrawlJob.Status.RUNNING)
+
+
+class JoinedIndexIdsTests(TestCase):
+    """主页行 → 索引 id 的口径：只有「该场对该用户计入 rating」的才进。"""
+
+    def test_accepts_either_rated_flag(self):
+        rows = [_nc_row("1", rating_status="NO", origin_rating_status="FINISHED"),
+                _nc_row("2", rating_status="FINISHED", origin_rating_status="NO"),
+                _nc_row("3", rating_status="WAITING", origin_rating_status="FINISHED")]
+        self.assertEqual(joined_index_contest_ids(rows), {"1", "2", "3"})
+
+    def test_drops_contests_unrated_for_everyone(self):
+        # 两标记全 NO = 校内赛/同步赛，本站不落参赛行；收进索引会造成永远补不动的缺口
+        rows = [_nc_row("4", rating_status="NO", origin_rating_status="NO"),
+                {"contestName": "没有 contestId"}, _nc_row(None)]
+        self.assertEqual(joined_index_contest_ids(rows), set())
+        self.assertEqual(joined_index_contest_ids(None), set())
+
+
+class CompareNowcoderHistoryTests(TestCase):
+    """B：逐行对账只报差异，且不误报「口径本就不同」的字段。"""
+
+    def setUp(self):
+        user = User.objects.create_user(username="vfu", password="pwd12345")
+        self.acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="4001")
+        self.contest = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="9001", name="NC 9001",
+            is_rated=True, participant_count=2000)
+        self.row = Participation.objects.create(
+            contest=self.contest, platform_account=self.acc, handle="4001",
+            handle_lower="4001", rank=100, solved_count=3, rating_delta=20)
+
+    def test_flags_real_drift_only(self):
+        rows = [_nc_row("9001", rank=103, acceptedCount=5, changeValue=20),   # 名次差 3 < 5
+                _nc_row("9002", rank=8, acceptedCount=2, changeValue=-5)]     # 站内缺行
+        out = compare_nowcoder_history(self.acc, rows)
+        self.assertEqual(out["checked"], 1)
+        self.assertEqual(out["rank_diff"], [])           # 小漂移不足以告警
+        self.assertEqual(out["ac_diff"][0]["site"], 3)
+        self.assertEqual(out["ac_diff"][0]["official"], 5)
+        self.assertEqual(out["missing_rows"][0]["contestId"], "9002")
+
+    def test_unrated_placeholder_change_is_not_a_delta_diff(self):
+        """ratingStatus=NO 时官方 changeValue 给的是占位 0，不能算成站内缺涨落。"""
+        self.row.rating_delta = None
+        self.row.save(update_fields=["rating_delta"])
+        rows = [_nc_row("9001", rating_status="NO", origin_rating_status="NO",
+                        rank=100, acceptedCount=3, changeValue=0)]
+        out = compare_nowcoder_history(self.acc, rows)
+        self.assertEqual(out["delta_diff"], [])
+        self.assertEqual([r["contestId"] for r in out["unrated_rows"]], [])
+        self.assertEqual(out["checked"], 1)
+
+    def test_rated_delta_mismatch_reported(self):
+        rows = [_nc_row("9001", rank=100, acceptedCount=3, changeValue=-77)]
+        out = compare_nowcoder_history(self.acc, rows)
+        self.assertEqual(out["delta_diff"], [{
+            "contestId": "9001", "rank": 100, "contestName": "NC 9001",
+            "site": 20, "official": -77}])
+
+    def test_no_rows_no_work(self):
+        self.assertEqual(compare_nowcoder_history(self.acc, [])["checked"], 0)
+
+
+class RefreshNowcoderHistoryTests(TestCase):
+    """A：索引换源 + 反爬底线（空/失败不得覆盖已有索引）。"""
+
+    def setUp(self):
+        user = User.objects.create_user(username="rfu", password="pwd12345")
+        self.acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="5001",
+            participated_contests=["7000"])
+
+    def test_union_writes_and_reports_added(self):
+        fake = _FakeHistoryScraper(
+            rated_ids=["7001"],
+            joined_rows=[_nc_row("7002"),                                  # 只在主页有
+                         _nc_row("7003", rating_status="NO",
+                                 origin_rating_status="NO")])              # 不计分，不收
+        res = refresh_nowcoder_history(self.acc, scraper=fake)
+        self.acc.refresh_from_db()
+        self.assertEqual(sorted(self.acc.participated_contests),
+                         ["7000", "7001", "7002"])
+        self.assertEqual(res["added"], ["7001", "7002"])
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["index_count"], 2)   # 不含索引里原有的 7000
+
+    def test_failed_fetch_keeps_index_untouched(self):
+        fake = _FakeHistoryScraper(rated_ids=[], joined_fail=True)
+        res = refresh_nowcoder_history(self.acc, scraper=fake)
+        self.acc.refresh_from_db()
+        self.assertFalse(res["ok"])
+        self.assertEqual(self.acc.participated_contests, ["7000"])
+
+    def test_empty_joined_with_history_is_treated_as_blocked(self):
+        """主页 0 行但 rating-history 有行 = 被静默置空的典型形态，不当无历史。"""
+        fake = _FakeHistoryScraper(rated_ids=["7001"], joined_rows=[])
+        res = refresh_nowcoder_history(self.acc, scraper=fake)
+        self.assertFalse(res["ok"])
+        self.acc.refresh_from_db()
+        self.assertIn("7001", self.acc.participated_contests)  # 仍按旧源写索引
+
+    def test_one_request_per_account_per_scraper(self):
+        fake = _FakeHistoryScraper(rated_ids=["7001"])
+        refresh_nowcoder_history(self.acc, scraper=fake)
+        refresh_nowcoder_history(self.acc, scraper=fake)
+        self.assertEqual(len(fake.joined_calls), 2)  # 调用两次，取数也两次（缓存属 scraper 层）
+
+    def test_backfill_runs_index_refresh_then_verify(self):
+        """补数前的缺口用新索引算，补完后的对账才算「还缺什么」。"""
+        self.acc.participated_contests = []
+        self.acc.save()
+        Contest.objects.create(platform=Platform.NOWCODER, external_id="7001",
+                               name="NC 7001", is_rated=True,
+                               start_time=dj_tz.now() - timedelta(days=200),
+                               end_time=dj_tz.now() - timedelta(days=200))
+        fake = _FakeHistoryScraper(rated_ids=["7001"],
+                                   detail=_nc_detail(uid="5001"))
+        with mock.patch.object(ingest_mod, "backfill_nowcoder_ratings",
+                               return_value={"updated": 0}):
+            stats = backfill_account_history(self.acc, scraper=fake)
+        self.assertEqual(stats["ingested"], 1)
+        self.acc.refresh_from_db()
+        self.assertEqual(self.acc.participated_contests, ["7001"])
+        # 补完之后主页那行已在站内 → 校验不该再报缺行
+        self.assertEqual(stats["verify"]["missing_rows"], [])
+        self.assertEqual(stats["verify"]["checked"], 1)

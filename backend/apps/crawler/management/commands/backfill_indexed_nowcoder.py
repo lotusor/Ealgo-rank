@@ -1,7 +1,7 @@
 """定向补齐牛客账号的历史参赛记录（手动/一次性修复入口）。
 
-待补口径是「官方 rating-history 索引里有、但这个账号在库里没有参赛行」，
-覆盖两类缺口：
+待补口径是「官方参赛索引里有、但这个账号在库里没有参赛行」，索引 = rating-history
+∪ 个人主页已结束场次（后者是超集，见 HANDOVER §0.23 附），覆盖两类缺口：
   1. 比赛从未入库（2026-09-09 Chen777iii 案例，旧版命令只处理这一类）；
   2. 比赛早已入库、只缺这个账号那一行（2026-09-22 学生榜第一名案例，
      21 场缺失里 20 场属于这类——旧版命令按「比赛未入库」筛选，永远修不掉）。
@@ -65,6 +65,12 @@ class Command(BaseCommand):
                 f"   待补 {stats['pending']} / 入库 {stats.get('ingested', 0)}"
                 f" / 跳过 {stats.get('skipped', 0)}"
                 f" / 失败 {stats.get('failed', 0)}")
+            v = stats.get("verify")
+            if v is not None:
+                parts = [f"{k}={len(v[k])}" for k in
+                         ("missing_rows", "rank_diff", "delta_diff", "ac_diff",
+                          "unrated_rows") if v.get(k)]
+                self.stdout.write("   主页对账：" + (" ".join(parts) or "无差异"))
 
         if opts["dry_run"]:
             self.stdout.write(self.style.SUCCESS("dry-run done"))

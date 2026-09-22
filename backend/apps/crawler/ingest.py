@@ -420,6 +420,147 @@ def missing_nowcoder_contest_ids(account):
     return idx - have
 
 
+# 牛客主页参赛记录行里「该场对该用户计入了 rating 体系」的标记值。
+# ratingStatus = 本场对**该用户**是否计分；originRatingStatus = **该比赛**本身是否 rated。
+NOWCODER_RATED_FLAG = "FINISHED"
+
+
+def _joined_flag(row, key):
+    return str(row.get(key) or "").upper()
+
+
+def _joined_is_rated(row):
+    return NOWCODER_RATED_FLAG in (_joined_flag(row, "originRatingStatus"),
+                                   _joined_flag(row, "ratingStatus"))
+
+
+def _as_int(value):
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def joined_index_contest_ids(rows):
+    """个人主页参赛行 → 该并进「参赛索引」的 contestId 集合。
+
+    只收任一 rating 标记为 FINISHED 的行。两个标记全 NO 的是校内赛/同步赛，本站
+    对不计分场次不落参赛行（补数循环里就是那句「非 rated 跳过」），把它们收进索引
+    会造出**永远补不动的缺口**，把每日巡检的账号预算吃光、并淹没真缺口告警。
+    这类场次由 compare_nowcoder_history 单独报成 unrated_rows，留给展示补全。
+    """
+    return {str(r.get("contestId")) for r in (rows or [])
+            if r.get("contestId") not in (None, "") and _joined_is_rated(r)}
+
+
+def compare_nowcoder_history(account, rows, *, min_rank_diff=5):
+    """逐行比对官方主页数据与站内 (账号,比赛) 行；只报差异，不改数据。
+
+    为什么不改：榜单是同一场比赛所有账号共同的来源，为对齐官方数字单改一行会
+    破坏同场一致性；而且 2026-09-22 实测的那处名次差异（4082 vs 4111）源于官方
+    榜单在两次抓取之间又进了人，属陈旧度而非抓错。校验的价值是把这类漂移和
+    「涨落整列 NULL」式的停摆变成每天自动看得见的事。
+    """
+    out = {"checked": 0, "missing_rows": [], "rank_diff": [],
+           "delta_diff": [], "ac_diff": [], "unrated_rows": []}
+    if not rows:
+        return out
+    mine = {p.contest.external_id: p for p in Participation.objects.filter(
+        platform_account=account,
+        contest__platform=Platform.NOWCODER,
+    ).select_related("contest")}
+    for row in rows:
+        cid = str(row.get("contestId") or "")
+        if not cid:
+            continue
+        rated = _joined_is_rated(row)
+        brief = {"contestId": cid, "rank": _as_int(row.get("rank")),
+                 "contestName": row.get("contestName")}
+        p = mine.get(cid)
+        if p is None:
+            out["missing_rows" if rated else "unrated_rows"].append(brief)
+            continue
+        out["checked"] += 1
+        official_rank = _as_int(row.get("rank"))
+        if p.rank is not None and official_rank is not None and p.rank != official_rank:
+            out["rank_diff"].append({**brief, "site": p.rank,
+                                     "diff": official_rank - p.rank})
+        if rated:  # 不计分场次官方给的是占位 0，与站内 None 不算差异
+            official_delta = _as_int(row.get("changeValue"))
+            if p.rating_delta is not None and official_delta is not None \
+                    and p.rating_delta != official_delta:
+                out["delta_diff"].append({**brief, "site": p.rating_delta,
+                                          "official": official_delta})
+        official_ac = _as_int(row.get("acceptedCount"))
+        if p.solved_count is not None and official_ac is not None \
+                and p.solved_count != official_ac:
+            out["ac_diff"].append({**brief, "site": p.solved_count,
+                                   "official": official_ac})
+    out["rank_diff"] = [d for d in out["rank_diff"] if abs(d["diff"]) >= min_rank_diff]
+    for key in ("missing_rows", "rank_diff", "delta_diff", "ac_diff"):
+        if out[key]:
+            logger.warning("牛客主页对账 account=%s(%s) %s=%s 处: %s",
+                           account.handle, account.pk, key, len(out[key]),
+                           out[key][:5])
+    return out
+
+
+def refresh_nowcoder_history(account, *, scraper=None):
+    """刷新单个牛客账号的参赛索引，并顺带做逐行交叉校验（B）。
+
+    索引口径 = rating-history ∪ 个人主页已结束场次。后者是超集：2026-09-22 实测
+    学生榜第一名 rating-history 25 场、主页 32 场，站内缺的 6 行全在差集里 ——
+    只按 rating-history 建索引时这些缺口结构性不可见，换源才补得动。
+
+    反爬约束：一个账号一次调用只打一次主页接口（scraper 内有进程级缓存），
+    取数失败/返回空都**不写索引**，避免把「被静默置空」当成「该用户无历史」。
+    """
+    _crawler_dir()
+    if scraper is None:
+        from nowcoder_scraper import NowCoderScraper
+        scraper = NowCoderScraper()
+        scraper.init_session()
+
+    hist = scraper.user_rating_history(account.handle)
+    rh_ids = {str(x.get("contestId")) for x in hist
+              if isinstance(x, dict) and x.get("contestId") not in (None, "")}
+    joined = scraper.contest_joined_history(account.handle)
+    rows, complete, ok = [], False, bool(rh_ids)
+    if joined is None:
+        logger.warning("牛客主页参赛记录取数失败 account=%s，本轮索引只用 rating-history",
+                       account.pk)
+    else:
+        rows = joined.get("rows") or []
+        complete = bool(joined.get("complete"))
+        ok = True
+        if not rows and rh_ids:
+            ok = False
+            logger.warning("牛客主页参赛记录返回 0 行，但同账号 rating-history 有 %s 行"
+                           "（account=%s）—— 按被拦处置，不当作无历史",
+                           len(rh_ids), account.pk)
+        elif not complete:
+            logger.warning("牛客主页参赛记录未取全 account=%s（已取 %s 行），"
+                           "本轮只按已取到的部分并索引", account.pk, len(rows))
+
+    index_ids = rh_ids | joined_index_contest_ids(rows)
+    mismatch = compare_nowcoder_history(account, rows)
+    before = {str(x) for x in (account.participated_contests or [])}
+    added = sorted(index_ids - before, key=lambda s: int(s) if s.isdigit() else 0)
+    updated = False
+    if index_ids and (before | index_ids) != before:
+        merged = before | index_ids
+        account.participated_contests = sorted(
+            merged, key=lambda s: int(s) if s.isdigit() else 0)
+        account.save(update_fields=["participated_contests", "updated_at"])
+        updated = True
+        if added:
+            logger.info("牛客参赛索引换源后新增 account=%s %s 场: %s",
+                        account.pk, len(added), added[:10])
+    return {"ok": ok, "complete": complete, "rows": rows,
+            "index_count": len(index_ids), "added": added,
+            "mismatch": mismatch, "updated": updated}
+
+
 def _meta_from_contest(contest):
     """用库里的 Contest 还原一份 ingest 需要的 meta（沿用 raw_meta 保原貌）。"""
     meta = dict(contest.raw_meta or {})
@@ -465,12 +606,24 @@ def backfill_account_history(account, *, scraper=None, limit=0,
         scraper = NowCoderScraper()
         scraper.init_session()
 
+    # 先把索引换成「rating-history ∪ 主页已结束场次」再算缺口：主页接口取数失败时
+    # refresh 内部会退回 rating-history，不会把被拦当成无历史。dry-run 不发网络请求。
+    verify = None
+    hist_rows = []
+    if not dry_run:
+        res = refresh_nowcoder_history(account, scraper=scraper)
+        verify = res["mismatch"]
+        hist_rows = res["rows"]
+        if res["added"]:
+            log(f"索引新增 {len(res['added'])} 场: {res['added'][:8]}")
+
     missing = missing_nowcoder_contest_ids(account)
     if not missing:
         log(f"账号 {account.handle} 无待补场次")
         if not dry_run:
             backfill_nowcoder_ratings(account_ids=[account.pk])
-        return {"pending": 0, "ingested": 0, "skipped": 0, "failed": 0}
+        return {"pending": 0, "ingested": 0, "skipped": 0, "failed": 0,
+                "verify": verify}
 
     cache_dir = _crawler_cache_dir(Platform.NOWCODER)
     in_db = {c.external_id: c for c in Contest.objects.filter(
@@ -538,10 +691,15 @@ def backfill_account_history(account, *, scraper=None, limit=0,
                              account.pk, eid)
 
     rating = backfill_nowcoder_ratings(account_ids=[account.pk])
+    # 补完再对账一次：主页行还在 scraper 进程级缓存里，零额外请求，且这时
+    # 「补上了没有」才是真答案 —— 用补数前的快照会把刚填的缺口报成缺行。
+    if hist_rows:
+        verify = compare_nowcoder_history(account, hist_rows)
     log(f"补齐完成: 入库 {ingested} / 跳过 {skipped} / 失败 {failed}，"
         f"rating 回填 {rating}")
     return {"pending": len(ordered), "ingested": ingested,
-            "skipped": skipped, "failed": failed, "rating": rating}
+            "skipped": skipped, "failed": failed, "rating": rating,
+            "verify": verify}
 
 
 def fill_participated_contests(platform_account):
@@ -549,7 +707,7 @@ def fill_participated_contests(platform_account):
 
     Codeforces -> user.rating（contestId 列表）
     AtCoder    -> users/{handle}/history/json（ContestScreenName 列表）
-    牛客       -> acm/contest/rating-history?uid=（contestId 列表，即 real_contest_id）
+    牛客       -> refresh_nowcoder_history：rating-history ∪ 个人主页已结束场次
 
     返回 (updated: bool, ids_count: int)。索引为空时也算一次更新写入。
     """
@@ -571,7 +729,8 @@ def fill_participated_contests(platform_account):
         from nowcoder_scraper import NowCoderScraper
         scraper = NowCoderScraper()
         scraper.init_session()
-        ids = scraper.user_rating_history_contest_ids(platform_account.handle)
+        res = refresh_nowcoder_history(platform_account, scraper=scraper)
+        return res["updated"], res["index_count"]
     else:
         return False, 0
 
