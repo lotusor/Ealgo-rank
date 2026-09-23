@@ -257,9 +257,14 @@ export interface ContestMeta {
   upcoming: number
   finished: number
   rated: number
+  /** 已收录进比赛目录的真实赛次数（不含主页锚点与未开赛排期行） */
+  catalog: number
   platforms: ContestMetaPlatform[]
   series: string[]
+  /** 真榜单最近一次同步时间（不含排期行，排期行每天刷新会让它失真） */
   latest_sync_at: string | null
+  /** 日历排期最近一次刷新时间 */
+  schedule_synced_at: string | null
 }
 
 // 榜单快照（只读）

@@ -267,6 +267,79 @@ class ProfileOnlyContestVisibilityTests(APITestCase):
                          {self.real.pk, self.anchor.pk})
 
 
+class CalendarRowVisibilityTests(APITestCase):
+    """日历排期行（未开赛的官方排期）的可见性口径。
+
+    「比赛列表」是历史赛事检索页，默认不显示还没开的场次；日历页自己带
+    ?include_calendar=1 把它们捞回来。meta 则刻意给两套数：total/ongoing/upcoming
+    含排期行（日历要显示「即将开始 N 场」），catalog 只数已收录的真实赛次。
+    """
+
+    LIST = f"{BASE}/contests/"
+    META = f"{BASE}/contests/meta/"
+
+    def setUp(self):
+        cache.clear()
+        now = timezone.now()
+        self.real = Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id="r", name="已赛完",
+            series="Div. 2", is_rated=True,
+            start_time=now - timedelta(days=4), end_time=now - timedelta(days=4, hours=-2))
+        self.soon = Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id="c1", name="Codeforces Round 1200 (Div. 3)",
+            series="Div. 3", is_rated=False, rated_source="calendar-feed",
+            start_time=now + timedelta(days=1),
+            end_time=now + timedelta(days=1, hours=2))
+        self.later = Contest.objects.create(
+            platform=Platform.ATCODER, external_id="c2", name="abc999",
+            series="ABC", is_rated=False, rated_source="calendar-feed",
+            start_time=now + timedelta(days=9), end_time=now + timedelta(days=9, hours=2))
+
+    def tearDown(self):
+        cache.clear()
+
+    def _ids(self, **qp):
+        resp = self.client.get(self.LIST, qp)
+        return {r["id"] for r in resp.data["results"]}
+
+    def test_default_list_hides_calendar_rows(self):
+        self.assertEqual(self._ids(), {self.real.pk})
+        self.assertEqual(self._ids(status="upcoming"), set())
+
+    def test_include_calendar_brings_them_back(self):
+        self.assertEqual(self._ids(include_calendar="1"),
+                         {self.real.pk, self.soon.pk, self.later.pk})
+        self.assertEqual(self._ids(include_calendar="1", status="upcoming"),
+                         {self.soon.pk, self.later.pk})
+        # 月历的取数条件：跨月窗口按 end_after 筛，排期行必须在里面
+        self.assertEqual(self._ids(include_calendar="1", platform="atcoder"),
+                         {self.later.pk})
+
+    def test_calendar_and_profile_flags_are_independent(self):
+        """两个开关互不干扰：只放 anchor 不会顺带放出排期行。"""
+        anchor = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="a", name="校内赛",
+            is_rated=False, rated_source="profile-joined-history",
+            start_time=timezone.now() - timedelta(days=40),
+            end_time=timezone.now() - timedelta(days=40, hours=-2))
+        self.assertEqual(self._ids(include_profile_only="1"),
+                         {self.real.pk, anchor.pk})
+
+    def test_meta_counts_schedule_rows_but_catalog_excludes_them(self):
+        resp = self.client.get(self.META)
+        data = resp.data
+        self.assertEqual(data["upcoming"], 2)        # 两行排期都算「即将开始」
+        self.assertEqual(data["ongoing"], 0)
+        self.assertEqual(data["total"], 3)           # 含排期行的赛程总数
+        self.assertEqual(data["catalog"], 1)         # 已收录的真实赛次
+        self.assertEqual(data["finished"], 1)
+        self.assertEqual(data["rated"], 1)
+        by_key = {p["key"]: p["count"] for p in data["platforms"]}
+        self.assertEqual(by_key["codeforces"], 2)    # 已赛 + 排期
+        self.assertEqual(by_key["nowcoder"], 0)
+        self.assertIn("ABC", data["series"])
+
+
 class PublicProfileShowsUnratedTests(APITestCase):
     """个人主页参赛记录与牛客对齐：不计 Rating 的场次也展示，并带解题数。"""
 

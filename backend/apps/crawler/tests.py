@@ -1009,7 +1009,8 @@ from apps.crawler.ingest import (_crawler_dir,  # noqa: E402
                                  rating_history_index_ids,
                                  refresh_nowcoder_history)
 from apps.crawler.tasks import (_contest_cache_ttl,  # noqa: E402
-                               reap_stale_crawl_jobs, sweep_nowcoder_history)
+                                _prune_ingested_history,
+                                reap_stale_crawl_jobs, sweep_nowcoder_history)
 
 
 def _dt_str(dt):
@@ -1672,3 +1673,418 @@ class MaterializeProfileRowsTests(TestCase):
         self.assertEqual(res["materialized"]["created"], 1)
         self.acc.refresh_from_db()
         self.assertEqual(self.acc.participated_contests, [])  # 不计分场不进索引
+
+
+# ==================== 竞赛日历排期同步（HANDOVER §0.26） ====================
+# 三平台的官方列表本来就含未来场次，但既有爬取只消费「已结束」窗口，
+# 导致 status=upcoming 恒为 0、日历页永远空。以下用例锁住两件事：
+#   1. 排期行只服务日历，绝不能进积分、不能污染既有真实赛次；
+#   2. 同步任务不联网、不碰榜单缓存。
+
+from apps.crawler.ingest import (CALENDAR_RATED_SOURCE,              # noqa: E402
+                                 PROFILE_RATED_SOURCE,
+                                 prune_stale_calendar_rows,
+                                 upsert_calendar_rows)
+from apps.crawler.tasks import sync_calendar_contests  # noqa: E402
+
+
+def _sched_row(eid, start, *, dur_min=120, name=None, link=None, series="Div. 2"):
+    """构造一条与三平台 parse_contests 同构的排期行（本地墙钟串，契约一致）。"""
+    fmt = "%Y-%m-%d %H:%M:%S"
+    local = dj_tz.localtime(start)
+    return {
+        "contest_id": eid, "real_contest_id": eid,
+        "name": name or f"排期赛 {eid}",
+        "link": link or f"https://codeforces.com/contest/{eid}",
+        "start_time": local.strftime(fmt),
+        "end_time": dj_tz.localtime(start + timedelta(minutes=dur_min)).strftime(fmt),
+        "duration_minutes": dur_min, "series": series, "phase": "BEFORE",
+    }
+
+
+class CalendarUpsertTests(TestCase):
+    """日历行落库层的边界。"""
+
+    def setUp(self):
+        self.now = dj_tz.now()
+
+    def test_creates_unscored_rows(self):
+        out = upsert_calendar_rows(
+            Platform.CODEFORCES,
+            [_sched_row("900", self.now + timedelta(days=1))], now=self.now)
+        self.assertEqual((out["created"], out["updated"], out["skipped"]), (1, 0, 0))
+        c = Contest.objects.get(platform=Platform.CODEFORCES, external_id="900")
+        self.assertFalse(c.is_rated)                 # 计分闸门锁死在这
+        self.assertEqual(c.rated_source, CALENDAR_RATED_SOURCE)
+        self.assertEqual(Participation.objects.count(), 0)
+        self.assertEqual(Participation.objects.countable().count(), 0)
+
+    def test_rerun_is_idempotent_and_follows_reschedule(self):
+        rows = [_sched_row("901", self.now + timedelta(days=2))]
+        upsert_calendar_rows(Platform.ATCODER, rows, now=self.now)
+        moved = [_sched_row("901", self.now + timedelta(days=5))]
+        out = upsert_calendar_rows(Platform.ATCODER, moved, now=self.now)
+        self.assertEqual((out["created"], out["updated"]), (0, 1))
+        self.assertEqual(Contest.objects.filter(external_id="901").count(), 1)
+        c = Contest.objects.get(external_id="901")
+        self.assertGreater(c.start_time, self.now + timedelta(days=4))
+
+    def test_real_contest_is_never_touched(self):
+        """已转正/已收录的赛次归榜单路径管：日历不得改其时间、更不得去掉 rated。"""
+        Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id="902", name="真比赛",
+            is_rated=True, start_time=self.now - timedelta(days=1),
+            end_time=self.now - timedelta(hours=23))
+        out = upsert_calendar_rows(
+            Platform.CODEFORCES, [_sched_row("902", self.now + timedelta(days=3))],
+            now=self.now)
+        self.assertEqual(out["skipped"], 1)
+        c = Contest.objects.get(external_id="902")
+        self.assertTrue(c.is_rated)
+        self.assertNotEqual(c.rated_source, CALENDAR_RATED_SOURCE)
+
+    def test_anchor_row_is_never_retaken(self):
+        Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="903", name="校内赛",
+            is_rated=False, rated_source=PROFILE_RATED_SOURCE,
+            start_time=self.now - timedelta(days=9),
+            end_time=self.now - timedelta(days=9, hours=-2))
+        upsert_calendar_rows(
+            Platform.NOWCODER,
+            [_sched_row("903", self.now - timedelta(days=9),
+                        link="https://ac.nowcoder.com/acm/contest/903")],
+            now=self.now)
+        self.assertEqual(
+            Contest.objects.get(external_id="903").rated_source, PROFILE_RATED_SOURCE)
+
+    def test_rows_without_usable_time_are_dropped(self):
+        """end_time 缺失/不自洽的行会让日历三态查不到，宁可不落。"""
+        bad = [_sched_row("904", self.now), _sched_row("905", self.now)]
+        bad[0]["end_time"] = None
+        bad[1]["end_time"] = bad[1]["start_time"]
+        out = upsert_calendar_rows(Platform.CODEFORCES, bad, now=self.now)
+        self.assertEqual((out["created"], out["skipped"]), (0, 2))
+        self.assertEqual(Contest.objects.count(), 0)
+
+
+class CalendarPruneTests(TestCase):
+    """过期排期要收得掉，但只能收自己那一类。"""
+
+    def setUp(self):
+        self.now = dj_tz.now()
+
+    def _mk(self, eid, ended_days_ago, *, rated_source=CALENDAR_RATED_SOURCE,
+            rated=False):
+        return Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id=eid, name=eid,
+            is_rated=rated, rated_source=rated_source,
+            start_time=self.now - timedelta(days=ended_days_ago, hours=2),
+            end_time=self.now - timedelta(days=ended_days_ago))
+
+    def test_stale_rows_deleted_recent_kept(self):
+        stale = self._mk("old", 20)
+        fresh = self._mk("new", 3)
+        self.assertEqual(prune_stale_calendar_rows(now=self.now), 1)
+        self.assertFalse(Contest.objects.filter(pk=stale.pk).exists())
+        self.assertTrue(Contest.objects.filter(pk=fresh.pk).exists())
+
+    def test_promoted_and_anchor_rows_survive(self):
+        promoted = self._mk("promoted", 30, rated_source="", rated=True)
+        anchor = self._mk("anchor", 30, rated_source=PROFILE_RATED_SOURCE)
+        self.assertEqual(prune_stale_calendar_rows(now=self.now), 0)
+        self.assertEqual(Contest.objects.filter(
+            pk__in=[promoted.pk, anchor.pk]).count(), 2)
+
+    def test_row_with_participations_survives(self):
+        """防御性：日历行按设计不该有成绩，真有就绝不连带删掉。"""
+        c = self._mk("withpart", 30)
+        user = User.objects.create_user(username="calu", password="pwd12345")
+        acc = PlatformAccount.objects.create(user=user, platform=Platform.CODEFORCES,
+                                             handle="calh")
+        Participation.objects.create(contest=c, platform_account=acc, handle="calh",
+                                     rank=1)
+        self.assertEqual(prune_stale_calendar_rows(now=self.now), 0)
+        self.assertTrue(Contest.objects.filter(pk=c.pk).exists())
+
+
+def _clist_row(platform, eid, start, *, dur_min=120, url=None, name=None,
+               series=""):
+    """构造一条 ClistScraper 产出的标准化排期行（时间是秒级时间戳）。"""
+    epoch = int(start.timestamp())
+    return {
+        "platform": platform, "contest_id": eid, "real_contest_id": eid,
+        "name": name or f"排期 {eid}",
+        "link": url or f"https://codeforces.com/contest/{eid}",
+        "start_time": epoch, "end_time": epoch + dur_min * 60,
+        "duration_minutes": dur_min, "series": series, "source": "clist",
+    }
+
+
+class _FakeClist:
+    def __init__(self, rows=None, error=None):
+        self.rows = rows or []
+        self.error = error
+        self.calls = []
+
+    def fetch_upcoming(self, days_ahead=90, **kwargs):
+        self.calls.append(days_ahead)
+        if self.error:
+            raise self.error
+        return list(self.rows)
+
+
+class CalendarSyncTaskTests(TestCase):
+    """同步任务：按平台分组落库、上游故障不清空已有日历。"""
+
+    def setUp(self):
+        self.now = dj_tz.now()
+
+    def _run(self, fake):
+        with mock.patch.object(tasks_mod, "_load_clist_scraper",
+                              return_value=fake):
+            return sync_calendar_contests()
+
+    def test_groups_by_platform_and_drops_ended(self):
+        fake = _FakeClist([
+            _clist_row(Platform.CODEFORCES, "2200", self.now + timedelta(days=1)),
+            _clist_row(Platform.CODEFORCES, "2201", self.now - timedelta(days=2)),
+            _clist_row(Platform.ATCODER, "abc500", self.now + timedelta(days=3),
+                       url="https://atcoder.jp/contests/abc500", series="ABC"),
+            _clist_row(Platform.NOWCODER, "19000", self.now + timedelta(hours=6),
+                       url="https://ac.nowcoder.com/acm/contest/19000"),
+        ])
+        res = self._run(fake)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["fetched"], 4)
+        self.assertEqual(fake.calls, [90])          # 默认前瞻窗口来自 settings
+        for eid in ("2200", "abc500", "19000"):
+            self.assertEqual(Contest.objects.filter(external_id=eid).count(), 1, eid)
+        self.assertFalse(Contest.objects.filter(external_id="2201").exists())
+        self.assertEqual(res["sources"][Platform.CODEFORCES]["created"], 1)
+        self.assertEqual(Participation.objects.count(), 0)
+        self.assertEqual(Participation.objects.countable().count(), 0)
+
+    def test_upstream_failure_keeps_existing_rows(self):
+        """取数失败必须保住上一轮的日历行 —— 否则一次 503 就把日历打成空页。"""
+        keep = _clist_row(Platform.CODEFORCES, "2300", self.now + timedelta(days=4))
+        self._run(_FakeClist([keep]))
+        before = Contest.objects.filter(rated_source=CALENDAR_RATED_SOURCE).count()
+        res = self._run(_FakeClist(error=RuntimeError("clist 503")))
+        self.assertFalse(res["ok"])
+        self.assertIn("503", res["error"])
+        self.assertEqual(
+            Contest.objects.filter(rated_source=CALENDAR_RATED_SOURCE).count(),
+            before)
+
+    def test_missing_credentials_reported_not_silent(self):
+        with override_settings(CLIST_USERNAME="", CLIST_API_KEY=""):
+            res = sync_calendar_contests()
+        self.assertFalse(res["ok"])
+        self.assertIn("凭据", res["error"])
+
+    def test_rerun_creates_nothing_new(self):
+        rows = [_clist_row(Platform.CODEFORCES, "2400", self.now + timedelta(days=1))]
+        self._run(_FakeClist(rows))
+        res = self._run(_FakeClist(rows))
+        self.assertEqual(res["sources"][Platform.CODEFORCES]["created"], 0)
+        self.assertEqual(res["sources"][Platform.CODEFORCES]["updated"], 1)
+        self.assertEqual(Contest.objects.count(), 1)
+
+
+class ClistScraperTests(TestCase):
+    """取数器纯逻辑，按 2026-09-23 实测的 clist v4 口径（event/href/resource +
+    无时区 UTC 裸串 + limit/offset 翻页）。全程不打网络。"""
+
+    def setUp(self):
+        _crawler_dir()
+        from clist_scraper import ClistScraper
+        self.cls = ClistScraper
+        self.sc = ClistScraper("u", "k")
+
+    def _obj(self, resource, href, *, event="X", start="2026-10-03T09:00:00",
+             end=None, duration=7200):
+        o = {"resource": resource, "href": href, "event": event,
+             "start": start, "duration": duration}
+        if end:
+            o["end"] = end
+        return o
+
+    def test_platform_and_id_from_href(self):
+        cases = [
+            # CF 的 href 是复数 /contests/，官方 API 与站内历史数据用单数，两种都认
+            ("codeforces.com", "https://codeforces.com/contests/2267",
+             ("codeforces", "2267")),
+            ("codeforces.com", "https://codeforces.com/contest/2201",
+             ("codeforces", "2201")),
+            # gym 站内没有入库路径，不收进日历（否则永远转不了正）
+            ("codeforces.com", "https://codeforces.com/gym/103811", (None, None)),
+            ("atcoder.jp", "https://atcoder.jp/contests/abc469",
+             ("atcoder", "abc469")),
+            ("ac.nowcoder.com", "https://ac.nowcoder.com/acm/contest/140237",
+             ("nowcoder", "140237")),
+            ("ctftime.org", "https://ctftime.org/event/1234", (None, None)),
+            ("luogu.com.cn", "https://www.luogu.com.cn/contest/12345", (None, None)),
+        ]
+        for resource, href, expect in cases:
+            with self.subTest(href=href):
+                self.assertEqual(self.cls._platform_of(self._obj(resource, href)),
+                                 expect)
+
+    def test_to_row_uses_end_and_strips_mode_tag(self):
+        row = self.cls._to_row(self._obj(
+            "ac.nowcoder.com", "https://ac.nowcoder.com/acm/contest/140237",
+            event="牛客挑战赛92 [ACM]", start="2026-09-25T11:00:00",
+            end="2026-09-25T14:00:00", duration=10800))
+        self.assertEqual(row["platform"], "nowcoder")
+        self.assertEqual(row["real_contest_id"], "140237")
+        self.assertEqual(row["name"], "牛客挑战赛92")     # [ACM] 计分方式标记不进名字
+        self.assertEqual(row["series"], "牛客挑战赛")
+        self.assertEqual(row["start_time"],
+                         datetime(2026, 9, 25, 11, tzinfo=dt_tz.utc).timestamp())
+        self.assertEqual(row["end_time"], row["start_time"] + 10800)
+        self.assertEqual(row["duration_minutes"], 180)
+
+    def test_to_row_derives_end_from_duration(self):
+        row = self.cls._to_row(self._obj(
+            "atcoder.jp", "https://atcoder.jp/contests/agc078",
+            event="AtCoder Grand Contest 078", start="2026-09-27T12:00:00",
+            duration=12600))
+        self.assertEqual(row["series"], "AGC")
+        self.assertEqual(row["end_time"], row["start_time"] + 12600)
+
+    def test_rows_without_start_are_dropped(self):
+        self.assertIsNone(self.cls._to_row(
+            self._obj("atcoder.jp", "https://atcoder.jp/contests/abc1", start="")))
+
+    def test_series_variants(self):
+        got = {}
+        for event, href in [
+            ("Educational Codeforces Round 193 (Rated for Div. 2)",
+             "https://codeforces.com/contests/1999"),
+            ("Codeforces Global Round 28", "https://codeforces.com/contests/2000"),
+            ("Codeforces Round 1123 (Div. 2)", "https://codeforces.com/contests/2267"),
+            ("AtCoder Regular Contest 190", "https://atcoder.jp/contests/arc190"),
+            ("牛客周赛 Round 163 [IOI]", "https://ac.nowcoder.com/acm/contest/140737"),
+        ]:
+            got[event] = self.cls._to_row(
+                self._obj(href.split("/")[2], href, event=event))["series"]
+        self.assertEqual(got["Educational Codeforces Round 193 (Rated for Div. 2)"],
+                         "Educational")
+        self.assertEqual(got["Codeforces Global Round 28"], "Global")
+        self.assertEqual(got["Codeforces Round 1123 (Div. 2)"], "Div. 2")
+        self.assertEqual(got["AtCoder Regular Contest 190"], "ARC")
+        self.assertEqual(got["牛客周赛 Round 163 [IOI]"], "牛客周赛")
+
+    def test_fetch_upcoming_paginates_by_offset_and_stops(self):
+        pages = [
+            {"objects": [
+                self._obj("codeforces.com", "https://codeforces.com/contests/1"),
+                self._obj("ctftime.org", "https://ctftime.org/event/9")]},
+            {"objects": [
+                self._obj("atcoder.jp", "https://atcoder.jp/contests/abc2")]},
+        ]
+
+        class _Resp:
+            def __init__(self, data):
+                self._d = data
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._d
+
+        class _Session:
+            headers = {}
+
+            def __init__(self):
+                self.params = []
+
+            def get(self, url, params=None, timeout=None):
+                self.params.append(params)
+                return _Resp(pages[len(self.params) - 1])
+
+        self.sc.session = _Session()
+        self.sc.page_limit = 2            # 第一页刚好满 → 会翻第二页
+        rows = self.sc.fetch_upcoming(days_ahead=30)
+        self.assertEqual([r["real_contest_id"] for r in rows], ["1", "abc2"])
+        seen = self.sc.session.params
+        self.assertEqual(len(seen), 2)    # 第二页只有 1 条 < limit → 停
+        self.assertIn("codeforces.com", seen[0]["resource__in"])
+        self.assertEqual(seen[1]["offset"], 2)
+
+    def test_missing_credentials_raise(self):
+        with self.assertRaises(ValueError):
+            self.cls("", "")
+
+class CalendarShadowingTests(TestCase):
+    """blocker 回归：排期行绝不能被下游当成「已入库」的赛次复用。"""
+
+    def setUp(self):
+        user = User.objects.create_user(username="calshadow", password="pwd12345")
+        self.acc = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="1001")
+        self.past = dj_tz.now() - timedelta(days=30)
+
+    def _calendar_row(self, eid="9001"):
+        return Contest.objects.create(
+            platform=Platform.NOWCODER, external_id=eid, name=f"NC {eid}",
+            is_rated=False, rated_source=CALENDAR_RATED_SOURCE,
+            start_time=self.past, end_time=self.past + timedelta(hours=2))
+
+    def test_calendar_row_does_not_shadow_backfill(self):
+        """`ingest_contest` 在 update_or_create **之前**就按 not_countable 返回，
+        所以复用排期行的 meta 会让定向补数空转：既补不出行，又白烧一次榜单重放。"""
+        self._calendar_row()
+        self.acc.participated_contests = ["9001"]
+        self.acc.save()
+        fake = _FakeHistoryScraper(
+            rated_ids=["9001"],
+            info={"9001": {"name": "NC 9001",
+                           "startTime": int(self.past.timestamp() * 1000),
+                           "endTime": int((self.past + timedelta(hours=2))
+                                          .timestamp() * 1000)}})
+        with mock.patch.object(ingest_mod, "backfill_nowcoder_ratings",
+                               return_value={"updated": 0}):
+            stats = backfill_account_history(self.acc, scraper=fake)
+        self.assertEqual(fake.info_calls, ["9001"])   # 必须重判 rated，不能吃旧 meta
+        self.assertEqual(stats["ingested"], 1)
+        c = Contest.objects.get(external_id="9001")
+        self.assertTrue(c.is_rated)
+        self.assertNotEqual(c.rated_source, CALENDAR_RATED_SOURCE)
+        self.assertEqual(Participation.objects.countable().count(), 1)
+
+    def test_prune_history_keeps_calendar_row(self):
+        """历史剪枝同理：排期行不算已入库，否则这场会被永久剪出抓取列表。"""
+        self._calendar_row("9002")
+        rows = [{"real_contest_id": "9002", "contest_id": "9002"}]
+        kept = _prune_ingested_history(Platform.NOWCODER, rows)
+        self.assertEqual([c["real_contest_id"] for c in kept], ["9002"])
+
+    def test_profile_rows_take_ownership_of_calendar_row(self):
+        """主页锚点认领了排期行 → 标记必须转过去。留着日历标记的话，这行既被
+        「有参赛行所以不删」保住，又被「比赛列表默认排除」藏起来，成孤儿数据。"""
+        c = self._calendar_row("9003")
+        row = {"contestId": "9003", "contestName": "校内赛", "rank": 5,
+               "startTime": int(self.past.timestamp() * 1000),
+               "endTime": int((self.past + timedelta(hours=2)).timestamp() * 1000),
+               "ratingStatus": "NO", "needCharge": False}
+        out = materialize_profile_rows(self.acc, [row])
+        self.assertEqual(out["created"], 1)
+        c.refresh_from_db()
+        self.assertEqual(c.rated_source, PROFILE_RATED_SOURCE)
+        self.assertEqual(Participation.objects.countable().count(), 0)
+
+
+class CalendarBeatScheduleTests(TestCase):
+    """调度落库口径：队列必须是 crawl，落到 default 就是静默黑洞。"""
+
+    def test_periodic_task_registered(self):
+        from django_celery_beat.models import PeriodicTask
+
+        pt = PeriodicTask.objects.get(name="calendar-sync")
+        self.assertEqual(pt.task, "apps.crawler.tasks.sync_calendar_contests")
+        self.assertEqual(pt.queue, "crawl")
+        self.assertTrue(pt.enabled)
+        self.assertEqual(pt.crontab.hour, "3")        # 避开 00:00 爬取 / 04:00 重算
+        self.assertEqual(pt.crontab.timezone.key, "Asia/Shanghai")

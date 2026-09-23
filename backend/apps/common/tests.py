@@ -18,6 +18,34 @@ class PublicStatsViewTests(TestCase):
             {"schools", "contests", "users", "participations"},
         )
 
+    def test_contests_exclude_display_only_rows(self):
+        """首页「比赛数」只算真正收录的赛次。
+
+        锚点赛次（§0.25）与日历排期行（§0.26）都是派生行，计进来会让看板虚高——
+        锚点已经让它漂移过一次（生产 total 180 → 212）。
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.common.models import Platform
+        from apps.contests.models import Contest
+        from apps.crawler.ingest import CALENDAR_RATED_SOURCE, PROFILE_RATED_SOURCE
+
+        now = timezone.now()
+        Contest.objects.create(platform=Platform.CODEFORCES, external_id="real",
+                               name="真比赛", is_rated=True,
+                               start_time=now - timedelta(days=2),
+                               end_time=now - timedelta(days=2, hours=-2))
+        for eid, src in (("anchor", PROFILE_RATED_SOURCE),
+                         ("cal", CALENDAR_RATED_SOURCE)):
+            Contest.objects.create(platform=Platform.NOWCODER, external_id=eid,
+                                   name=eid, is_rated=False, rated_source=src,
+                                   start_time=now + timedelta(days=1),
+                                   end_time=now + timedelta(days=1, hours=2))
+        resp = self.client.get("/api/v1/stats/")
+        self.assertEqual(resp.data["contests"], 1)
+
 
 class FirstMessageTests(TestCase):
     """统一异常处理：字段级校验错误的第一条原因提升为 detail（2026-09-13）。"""

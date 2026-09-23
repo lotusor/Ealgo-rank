@@ -16,11 +16,18 @@ class PublicStatsView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        from apps.crawler.ingest import (CALENDAR_RATED_SOURCE,
+                                         PROFILE_RATED_SOURCE)
+
         User = get_user_model()
+        # 锚点赛次（不计分场次展示行）与日历排期行都不是「已收录的比赛」，
+        # 计进来会让首页数字看板虚高（§0.25 已因锚点漂移过一次）。
+        contests = Contest.objects.exclude(
+            rated_source__in=[PROFILE_RATED_SOURCE, CALENDAR_RATED_SOURCE])
         return Response(
             {
                 "schools": School.objects.filter(is_active=True).count(),
-                "contests": Contest.objects.count(),
+                "contests": contests.count(),
                 "users": User.objects.count(),
                 "participations": Participation.objects.count(),
             }

@@ -266,6 +266,15 @@ CRAWLER_CACHE_TTL_HOURS = int(os.environ.get("CRAWLER_CACHE_TTL_HOURS", "168"))
 # 一周内的重爬纠正。设为 0 可退回「一律按 CRAWLER_CACHE_TTL_HOURS 重下」。
 CRAWLER_IMMUTABLE_AFTER_DAYS = int(os.environ.get("CRAWLER_IMMUTABLE_AFTER_DAYS", "7"))
 
+# ---------- 竞赛日历排期源（clist.by 聚合 API） ----------
+# 凭据只走环境变量：本地 .env / 生产 .env.prod，两者都在 .gitignore 里，绝不入库。
+CLIST_USERNAME = env("CLIST_USERNAME", "")
+CLIST_API_KEY = env("CLIST_API_KEY", "")
+# 排期同步的前瞻窗口（天）。窗口越大，未开赛比赛在站内暴露的取消/改期风险越大。
+CALENDAR_AHEAD_DAYS = env_int("CALENDAR_AHEAD_DAYS", 90)
+# 日历行结束满这么多天仍未被正常爬取转正，就当作站内不收录的场次清掉
+CALENDAR_PRUNE_AFTER_DAYS = env_int("CALENDAR_PRUNE_AFTER_DAYS", 7)
+
 # 初始超级管理员（首次 migrate 后由 bootstrap 命令创建）
 ROOT_ADMIN_USERNAME = env("ROOT_ADMIN_USERNAME", "root")
 ROOT_ADMIN_EMAIL = env("ROOT_ADMIN_EMAIL", "root@e-algo-rank.local")

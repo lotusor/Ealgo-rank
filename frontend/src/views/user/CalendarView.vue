@@ -2,13 +2,16 @@
 /**
  * 竞赛日历（阶段 3）。
  *
- * 双视图（参考 LeetCode 一类站点）：
- *  - 月历：整月排期网格，点某天在下方就地展开当日赛事，不跳页；
- *  - 列表：参考 algowiki 的三段式看板（正在进行 / 即将开始 / 已经结束）。
+ * 三块结构：
+ *  - 焦点区：全局「下一场开赛」倒计时 + 「正在进行」进度条（不受当前月份影响）；
+ *  - 月历：整月排期网格（固定 6×7，切月不跳高），点某天在下方就地展开当日赛事；
+ *  - 列表：三段式看板（正在进行 / 即将开始 / 已经结束）。
  *
- * 数据来源（阶段 2 已就绪）：
- *  - `GET /contests/` 支持 status / end_after / end_before / series / search / ordering
- *  - `GET /contests/meta/` 提供平台、系列、各状态计数与最近同步时间
+ * 数据来源：
+ *  - `GET /contests/?include_calendar=1` —— 月历与三段列表。**未开赛的场次在站内
+ *    只以「日历排期行」存在**（每日 03:00 由 clist.by 聚合排期同步，往后 90 天），
+ *    公共比赛列表默认不含它们，所以这里必须显式带上这个参数。
+ *  - `GET /contests/meta/` —— 平台、系列、各状态计数与最近同步时间。
  *
  * 筛选分工：时间窗口与状态走**服务端**（避免拉全量），
  * 平台（多选）/ 仅 Rated / 系列 / 关键字走**客户端**（数据量小、响应即时）。
@@ -19,9 +22,22 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchContestMeta, listContests } from '@/api'
-import type { Contest, ContestMeta, ContestPlatform, PageQuery } from '@/api/types'
+import type { Contest, ContestMeta, PageQuery } from '@/api/types'
+import CalendarHero from '@/components/CalendarHero.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import {
+  WEEKDAYS,
+  contestStatus,
+  formatDateTime as fmtDateTime,
+  formatDayMonth as fmtDayMonth,
+  formatDuration as fmtDuration,
+  formatTime as fmtTime,
+  platformTagClass,
+  rangeLabel,
+  relativeLabel,
+  rowBadge as rowBadgeOf,
+} from '@/utils/format'
 
 type ViewMode = 'month' | 'list'
 type StatusKey = 'ongoing' | 'upcoming' | 'finished'
@@ -52,8 +68,6 @@ const route = useRoute()
 const router = useRouter()
 
 // ---------- 时间工具 ----------
-const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
-
 function startOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1)
 }
@@ -71,9 +85,14 @@ function parseMonthKey(s: string) {
   return mo >= 0 && mo <= 11 ? new Date(y, mo, 1) : null
 }
 
-// ---------- 实时时钟（对齐分钟边界递归，页面隐藏时暂停） ----------
+// ---------- 实时时钟（分钟粒度） ----------
+/**
+ * 页面级派生（状态徽标、42 格网格、相对时间）按分钟对齐即可，也更便宜：`now`
+ * 一变这些全要重算。秒级跳动只属于焦点区，它已拆成独立组件、自带 1s 时钟。
+ */
 const now = ref(new Date())
 let tickTimer: number | undefined
+let minuteTicks = 0
 
 function scheduleTick() {
   window.clearTimeout(tickTimer)
@@ -81,6 +100,11 @@ function scheduleTick() {
   const ms = (60 - d.getSeconds()) * 1000 - d.getMilliseconds()
   tickTimer = window.setTimeout(() => {
     now.value = new Date()
+    minuteTicks += 1
+    // 焦点区每 5 分钟重取一次：排期本身变化不频繁，而这是匿名落地页，每分钟
+    // 打两个请求纯属浪费。「开赛 / 结束」的切换不依赖这次请求，由上面的分钟
+    // 时钟本地派生即可。
+    if (minuteTicks % 5 === 0) loadFocus()
     scheduleTick()
   }, Math.max(ms, 1000))
 }
@@ -173,6 +197,46 @@ async function loadMeta() {
   }
 }
 
+// ---------- 焦点区（下一场 / 正在进行 / 赛程总览） ----------
+/**
+ * 独立于当前月窗口的全局「最近要赛的」：月历翻到 11 月时，焦点区仍要显示下周
+ * 那场，否则这一栏在最该有内容的月份反而是空的。渲染与秒级时钟都在 CalendarHero
+ * 内部，这里只负责取数。
+ */
+const liveRows = ref<Contest[]>([])
+const soonRows = ref<Contest[]>([])
+
+async function loadFocus() {
+  try {
+    const [ongoing, upcoming] = await Promise.all([
+      listContests({
+        include_calendar: 1,
+        status: 'ongoing',
+        ordering: 'end_time',
+        page_size: 5,
+      }),
+      listContests({
+        include_calendar: 1,
+        status: 'upcoming',
+        ordering: 'start_time',
+        page_size: 8,
+      }),
+    ])
+    liveRows.value = ongoing.results
+    soonRows.value = upcoming.results
+  } catch {
+    // 一次网络抖动不该把已经显示出来的焦点区整块抹掉（那会重放入场动画）
+  }
+}
+
+const nextUpcoming = computed(() => soonRows.value[0] ?? null)
+const liveContest = computed(() => liveRows.value[0] ?? null)
+
+/** 页面级派生统一按分钟粒度的 `now` 计算（秒级只属于焦点区） */
+const statusOf = (c: Contest) => contestStatus(c, now.value.getTime())
+const relLabel = (c: Contest) => relativeLabel(c, now.value.getTime())
+const rowBadge = (c: Contest) => rowBadgeOf(c, now.value.getTime())
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -182,15 +246,18 @@ async function load() {
       const last = new Date(first.getFullYear(), first.getMonth() + 1, 0, 23, 59, 59)
       // 跨月赛事：开始时间早于月末、且结束时间晚于月初
       monthRows.value = await fetchAll({
+        include_calendar: 1, // 未开赛的官方排期只有日历页看，别的页面默认不含
         start_before: last.toISOString(),
         end_after: first.toISOString(),
         ordering: 'start_time',
       })
     } else {
       const [ongoing, upcoming, finished] = await Promise.all([
-        fetchAll({ status: 'ongoing', ordering: 'end_time' }),
-        fetchAll({ status: 'upcoming', ordering: 'start_time' }),
-        fetchAll({ status: 'finished', ordering: '-end_time' }),
+        fetchAll({ include_calendar: 1, status: 'ongoing', ordering: 'end_time' }),
+        fetchAll({ include_calendar: 1, status: 'upcoming', ordering: 'start_time' }),
+        // 已结束也要带排期行：一场比赛刚结束到被正常爬取转正之间有最长约 24h
+        // 的窗口，不带的话它会从「正在进行」凭空消失一整天
+        fetchAll({ include_calendar: 1, status: 'finished', ordering: '-end_time' }),
       ])
       buckets.value = { ongoing, upcoming, finished }
     }
@@ -206,6 +273,7 @@ onMounted(() => {
   scheduleTick()
   document.addEventListener('visibilitychange', onVisibilityChange)
   loadMeta()
+  loadFocus()
   load()
 })
 onUnmounted(() => {
@@ -266,17 +334,6 @@ const hasFilter = computed(
     !!kw.value ||
     statusFilter.value !== 'all',
 )
-
-// ---------- 状态派生（不落库，按当前时间计算） ----------
-function statusOf(c: Contest): StatusKey {
-  const t = now.value.getTime()
-  const s = c.start_time ? new Date(c.start_time).getTime() : null
-  const e = c.end_time ? new Date(c.end_time).getTime() : null
-  if (e !== null && e <= t) return 'finished'
-  if (s !== null && s > t) return 'upcoming'
-  if (s !== null && e !== null && s <= t && e > t) return 'ongoing'
-  return 'finished'
-}
 
 // ---------- 月历视图 ----------
 const filteredMonthRows = computed(() => monthRows.value.filter(matches))
@@ -397,45 +454,6 @@ const listSections = computed(() => {
 // ---------- 展示辅助 ----------
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
 
-function fmtTime(iso: string | null) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-}
-function fmtDayMonth(iso: string | null) {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return `${d.getMonth() + 1}/${d.getDate()}`
-}
-function fmtDuration(min: number | null) {
-  if (!min || min <= 0) return '—'
-  const h = Math.floor(min / 60)
-  const m = min % 60
-  if (h && m) return `${h}h ${String(m).padStart(2, '0')}m`
-  return h ? `${h}h` : `${m}m`
-}
-/** 跨了几个自然日（按本地时区） */
-function crossDays(c: Contest) {
-  if (!c.start_time || !c.end_time) return 0
-  const a = new Date(c.start_time)
-  const b = new Date(c.end_time)
-  const da = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime()
-  const db = new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime()
-  return Math.max(0, Math.round((db - da) / 86400000))
-}
-function rangeLabel(c: Contest) {
-  if (!c.start_time) return '时间待定'
-  if (!c.end_time) return `${fmtDayMonth(c.start_time)} ${fmtTime(c.start_time)} 起`
-  const n = crossDays(c)
-  const base = `${fmtDayMonth(c.start_time)} ${fmtTime(c.start_time)} – ${fmtTime(c.end_time)}`
-  return n > 0 ? `${base}（+${n}）` : base
-}
-function platformTagClass(p: ContestPlatform) {
-  return p === 'codeforces' ? 'cf' : p === 'atcoder' ? 'atcoder' : 'nowcoder'
-}
 function fmtSyncTime(iso: string | null) {
   if (!iso) return '未知'
   return new Date(iso).toLocaleString('zh-CN', {
@@ -457,7 +475,7 @@ function fmtSyncTime(iso: string | null) {
         <p class="page-subtitle">
           Codeforces · AtCoder · 牛客 三平台赛程
           <template v-if="meta">
-            &nbsp;·&nbsp; 共 {{ meta.total }} 场 &nbsp;·&nbsp; 最近同步
+            &nbsp;·&nbsp; 已收录 {{ meta.catalog }} 场 &nbsp;·&nbsp; 最近同步
             {{ fmtSyncTime(meta.latest_sync_at) }}
           </template>
           &nbsp;·&nbsp; 时间按本地时区 {{ timeZone }} 显示
@@ -470,6 +488,14 @@ function fmtSyncTime(iso: string | null) {
         </button>
       </div>
     </div>
+
+    <!-- ============ 焦点区：下一场开赛 / 正在进行 / 赛程总览 ============ -->
+    <CalendarHero
+      :next="nextUpcoming"
+      :live="liveContest"
+      :live-count="liveRows.length"
+      :meta="meta"
+    />
 
     <!-- 筛选条 -->
     <div class="cal-filters">
@@ -613,10 +639,8 @@ function fmtSyncTime(iso: string | null) {
                   <template v-if="c.series"> · {{ c.series }}</template>
                 </div>
               </div>
-              <span class="badge" :class="STATUS_META[statusOf(c)].cls">
-                {{ STATUS_META[statusOf(c)].label }}
-              </span>
-              <span v-if="c.is_rated" class="badge badge-success">Rated</span>
+              <span v-if="relLabel(c)" class="cal-rel num">{{ relLabel(c) }}</span>
+              <span class="badge" :class="rowBadge(c).cls">{{ rowBadge(c).text }}</span>
               <a
                 v-if="c.url"
                 :href="c.url"
@@ -626,7 +650,11 @@ function fmtSyncTime(iso: string | null) {
               >前往比赛</a>
             </li>
           </ul>
-          <EmptyState v-else title="当天没有赛事" hint="换一天看看，或切到列表视图浏览近期赛程" />
+          <EmptyState
+            v-else
+            title="当天没有赛事"
+            hint="赛程来自 clist.by 聚合排期，每日 03:00 同步、往后看 90 天；换一天看看，或切到列表视图浏览近期赛程"
+          />
         </div>
       </template>
 
@@ -662,10 +690,10 @@ function fmtSyncTime(iso: string | null) {
               </div>
               <div class="cal-list-time">
                 <span class="num">{{ rangeLabel(c) }}</span>
-                <span class="caption text-tertiary">{{ fmtDuration(c.duration_minutes) }}</span>
+                <span v-if="relLabel(c)" class="cal-rel num">{{ relLabel(c) }}</span>
+                <span v-else class="caption text-tertiary">{{ fmtDuration(c.duration_minutes) }}</span>
               </div>
-              <span v-if="c.is_rated" class="badge badge-success">Rated</span>
-              <span v-else class="badge badge-muted">非 Rated</span>
+              <span class="badge" :class="rowBadge(c).cls">{{ rowBadge(c).text }}</span>
             </li>
           </ul>
           <div v-else class="cal-empty">
@@ -694,6 +722,14 @@ function fmtSyncTime(iso: string | null) {
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
+}
+
+/* 相对时间（3 天后开赛 / 40 分后结束） */
+.cal-rel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-accent-cyan);
+  white-space: nowrap;
 }
 
 /* ---------- 筛选条 ---------- */
@@ -809,12 +845,17 @@ function fmtSyncTime(iso: string | null) {
 .cal-cell:hover {
   border-color: var(--color-border-focus);
   background: var(--color-bg-elevated);
+  /* 一次性浮起：告诉用户「这格可以点」，与 .card-hover 同一套手感 */
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 .cal-cell.is-out {
   opacity: 0.42;
 }
 .cal-cell.is-today {
   border-color: var(--color-primary);
+  /* 今日环标：42 格里第一眼要落在它上面，靠外发光而不是靠加粗 */
+  box-shadow: var(--shadow-glow);
 }
 .cal-cell.is-selected {
   border-color: var(--color-primary);
@@ -1011,6 +1052,34 @@ a.cal-list-name:hover {
   border-radius: var(--radius-lg);
   font-size: 13px;
   color: var(--color-text-tertiary);
+}
+
+/* ---------- 入场（板块级错峰，不给每行铺动画） ---------- */
+/* 与 components.css 的 .card-rise 同一套手感，但数据异步到达后「板块依次浮起」
+   才贴合这张页的节奏：月历/当日列表/三段看板各差 40ms，一次性、不循环。 */
+@keyframes cal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.cal-month,
+.cal-day,
+.cal-section {
+  animation: cal-rise var(--duration-slower) var(--ease-out) backwards;
+}
+.cal-day {
+  animation-delay: 60ms;
+}
+.cal-section:nth-of-type(2) {
+  animation-delay: 40ms;
+}
+.cal-section:nth-of-type(3) {
+  animation-delay: 80ms;
 }
 
 /* ---------- 响应式 ---------- */

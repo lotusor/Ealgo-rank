@@ -22,7 +22,7 @@ from pathlib import Path
 from apps.accounts.models import PlatformAccount
 from apps.common.models import Platform
 from apps.contests.models import Contest, Participation
-from apps.crawler.ingest import ingest_contest
+from apps.crawler.ingest import (CALENDAR_RATED_SOURCE, ingest_contest)
 from apps.crawler.models import CrawlConfig, CrawlJob
 
 logger = logging.getLogger(__name__)
@@ -246,6 +246,9 @@ def _prune_ingested_history(platform, history_contests):
     ingested = {
         c.external_id: c.id
         for c in Contest.objects.filter(platform=platform, external_id__in=ext_ids)
+        # 排期行不是「已入库」：把它算进来会让这场被永久剪出抓取列表，
+        # 赛后真榜单就再也没有入口（与 ingest.backfill_account_history 同一防线）
+        .exclude(rated_source=CALENDAR_RATED_SOURCE)
     }
     # external_id -> 需要该场成绩的账号 id 集合（来自参与索引）
     need = {}
@@ -728,6 +731,66 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
                 cache_ttl_hours=_contest_cache_ttl(c))
 
     return _run_job(job, worker)
+
+
+def _load_clist_scraper():
+    """clist.by 排期客户端。凭据缺失时直接抛，让调用方记日志而不是静默产出空日历。"""
+    from clist_scraper import ClistScraper
+    return ClistScraper(settings.CLIST_USERNAME, settings.CLIST_API_KEY)
+
+
+@shared_task(soft_time_limit=60 * 5, time_limit=60 * 8)
+def sync_calendar_contests(days_ahead=None):
+    """用 clist.by 的聚合排期刷新站内日历行（未开赛 + 进行中，只建 Contest）。
+
+    为什么换 clist 而不是三个官方源：`contest.list` 与牛客月历只给得出近处排期，
+    kenkoooo `contests.json` 实测（2026-09-23）最新一条就是当天、根本不含未来场
+    —— 三源凑不出一张能往后翻的月历。clist 一次请求覆盖 20+ 平台，我们按比赛
+    URL 反解出站内 `external_id`（与各自爬虫同口径），只认其中三平台，其余平台
+    要等 `Platform` 枚举扩了才收。
+
+    为什么必须沉淀成行：既有爬取只消费「已结束」窗口（见 crawl_codeforces 的
+    phase=FINISHED 过滤），未开赛场次从不入库 → `status=upcoming` 实测恒为 0。
+
+    只读列表接口，绝不碰 `scrape_contest_detail`：未开始的比赛没有榜单，落了空
+    原文会被 `_contest_cache_ttl` 判成 168 小时缓存，反过来把赛后的真成绩挡在门外。
+    取数失败保留上一轮的日历行，不把已经渲染好的日历清成空页。
+    """
+    from apps.crawler.ingest import (_parse_dt, prune_stale_calendar_rows,
+                                     upsert_calendar_rows)
+
+    now = timezone.now()
+    try:
+        scraper = _load_clist_scraper()
+    except Exception as exc:  # noqa: BLE001
+        # 凭据/依赖缺失是**永久性**故障：和一次上游 503 分开记，否则机器配错
+        # 只会每天在 worker 日志里留一行 warning，功能静默停摆。
+        logger.error("日历排期同步未启动（凭据或依赖缺失）: %s", exc)
+        return {"ok": False, "fatal": True, "error": str(exc)[:200]}
+
+    try:
+        rows = scraper.fetch_upcoming(
+            days_ahead=days_ahead or settings.CALENDAR_AHEAD_DAYS)
+    except Exception as exc:  # noqa: BLE001 - 上游故障不该清空日历
+        logger.warning("日历排期同步失败，保留上一轮数据: %s", exc)
+        return {"ok": False, "error": str(exc)[:200]}
+
+    grouped = {}
+    for r in rows:
+        end = _parse_dt(r.get("end_time"))
+        if end is None or end <= now:
+            continue        # 今天之前就结束了：归正常爬取路径管
+        grouped.setdefault(r["platform"], []).append(r)
+
+    sources = {p: upsert_calendar_rows(p, rs, now=now) for p, rs in grouped.items()}
+    written = sum(s["created"] + s["updated"] for s in sources.values())
+    if rows and not written:
+        # 上游给数正常、站内一行没落 → 八成是对方改了字段口径，必须喊出来
+        logger.warning("clist 给了 %s 场却零行落库，样本: %s", len(rows), rows[:2])
+    pruned = prune_stale_calendar_rows(days=settings.CALENDAR_PRUNE_AFTER_DAYS,
+                                       now=now)
+    logger.info("日历排期同步完成: %s（清理过期行 %s 条）", sources, pruned)
+    return {"ok": True, "fetched": len(rows), "sources": sources, "pruned": pruned}
 
 
 def _last_n_months(n):

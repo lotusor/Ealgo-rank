@@ -151,3 +151,128 @@ export function platformName(platform: string | null | undefined): string {
       return platform || '未知'
   }
 }
+
+
+// ==================== 竞赛日历展示口径 ====================
+// 月历、三段看板与焦点卡共用，集中在这里避免两处派生逻辑漂移。
+
+import type { Contest, ContestPlatform } from '../api/types'
+
+export const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
+
+export type ContestStatus = 'ongoing' | 'upcoming' | 'finished'
+
+export function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+/** 赛事状态按时刻派生（不落库）。缺 end_time 一律按已结束处理。 */
+export function contestStatus(c: Contest, at: number): ContestStatus {
+  const s = c.start_time ? new Date(c.start_time).getTime() : null
+  const e = c.end_time ? new Date(c.end_time).getTime() : null
+  if (e !== null && e <= at) return 'finished'
+  if (s !== null && s > at) return 'upcoming'
+  if (s !== null && e !== null && s <= at && e > at) return 'ongoing'
+  return 'finished'
+}
+
+export function formatTime(iso: string | null): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+export function formatDayMonth(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+export function formatDateTime(iso: string | null): string {
+  if (!iso) return '时间待定'
+  const d = new Date(iso)
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日 周${WEEKDAYS[(d.getDay() + 6) % 7]} ${formatTime(iso)}`
+}
+
+export function formatDuration(min: number | null): string {
+  if (!min || min <= 0) return '—'
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  if (h && m) return `${h}h ${pad2(m)}m`
+  return h ? `${h}h` : `${m}m`
+}
+
+/** 跨了几个自然日（按本地时区） */
+export function crossDays(c: Contest): number {
+  if (!c.start_time || !c.end_time) return 0
+  const a = new Date(c.start_time)
+  const b = new Date(c.end_time)
+  const da = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime()
+  const db = new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime()
+  return Math.max(0, Math.round((db - da) / 86400000))
+}
+
+export function rangeLabel(c: Contest): string {
+  if (!c.start_time) return '时间待定'
+  if (!c.end_time) return `${formatDayMonth(c.start_time)} ${formatTime(c.start_time)} 起`
+  const n = crossDays(c)
+  const base = `${formatDayMonth(c.start_time)} ${formatTime(c.start_time)} – ${formatTime(c.end_time)}`
+  return n > 0 ? `${base}（+${n}）` : base
+}
+
+export function platformTagClass(p: ContestPlatform): string {
+  return p === 'codeforces' ? 'cf' : p === 'atcoder' ? 'atcoder' : 'nowcoder'
+}
+
+/** 倒计时四段固定（天/时/分/秒）：段数固定才不会每秒抖动布局 */
+export function countdownParts(iso: string | null, at: number) {
+  if (!iso) return []
+  const ms = new Date(iso).getTime() - at
+  if (ms <= 0) return []
+  const s = Math.floor(ms / 1000)
+  return [
+    { k: '天', v: String(Math.floor(s / 86400)) },
+    { k: '时', v: pad2(Math.floor(s / 3600) % 24) },
+    { k: '分', v: pad2(Math.floor(s / 60) % 60) },
+    { k: '秒', v: pad2(s % 60) },
+  ]
+}
+
+/** 进行中赛事的已完成百分比（进度条宽度） */
+export function progressPct(c: Contest | null, at: number): number {
+  if (!c?.start_time || !c?.end_time) return 0
+  const s = new Date(c.start_time).getTime()
+  const e = new Date(c.end_time).getTime()
+  if (e <= s) return 100
+  return Math.min(100, Math.max(0, ((at - s) / (e - s)) * 100))
+}
+
+/** 相对时间一句话：3 天后开赛 / 2 小时 15 分后开赛 / 40 分后结束 */
+export function relativeLabel(c: Contest, at: number): string {
+  const st = contestStatus(c, at)
+  const target = st === 'upcoming' ? c.start_time : c.end_time
+  const ms = target ? new Date(target).getTime() - at : null
+  if (ms === null || ms <= 0) return ''
+  const min = Math.round(ms / 60000)
+  if (min < 60) return st === 'upcoming' ? `${min} 分后开赛` : `${min} 分后结束`
+  const h = Math.floor(min / 60)
+  const tail = st === 'upcoming' ? '后开赛' : '后结束'
+  if (h < 24) return `${h} 小时${min % 60 ? ` ${min % 60} 分` : ''}${tail}`
+  return `${Math.round(h / 24)} 天${tail}`
+}
+
+/**
+ * 行徽标。排期行（官方列出、尚未开赛）此前会显示成「非 Rated」，那是错的：
+ * 它不是「不计分的比赛」，只是还没开始。
+ */
+export function rowBadge(c: Contest, at: number): { text: string; cls: string } {
+  const st = contestStatus(c, at)
+  if (st === 'upcoming') return { text: '未开赛', cls: 'badge-info' }
+  if (st === 'ongoing') return { text: '进行中', cls: 'badge-success' }
+  return c.is_rated
+    ? { text: 'Rated', cls: 'badge-success' }
+    : { text: '不计分', cls: 'badge-muted' }
+}

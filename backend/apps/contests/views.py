@@ -32,6 +32,7 @@ class ContestViewSet(viewsets.ReadOnlyModelViewSet):
       status=ongoing|upcoming|finished           按当前时间派生的赛事状态（不落库）
       search=<关键字>                             名称与赛事系列模糊匹配
       ordering=start_time|end_time|…             白名单排序
+      include_calendar=1 / include_profile_only=1 捞回默认隐藏的行（排期行 / 锚点行）
 
     ⚠️ 默认行为（不带任何参数）保持不变：返回全部比赛、按 `-start_time` 排序，
     以免影响既有「比赛列表」页与难度系数设置页。
@@ -51,7 +52,8 @@ class ContestViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ["name", "series"]
 
     def get_queryset(self):
-        from apps.crawler.ingest import PROFILE_RATED_SOURCE
+        from apps.crawler.ingest import (CALENDAR_RATED_SOURCE,
+                                         PROFILE_RATED_SOURCE)
 
         qs = Contest.objects.all()
         qp = self.request.query_params
@@ -60,6 +62,10 @@ class ContestViewSet(viewsets.ReadOnlyModelViewSet):
         # 后台排障要看全量时带 ?include_profile_only=1。
         if qp.get("include_profile_only") not in ("1", "true"):
             qs = qs.exclude(rated_source=PROFILE_RATED_SOURCE)
+        # 未开赛的官方排期同理：本页语义是「检索历史赛事」，且默认按 start_time
+        # 倒序，几十天后的比赛会顶到第一屏。日历页自己带 ?include_calendar=1 取回。
+        if qp.get("include_calendar") not in ("1", "true"):
+            qs = qs.exclude(rated_source=CALENDAR_RATED_SOURCE)
         if qp.get("platform"):
             qs = qs.filter(platform=qp["platform"])
         if qp.get("is_rated") in ("true", "1"):
@@ -100,11 +106,22 @@ class ContestViewSet(viewsets.ReadOnlyModelViewSet):
         """日历与筛选条所需的元数据（公开只读，与列表一致）。
 
         计数一律按**全量**统计、不受当前筛选影响，供前端渲染筛选条徽标。
+        统计口径 = 列表默认口径再放进展期行（只排掉个人主页锚点）：日历要展示
+        「即将开始」，而那些场次在排期阶段只以日历行存在，按列表默认口径筛会让
+        这一栏恒为 0。另外给出 `catalog`（已收录真实赛次数），页头可以据此区分
+        「已收录」与「含排期」。
         路径为 `/api/v1/contests/meta/`；DefaultRouter 的动态列表路由先于
         详情路由匹配，因此不会被 `<pk>` 吃掉。
         """
+        from apps.crawler.ingest import (CALENDAR_RATED_SOURCE,
+                                         PROFILE_RATED_SOURCE)
+
         now = timezone.now()
-        counts = Contest.objects.aggregate(
+        base = Contest.objects.all()
+        # 锚点赛次只服务参赛记录展示，从来不算赛程（且都是历史场），一律不计入
+        base = base.exclude(rated_source=PROFILE_RATED_SOURCE)
+        catalog = base.exclude(rated_source=CALENDAR_RATED_SOURCE)
+        counts = base.aggregate(
             total=Count("id"),
             ongoing=Count("id", filter=Q(start_time__lte=now, end_time__gt=now)),
             upcoming=Count("id", filter=Q(start_time__gt=now)),
@@ -115,21 +132,27 @@ class ContestViewSet(viewsets.ReadOnlyModelViewSet):
             {
                 "key": p.value,
                 "label": p.label,
-                "count": Contest.objects.filter(platform=p.value).count(),
+                "count": base.filter(platform=p.value).count(),
             }
             for p in Platform
         ]
         series = list(
-            Contest.objects.exclude(series="")
+            base.exclude(series="")
             .values_list("series", flat=True)
             .distinct()
             .order_by("series")
         )
         return Response({
             **counts,
+            "catalog": catalog.count(),
             "platforms": platforms,
             "series": series,
-            "latest_sync_at": Contest.objects.aggregate(
+            # 「最近同步」要说的是**真榜单**多久没动过了。日历行每天 03:00 都会刷新
+            # crawled_at，按全表取 Max 会让这个信号恒为「今天」，看不出爬取停摆。
+            "latest_sync_at": catalog.aggregate(
+                value=Max("crawled_at"))["value"],
+            "schedule_synced_at": Contest.objects.filter(
+                rated_source=CALENDAR_RATED_SOURCE).aggregate(
                 value=Max("crawled_at"))["value"],
         })
 

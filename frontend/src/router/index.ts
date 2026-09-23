@@ -45,22 +45,19 @@ const router = createRouter({
       component: () => import('@/views/auth/AuthCallbackView.vue'),
       meta: { public: true },
     },
-    // ⚠️ 竞赛日历路由当前未开放（2026-09-18 上线导航时临时摘除）。
-    // 日历前端依赖后端新增的 /contests/meta/ 与 status= / end_after= 过滤，
-    // 该后端尚未部署；放开时恢复下面这段（与 navRegistry 的 calendar 项一起）：
-    //
-    // {
-    //   path: '/calendar',
-    //   component: () => import('@/layouts/PublicLayout.vue'),
-    //   meta: { optionalAuth: true },
-    //   children: [
-    //     {
-    //       path: '',
-    //       name: 'calendar',
-    //       component: () => import('@/views/user/CalendarView.vue'),
-    //     },
-    //   ],
-    // },
+    {
+      // 竞赛日历：公开页，登录与否都能看（登录后导航栏另有入口）
+      path: '/calendar',
+      component: () => import('@/layouts/PublicLayout.vue'),
+      meta: { optionalAuth: true },
+      children: [
+        {
+          path: '',
+          name: 'calendar',
+          component: () => import('@/views/user/CalendarView.vue'),
+        },
+      ],
+    },
     {
       // 用户端（普通注册用户 + 管理员均可访问）
       path: '/u',

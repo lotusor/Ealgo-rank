@@ -10,7 +10,7 @@
 
 import logging
 import re
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 
 from django.db import transaction
 from django.utils import timezone
@@ -592,6 +592,14 @@ def materialize_profile_rows(account, rows, *, log=None):
         elif contest.is_rated:
             skipped += 1
             continue
+        elif contest.rated_source == CALENDAR_RATED_SOURCE:
+            # 排期行被真实参赛行认领了：归属从「日历」转到「主页锚点」。
+            # 不转的话这行会同时带着日历标记和参赛行，而清理任务永不删有参赛行的
+            # 日历行 —— 变成一行既不进比赛列表、又永远留在库里的孤儿数据。
+            contest.rated_source = PROFILE_RATED_SOURCE
+            contest.rated_comment = "由日历行转正：官方不计分场次，仅展示"
+            contest.save(update_fields=["rated_source", "rated_comment",
+                                        "updated_at"])
         Participation.objects.create(
             contest=contest, platform_account=account,
             handle=account.handle, handle_lower=account.handle.lower(),
@@ -610,6 +618,82 @@ def materialize_profile_rows(account, rows, *, log=None):
     if created:
         logger.info("牛客主页不计分场次建行 account=%s 新增 %s 行", account.pk, created)
     return {"created": created, "skipped": skipped}
+
+
+# 日历行标记：三平台官方「未开赛 / 进行中」排期在站内的唯一识别依据，
+# 与 PROFILE_RATED_SOURCE 同理，排除条件必须落在非空列上（SQLite 对 JSONField
+# 键做 exclude 会因 NOT + NULL 把全部行一起滤掉）。
+CALENDAR_RATED_SOURCE = "calendar-feed"
+
+
+def upsert_calendar_rows(platform, rows, *, now=None):
+    """把平台官方排期落成日历行（只建 Contest，不建任何 Participation）。
+
+    为什么安全：日历行一律 `is_rated=False`，而积分引擎唯一入口
+    `Participation.objects.countable()` 要求 `contest.is_rated=True`，所以既不进
+    积分也不进场次统计。比赛结束后正常爬取会走 `ingest_contest` 的
+    `(platform, external_id)` update_or_create，把 is_rated / rated_source 一起
+    改写成真实判定 —— 行自动「转正」进比赛列表，不需要任何迁移动作。
+
+    已存在但不是日历行的（真实赛次、个人主页锚点）一律 skip：日历不该覆写榜单
+    口径，也不该把已经出现在比赛列表里的场次反向藏出去。
+    """
+    now = now or timezone.now()
+    created = updated = skipped = 0
+    for row in rows or []:
+        eid = str(row.get("real_contest_id") or row.get("contest_id") or "").strip()
+        start, end = _parse_dt(row.get("start_time")), _parse_dt(row.get("end_time"))
+        # end_time 缺失或不自洽就丢掉：status=ongoing / finished 两个分支都以
+        # end_time 为条件，写进去只会得到一行在日历三态里永远查不到的僵尸数据
+        if not eid or start is None or end is None or end <= start:
+            skipped += 1
+            continue
+        duration = row.get("duration_minutes") or int((end - start).total_seconds() // 60)
+        defaults = {
+            "name": str(row.get("name") or eid)[:255],
+            "url": str(row.get("link") or row.get("url") or "")[:500],
+            "start_time": start,
+            "end_time": end,
+            "duration_minutes": duration,
+            "series": str(row.get("series") or "")[:100],
+            "is_rated": False,
+            "rated_source": CALENDAR_RATED_SOURCE,
+            "rated_comment": "官方排期接口，未开赛/进行中，仅日历展示",
+            "raw_meta": {"source": CALENDAR_RATED_SOURCE},
+            "crawled_at": now,
+            "updated_at": now,
+        }
+        existing = Contest.objects.filter(platform=platform,
+                                         external_id=eid).first()
+        if existing is None:
+            Contest.objects.create(platform=platform, external_id=eid, **defaults)
+            created += 1
+        elif existing.rated_source == CALENDAR_RATED_SOURCE:
+            # 平台可能改期：日历行归本函数所有，可以整行刷新
+            Contest.objects.filter(pk=existing.pk).update(**defaults)
+            updated += 1
+        else:
+            skipped += 1
+    return {"created": created, "updated": updated, "skipped": skipped}
+
+
+def prune_stale_calendar_rows(days=7, *, now=None):
+    """删除「仍是日历行、且已结束满 days 天」的排期。
+
+    转正的窗口就是正常爬取的窗口（CF/AtCoder 最近若干场、牛客按月），超期仍未
+    转正的场站本就不打算收录（非 rated、被取消、在我们窗口之外）。留着它们，日历
+    的「已经结束」段会堆满点不开、也没有成绩的条目。带参赛行的一律不删（防御性，
+    日历行按设计不该有参赛行）。
+    """
+    cutoff = (now or timezone.now()) - timedelta(days=days)
+    doomed = Contest.objects.filter(
+        rated_source=CALENDAR_RATED_SOURCE, end_time__lt=cutoff
+    ).filter(participations=None)
+    deleted = doomed.count()
+    if deleted:
+        doomed.delete()
+        logger.info("清理过期日历行 %s 条（结束满 %s 天且未转正）", deleted, days)
+    return deleted
 
 
 def refresh_nowcoder_history(account, *, scraper=None):
@@ -738,8 +822,11 @@ def backfill_account_history(account, *, scraper=None, limit=0,
                 "verify": verify}
 
     cache_dir = _crawler_cache_dir(Platform.NOWCODER)
+    # 日历排期行不算「已入库」：它 is_rated=False，复用它的 meta 会让 ingest_contest
+    # 直接 skip(not_countable)，缺口就永远补不上，还白烧一次 90~300 秒的榜单重放。
     in_db = {c.external_id: c for c in Contest.objects.filter(
-        platform=Platform.NOWCODER, external_id__in=missing)}
+        platform=Platform.NOWCODER, external_id__in=missing
+    ).exclude(rated_source=CALENDAR_RATED_SOURCE)}
 
     def _has_cache(eid):
         return bool(cache_dir) and cache_path(cache_dir, eid).exists()
