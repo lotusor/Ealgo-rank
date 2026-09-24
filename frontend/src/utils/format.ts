@@ -265,6 +265,23 @@ export function relativeLabel(c: Contest, at: number): string {
 }
 
 /**
+ * 未开赛 / 进行中赛事的「计分」标记。
+ *
+ * 排期阶段各源就给得出结论：AtCoder 官方页的 Rated Range、牛客 contest-info 的
+ * category+uid、CF 的命名习惯。所以日历的「仅 Rated」筛选对未来的场次是真筛得动的。
+ * 已结束的场次返回 null —— `rowBadge` 那时直接显示 Rated / 不计分，再挂一个就是重复信息。
+ */
+export function scheduledRatedTag(
+  c: Contest,
+  at: number,
+): { text: string; cls: string } | null {
+  if (contestStatus(c, at) === 'finished') return null
+  return c.is_rated
+    ? { text: '计分', cls: 'badge-success' }
+    : { text: '不计分', cls: 'badge-muted' }
+}
+
+/**
  * 行徽标。排期行（官方列出、尚未开赛）此前会显示成「非 Rated」，那是错的：
  * 它不是「不计分的比赛」，只是还没开始。
  */

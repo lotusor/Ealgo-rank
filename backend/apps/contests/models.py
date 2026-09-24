@@ -2,10 +2,22 @@ from django.db import models
 
 from apps.common.models import ExcludeReason, Platform, TimeStampedModel
 
+# 展示型赛次的来源标记：日历排期行与个人主页锚点行都不是「榜单来的比赛」，
+# 只为日历 / 参赛记录展示而存在，永不参与积分。
+# 放在这里而不是 crawler/ingest.py：积分入口（下面的 countable）与入库层都要用，
+# 而 ingest 本身 import 本模块，反向引用会绕成循环导入。
+CALENDAR_RATED_SOURCE = "calendar-feed"
+PROFILE_RATED_SOURCE = "profile-joined-history"
+DISPLAY_ONLY_RATED_SOURCES = (CALENDAR_RATED_SOURCE, PROFILE_RATED_SOURCE)
+
 
 class Contest(TimeStampedModel):
     """
-    一场比赛。只收录 rated 且免费的比赛（爬虫层已过滤，这里再存一份判定依据便于审计）。
+    一场比赛。三类行共用这张表，靠 `rated_source` 区分：
+      - 真实赛次（榜单来的）：爬虫只收 rated 且免费的判定结果，参与积分；
+      - 日历排期行 `calendar-feed`：未开赛/进行中，is_rated 是预告期预判，仅展示；
+      - 主页锚点行 `profile-joined-history`：官方不计分的场次，仅参赛记录展示。
+    后两类由 `Participation.objects.countable()` 整排挡在积分之外。
     """
 
     platform = models.CharField("平台", max_length=20,
@@ -59,8 +71,8 @@ class Contest(TimeStampedModel):
 
     @property
     def countable(self):
-        """是否应计入积分：rated（付费不影响，付费 rated 比赛同样计分）。"""
-        return self.is_rated
+        """是否应计入积分：rated 且来源不是展示型赛次（付费不影响，付费 rated 照样计分）。"""
+        return self.is_rated and self.rated_source not in DISPLAY_ONLY_RATED_SOURCES
 
 
 class Problem(TimeStampedModel):
@@ -94,12 +106,15 @@ class ParticipationQuerySet(models.QuerySet):
         可计入积分的参赛记录。
         这是积分引擎唯一允许的入口，任何聚合都必须从这里出发，
         避免哪天漏判把作弊账号算进学校总分。
+
+        展示型赛次按 `rated_source` 标记单独挡一道：日历排期行现在带真实的
+        「平台是否计分」预判（is_rated 可能为真），积分口径不能再挂在 is_rated 上。
         """
         return self.filter(
             is_excluded=False,
             platform_account__isnull=False,
             contest__is_rated=True,
-        )
+        ).exclude(contest__rated_source__in=DISPLAY_ONLY_RATED_SOURCES)
 
     def for_school(self, school_id):
         return self.filter(platform_account__school_id=school_id)

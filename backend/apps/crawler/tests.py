@@ -1688,7 +1688,8 @@ from apps.crawler.ingest import (CALENDAR_RATED_SOURCE,              # noqa: E40
 from apps.crawler.tasks import sync_calendar_contests  # noqa: E402
 
 
-def _sched_row(eid, start, *, dur_min=120, name=None, link=None, series="Div. 2"):
+def _sched_row(eid, start, *, dur_min=120, name=None, link=None, series="Div. 2",
+               rated=False, rated_comment=""):
     """构造一条与三平台 parse_contests 同构的排期行（本地墙钟串，契约一致）。"""
     fmt = "%Y-%m-%d %H:%M:%S"
     local = dj_tz.localtime(start)
@@ -1699,6 +1700,7 @@ def _sched_row(eid, start, *, dur_min=120, name=None, link=None, series="Div. 2"
         "start_time": local.strftime(fmt),
         "end_time": dj_tz.localtime(start + timedelta(minutes=dur_min)).strftime(fmt),
         "duration_minutes": dur_min, "series": series, "phase": "BEFORE",
+        "is_rated": rated, "rated_comment": rated_comment,
     }
 
 
@@ -1708,16 +1710,43 @@ class CalendarUpsertTests(TestCase):
     def setUp(self):
         self.now = dj_tz.now()
 
-    def test_creates_unscored_rows(self):
+    def test_creates_rows_with_predicted_rated(self):
         out = upsert_calendar_rows(
             Platform.CODEFORCES,
-            [_sched_row("900", self.now + timedelta(days=1))], now=self.now)
-        self.assertEqual((out["created"], out["updated"], out["skipped"]), (1, 0, 0))
-        c = Contest.objects.get(platform=Platform.CODEFORCES, external_id="900")
-        self.assertFalse(c.is_rated)                 # 计分闸门锁死在这
-        self.assertEqual(c.rated_source, CALENDAR_RATED_SOURCE)
+            [_sched_row("900", self.now + timedelta(days=1)),
+             _sched_row("906", self.now + timedelta(days=2), rated=True,
+                        rated_comment="官方 Rated Range=- 1999")], now=self.now)
+        self.assertEqual((out["created"], out["updated"], out["skipped"]), (2, 0, 0))
+        plain = Contest.objects.get(external_id="900")
+        self.assertFalse(plain.is_rated)
+        self.assertEqual(plain.rated_source, CALENDAR_RATED_SOURCE)
+        self.assertEqual(plain.rated_comment, "官方排期接口，未开赛/进行中")
+        judged = Contest.objects.get(external_id="906")
+        self.assertTrue(judged.is_rated)          # 预告期判定写进展示口径
+        self.assertEqual(judged.rated_comment, "官方 Rated Range=- 1999")
         self.assertEqual(Participation.objects.count(), 0)
         self.assertEqual(Participation.objects.countable().count(), 0)
+
+    def test_rated_prediction_still_never_feeds_scoring(self):
+        """日历行判成「计分」也不许进积分：闸门是 rated_source 标记，不是 is_rated。
+
+        这一条是整套设计的承重墙 —— 一旦哪天有人把 is_rated 当成唯一判据，
+        未开赛（甚至最终不计分）的场次就会混进学校总分。
+        """
+        upsert_calendar_rows(
+            Platform.NOWCODER,
+            [_sched_row("907", self.now + timedelta(days=1), rated=True,
+                        link="https://ac.nowcoder.com/acm/contest/907")],
+            now=self.now)
+        c = Contest.objects.get(external_id="907")
+        self.assertTrue(c.is_rated)
+        user = User.objects.create_user(username="calr", password="pwd12345")
+        acc = PlatformAccount.objects.create(user=user, platform=Platform.NOWCODER,
+                                             handle="999")
+        p = Participation.objects.create(contest=c, platform_account=acc,
+                                         handle="999", rank=1)
+        self.assertFalse(Participation.objects.countable().filter(pk=p.pk).exists())
+        self.assertFalse(c.countable)
 
     def test_rerun_is_idempotent_and_follows_reschedule(self):
         rows = [_sched_row("901", self.now + timedelta(days=2))]
@@ -1833,15 +1862,44 @@ class _FakeClist:
         return list(self.rows)
 
 
+class _FakeRatedSource:
+    """牛客客户端替身：只实现日历用到的 check_rated。"""
+
+    def __init__(self, flags_by_eid):
+        self.flags_by_eid = flags_by_eid
+        self.asked = []
+
+    def check_rated(self, meta):
+        eid = str(meta.get("real_contest_id"))
+        self.asked.append(eid)
+        if eid not in self.flags_by_eid:
+            return {"is_rated": None, "is_paid": None,
+                    "rated_comment": "详情接口不可用"}
+        rated, paid = self.flags_by_eid[eid]
+        return {"is_rated": rated, "is_paid": paid,
+                "series": "牛客周赛" if rated else "",
+                "rated_comment": f"category=19 uid=919247 needCharge={paid}"}
+
+
 class CalendarSyncTaskTests(TestCase):
     """同步任务：按平台分组落库、上游故障不清空已有日历。"""
 
     def setUp(self):
         self.now = dj_tz.now()
 
-    def _run(self, fake):
+    def _run(self, fake, *, at_ratings=None, at_fails=False, nc_flags=None):
+        """跑一次同步。两个富化源都换成假值：测试绝不打外网。
+
+        `at_ratings` = 官方页给出的 {id: 区间}；`at_fails=True` 表示富化源本身
+        取不到（返回 None），与「取到了但没这场」（返回 {}）是两回事。
+        """
+        ratings = None if at_fails else (at_ratings or {})
         with mock.patch.object(tasks_mod, "_load_clist_scraper",
-                              return_value=fake):
+                               return_value=fake), \
+                mock.patch.object(tasks_mod, "_calendar_atcoder_ratings",
+                                  return_value=ratings), \
+                mock.patch.object(tasks_mod, "_load_scraper",
+                                  return_value=_FakeRatedSource(nc_flags or {})):
             return sync_calendar_contests()
 
     def test_groups_by_platform_and_drops_ended(self):
@@ -1882,6 +1940,56 @@ class CalendarSyncTaskTests(TestCase):
         self.assertFalse(res["ok"])
         self.assertIn("凭据", res["error"])
 
+    def test_rated_prediction_written_per_platform(self):
+        """三源各自的判定落到对应行；判不出的仍是不计分，但说明里写清为什么。"""
+        fake = _FakeClist([
+            _clist_row(Platform.ATCODER, "abc501", self.now + timedelta(days=2),
+                       url="https://atcoder.jp/contests/abc501", name="abc501"),
+            _clist_row(Platform.ATCODER, "game99", self.now + timedelta(days=3),
+                       url="https://atcoder.jp/contests/game99"),
+            _clist_row(Platform.NOWCODER, "19001", self.now + timedelta(days=4),
+                       url="https://ac.nowcoder.com/acm/contest/19001"),
+            _clist_row(Platform.CODEFORCES, "2500", self.now + timedelta(days=5),
+                       name="Codeforces Round (Div. 2)"),
+        ])
+        res = self._run(
+            fake,
+            at_ratings={"abc501": {"range": "- 1999", "rated": True,
+                                   "name": "AtCoder Beginner Contest 501"}},
+            nc_flags={"19001": (True, False)})
+        self.assertTrue(res["ok"])
+
+        abc = Contest.objects.get(external_id="abc501")
+        self.assertTrue(abc.is_rated)
+        # clist 给不出 event 名时回补官方页的（线上 aalc001 就是这种）
+        self.assertEqual(abc.name, "AtCoder Beginner Contest 501")
+        self.assertIn("Rated Range", abc.rated_comment)
+
+        game = Contest.objects.get(external_id="game99")
+        self.assertFalse(game.is_rated)
+        self.assertIn("官方页未列出", game.rated_comment)
+
+        nc = Contest.objects.get(external_id="19001")
+        self.assertTrue(nc.is_rated)
+        self.assertEqual(nc.series, "牛客周赛")
+
+        cf = Contest.objects.get(external_id="2500")
+        self.assertTrue(cf.is_rated)               # 命名预判出的计分系列
+        # game99 落在「unknown」而不是「unrated」：官方页没这场，是判不出，
+        # 不是判成不计分 —— 两个数分开记，运维才知道富化源有没有真的在工作。
+        self.assertEqual(res["rated"], {"rated": 3, "unrated": 0, "unknown": 1})
+
+    def test_enrichment_source_down_still_lands_schedule(self):
+        """富化源本身取不到（at_ratings=None）也不能拖累排期：行照落、保守判不计分。"""
+        fake = _FakeClist([_clist_row(
+            Platform.ATCODER, "abc502", self.now + timedelta(days=2),
+            url="https://atcoder.jp/contests/abc502")])
+        res = self._run(fake, at_fails=True)
+        self.assertTrue(res["ok"])
+        c = Contest.objects.get(external_id="abc502")
+        self.assertFalse(c.is_rated)
+        self.assertIn("官方页未列出", c.rated_comment)
+
     def test_rerun_creates_nothing_new(self):
         rows = [_clist_row(Platform.CODEFORCES, "2400", self.now + timedelta(days=1))]
         self._run(_FakeClist(rows))
@@ -1889,6 +1997,89 @@ class CalendarSyncTaskTests(TestCase):
         self.assertEqual(res["sources"][Platform.CODEFORCES]["created"], 0)
         self.assertEqual(res["sources"][Platform.CODEFORCES]["updated"], 1)
         self.assertEqual(Contest.objects.count(), 1)
+
+
+class ClistRatedPreviewTests(TestCase):
+    """CF 未开赛场次的命名预判表。
+
+    判据来自 2026-09-24 对 `contest.list` 的实测：phase=BEFORE 一条计分流都没有，
+    而 `type` 不能当依据 —— Educational 与 Div. 3 一律 type=ICPC 却照样改 rating，
+    反过来 type=CF 的 2215/2216 名字里明写 Unrated。所以只读命名。
+    """
+
+    def setUp(self):
+        _crawler_dir()
+        from clist_scraper import preview_codeforces_rated
+        self.judge = preview_codeforces_rated
+
+    def test_rated_names(self):
+        for n in ("Codeforces Round (Div. 1 + Div. 2)",
+                  "Codeforces Round 1123 (Div. 2)",
+                  "Educational Codeforces Round 194 (Rated for Div. 2)",
+                  "Codeforces Global Round 28"):
+            self.assertTrue(self.judge(n), n)
+
+    def test_unrated_names(self):
+        for n in ("Codeforces Round 1092 (Unrated, Div. 1, Based on THUPC 2026)",
+                  "April Fools Day Contest 2026",
+                  "Virtual Round 1234 (Unrated)",
+                  "Shell Programming Contest 2026"):
+            self.assertFalse(self.judge(n), n)
+
+    def test_names_without_signal_stay_unknown(self):
+        """判不出就是判不出，别硬猜成计分：宁可不进筛选结果。"""
+        self.assertIsNone(self.judge("Kotlin Heroes: Episode 8"))
+        self.assertIsNone(self.judge(""))
+
+
+class AtCoderRatingsPageTests(TestCase):
+    """AtCoder 官方 /contests/ 页 Rated Range 的抽取（真实响应片段，不联网）。"""
+
+    HTML = """
+      <table><tr><th>Contest Name</th><th>Rated Range</th></tr>
+        <tr><td><a href="/contests/practice">practice contest</a></td><td>-</td></tr>
+      </table>
+      <table><tr><th>Start Time (local time)</th><th>Contest Name</th>
+              <th>Duration</th><th>Rated Range</th></tr>
+        <tr><td>2026-09-26 21:00:00+0900</td>
+            <td><span title="Algorithm">A</span><span class="">o</span>
+                <a href="/contests/abc477">UNICORN Programming Contest 2026</a></td>
+            <td>01:40</td><td>- 1999</td></tr>
+        <tr><td>2026-10-12 13:00:00+0900</td>
+            <td><a href="/contests/aalc001">AAL Contest 001: Let's use segtree!</a></td>
+            <td>05:00</td><td>-</td></tr>
+        <tr><td>2026-09-25 19:00:00+0900</td>
+            <td><a href="/contests/ahc072">ALGO ARTIS Programming Contest</a></td>
+            <td>240:00</td><td>All</td></tr>
+      </table>
+      <table><tr><th>Contest Name</th><th>Standings</th></tr>
+        <tr><td><a href="/contests/nohead">无 Rated 列的表</a></td><td>-</td></tr>
+      </table>
+    """
+
+    def setUp(self):
+        _crawler_dir()
+        from atcoder_scraper import parse_ratings_page
+        self.parse = parse_ratings_page
+
+    def test_extracts_range_name_and_flag(self):
+        """真实响应片段：区间、名字、是否计分三样都要抽对。"""
+        got = self.parse(self.HTML)
+        self.assertEqual(sorted(got), ["aalc001", "abc477", "ahc072", "practice"])
+        self.assertEqual(got["abc477"], {"range": "- 1999", "rated": True,
+                                         "name": "UNICORN Programming Contest 2026"})
+        self.assertFalse(got["aalc001"]["rated"])
+        self.assertTrue(got["ahc072"]["rated"])     # 启发式赛道 "All" 同样计分
+
+    def test_table_without_rated_column_is_skipped(self):
+        self.assertNotIn("nohead", self.parse(self.HTML))
+
+    def test_name_comes_from_link_not_cell(self):
+        """比赛名取 <a> 文本：整格剥标签会把 Ⓐ/◉ 之类图标一起带进来。"""
+        html = ('<table><tr><th>Contest Name</th><th>Rated Range</th></tr>'
+                '<tr><td><span>i</span><a href="/contests/x1">Name Only</a></td>'
+                '<td>All</td></tr></table>')
+        self.assertEqual(self.parse(html)["x1"]["name"], "Name Only")
 
 
 class ClistScraperTests(TestCase):
@@ -2026,10 +2217,10 @@ class CalendarShadowingTests(TestCase):
             user=user, platform=Platform.NOWCODER, handle="1001")
         self.past = dj_tz.now() - timedelta(days=30)
 
-    def _calendar_row(self, eid="9001"):
+    def _calendar_row(self, eid="9001", rated=False):
         return Contest.objects.create(
             platform=Platform.NOWCODER, external_id=eid, name=f"NC {eid}",
-            is_rated=False, rated_source=CALENDAR_RATED_SOURCE,
+            is_rated=rated, rated_source=CALENDAR_RATED_SOURCE,
             start_time=self.past, end_time=self.past + timedelta(hours=2))
 
     def test_calendar_row_does_not_shadow_backfill(self):
@@ -2074,6 +2265,38 @@ class CalendarShadowingTests(TestCase):
         c.refresh_from_db()
         self.assertEqual(c.rated_source, PROFILE_RATED_SOURCE)
         self.assertEqual(Participation.objects.countable().count(), 0)
+
+    def test_profile_rows_claim_calendar_row_that_predicted_rated(self):
+        """日历把某场预判成「计分」、官方行级却说没给这个用户计分 —— 认领判据只能
+        看来源标记。若沿用旧的 `elif contest.is_rated: skip`，这行的成绩会被永久挡住。"""
+        c = self._calendar_row("9004", rated=True)
+        row = {"contestId": "9004", "contestName": "牛客周赛 Round 163", "rank": 7,
+               "startTime": int(self.past.timestamp() * 1000),
+               "endTime": int((self.past + timedelta(hours=2)).timestamp() * 1000),
+               "ratingStatus": "NO", "needCharge": False}
+        out = materialize_profile_rows(self.acc, [row])
+        self.assertEqual(out["created"], 1)
+        c.refresh_from_db()
+        self.assertEqual(c.rated_source, PROFILE_RATED_SOURCE)
+        self.assertFalse(c.is_rated)          # 行级结论覆盖预告期预判
+        self.assertEqual(Participation.objects.countable().count(), 0)
+
+    def test_real_rated_row_is_not_retaken_by_profile_rows(self):
+        """真实榜单行仍由补数路径管：锚点建行不抢它的 rated / 来源。"""
+        Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="9005", name="NC 9005",
+            is_rated=True, rated_source="contest-info:category+uid+needCharge",
+            start_time=self.past, end_time=self.past + timedelta(hours=2))
+        row = {"contestId": "9005", "contestName": "NC 9005", "rank": 3,
+               "startTime": int(self.past.timestamp() * 1000),
+               "endTime": int((self.past + timedelta(hours=2)).timestamp() * 1000),
+               "ratingStatus": "NO", "needCharge": False}
+        out = materialize_profile_rows(self.acc, [row])
+        self.assertEqual(out["created"], 0)
+        self.assertEqual(out["skipped"], 1)
+        self.assertEqual(
+            Contest.objects.get(external_id="9005").rated_source,
+            "contest-info:category+uid+needCharge")
 
 
 class CalendarBeatScheduleTests(TestCase):

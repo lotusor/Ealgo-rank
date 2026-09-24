@@ -183,3 +183,30 @@ def _series_of(platform, name, href):
     m = re.search(r"(牛客[\u4e00-\u9fa5]{0,10}?(?:周赛|月赛|挑战赛|集训营|练习赛|题解))",
                   name)
     return m.group(1) if m else ""
+
+
+# ---------- 未开赛场次的 rated 预判 ----------
+# 日历行的 is_rated 只服务「按计分筛选」：积分链路认的是 rated_source 标记
+# （见 contests.models.countable），而且赛后正常爬取会用各平台的判定覆盖整行，
+# 所以这里允许用命名/官方区间做预判，代价是极少数场次几天后才被纠正。
+
+# CF 的 `contest.list` 对 phase=BEFORE 只给 id/name/type/phase，没有任何计分字段
+# （2026-09-24 实测），而 `type` 也不能当判据：Educational 与 Div. 3 一律 type=ICPC，
+# 却照样改 rating；反过来 type=CF 的 2215/2216 名字里明写 Unrated。所以只能按命名判：
+# 先排除明示不计分的，再认官方计分系列的命名习惯，两者都不命中即「未判定」。
+CF_UNRATED_NAME = re.compile(
+    r"unrated|april fools|virtual|shell programming|testing round", re.I)
+CF_RATED_NAME = re.compile(
+    r"rated for|\(div\.\s*\d|educational|global round|codeforces round", re.I)
+
+
+def preview_codeforces_rated(name):
+    """True / False / None（名字给不出结论，交给赛后的 ratingChanges 定案）。"""
+    n = (name or "").strip()
+    if not n:
+        return None
+    if CF_UNRATED_NAME.search(n):
+        return False
+    if CF_RATED_NAME.search(n):
+        return True
+    return None

@@ -733,6 +733,91 @@ def crawl_nowcoder(self, job_id=None, months=None, months_back=None, force=False
     return _run_job(job, worker)
 
 
+def _calendar_atcoder_ratings():
+    """AtCoder 未开赛场次的计分区间：官方 /contests/ 页表格。失败只影响 rated 列。
+
+    不用 kenkoooo：它的 contests.json 只收已结束比赛，未开赛的 Rated Range
+    在官方页上（"All" / "- ~ 1999" / "-"），与站内 `rate_change` 同口径。
+    """
+    try:
+        return _load_scraper(Platform.ATCODER).fetch_upcoming_ratings() or {}
+    except Exception as exc:  # noqa: BLE001 - 排期照落，只是这轮判不出 rated
+        logger.warning("日历 rated 富化：AtCoder 官方页取数失败 %s", exc)
+        return None
+
+
+def _calendar_nowcoder_flags(eid, scraper):
+    """牛客未开赛场次：contest-info 的 category+uid+needCharge，未开赛即可判。
+    判不出（接口不可用）返回 None，调用方按「未判定」处理。"""
+    try:
+        flags = scraper.check_rated({"real_contest_id": eid})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("日历 rated 富化：牛客 %s 判定失败 %s", eid, exc)
+        return None
+    return flags if flags.get("is_rated") is not None else None
+
+
+def _annotate_calendar_rated(rows):
+    """给排期行补「平台是否计分」，就地写 is_rated / rated_comment，返回统计。
+
+    为什么必须补：日历行原先一律 is_rated=False —— 那是在替一场还没开始的比赛
+    宣布「不计分」，而日历的 Rated 筛选读的正是这一列，未开赛场次因此整排被滤空
+    （2026-09-24 线上实测：25 条排期行 25 条 is_rated=false）。
+    is_rated 在这里只是展示口径：积分链路由 `rated_source` 上的日历标记挡住
+    （见 contests.models.countable），赛后正常爬取会用平台自己的判定覆盖整行。
+    """
+    from clist_scraper import preview_codeforces_rated
+
+    by_platform = {r.get("platform") for r in rows}
+    at_map = (_calendar_atcoder_ratings()
+              if Platform.ATCODER in by_platform else {})
+    nc_scraper = None
+    if Platform.NOWCODER in by_platform:
+        try:
+            nc_scraper = _load_scraper(Platform.NOWCODER)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("日历 rated 富化：牛客客户端起不来 %s", exc)
+
+    stat = {"rated": 0, "unrated": 0, "unknown": 0}
+    for r in rows:
+        eid = str(r.get("real_contest_id") or r.get("contest_id") or "")
+        platform = r.get("platform")
+        rated, note = None, ""
+        if platform == Platform.ATCODER:
+            info = (at_map or {}).get(eid)
+            if info is None:
+                note = "官方页未列出该场，计分区间待赛后确认"
+            else:
+                rated = bool(info["rated"])
+                note = f"官方 Rated Range={info.get('range') or '(空)'}"
+                # clist 偶尔给不出 event 名（回退成 id），官方页的名字更可靠
+                if (not r.get("name") or r["name"] == eid) and info.get("name"):
+                    r["name"] = str(info["name"])[:255]
+        elif platform == Platform.NOWCODER:
+            flags = _calendar_nowcoder_flags(eid, nc_scraper) if nc_scraper else None
+            if flags:
+                rated = bool(flags.get("is_rated"))
+                r["is_paid"] = bool(flags.get("is_paid"))
+                if flags.get("series"):
+                    r["series"] = str(flags["series"])[:100]
+                note = str(flags.get("rated_comment") or "")[:200]
+            else:
+                note = "详情接口未取到，计分判定待赛后"
+        elif platform == Platform.CODEFORCES:
+            rated = preview_codeforces_rated(r.get("name"))
+            note = ("按官方命名预判：" + ("计分系列" if rated is True else
+                                          "不计分名称" if rated is False else
+                                          "无计分线索"))
+        else:
+            note = "该平台无预告期计分判定源"
+
+        r["is_rated"] = bool(rated)
+        r["rated_comment"] = note
+        stat["rated" if rated else ("unrated" if rated is False else "unknown")] += 1
+    logger.info("日历 rated 富化完成: %s", stat)
+    return stat
+
+
 def _load_clist_scraper():
     """clist.by 排期客户端。凭据缺失时直接抛，让调用方记日志而不是静默产出空日历。"""
     from clist_scraper import ClistScraper
@@ -782,6 +867,9 @@ def sync_calendar_contests(days_ahead=None):
             continue        # 今天之前就结束了：归正常爬取路径管
         grouped.setdefault(r["platform"], []).append(r)
 
+    pending = [r for rs in grouped.values() for r in rs]
+    rated_stat = _annotate_calendar_rated(pending)
+
     sources = {p: upsert_calendar_rows(p, rs, now=now) for p, rs in grouped.items()}
     written = sum(s["created"] + s["updated"] for s in sources.values())
     if rows and not written:
@@ -790,7 +878,8 @@ def sync_calendar_contests(days_ahead=None):
     pruned = prune_stale_calendar_rows(days=settings.CALENDAR_PRUNE_AFTER_DAYS,
                                        now=now)
     logger.info("日历排期同步完成: %s（清理过期行 %s 条）", sources, pruned)
-    return {"ok": True, "fetched": len(rows), "sources": sources, "pruned": pruned}
+    return {"ok": True, "fetched": len(rows), "sources": sources,
+            "rated": rated_stat, "pruned": pruned}
 
 
 def _last_n_months(n):

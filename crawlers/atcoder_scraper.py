@@ -22,6 +22,7 @@ AtCoder 比赛信息与用户排名爬虫
 
 import json
 import random
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,8 @@ class AtCoderScraper:
         })
         self.base_list = "https://kenkoooo.com/atcoder/resources"
         self.base_atcoder = "https://atcoder.jp"
+        # 官方赛事列表页：Upcoming 表带 Rated Range，是未开赛场次唯一的计分依据
+        self.CONTESTS_PAGE = "https://atcoder.jp/contests/"
         self._problem_index = None  # {contest_id: [problem, ...]}
 
     # ---------- 底层请求 ----------
@@ -129,19 +132,34 @@ class AtCoderScraper:
 
     # ---------- rated / 付费判定 ----------
     @staticmethod
+    def rated_from_range(rate_change):
+        """Rated Range 原文 → 是否计分。'-' 或空即不计分。
+        kenkoooo 的 rate_change 与官方页面的 Rated Range 同口径，共用这一条规则。"""
+        rc = (rate_change or "").strip()
+        return bool(rc) and rc != "-"
+
+    @staticmethod
     def check_rated(contest_meta):
         """
         统一契约方法：判定一场比赛是否 rated / 是否付费。
         rate_change 为 "-" 或空即 unrated；其余（"All"、"- ~ 1999" 等）为 rated。
         """
         rc = (contest_meta.get("rate_change") or "").strip()
-        is_rated = bool(rc) and rc != "-"
+        is_rated = AtCoderScraper.rated_from_range(rc)
         return {
             "is_rated": is_rated,
             "is_paid": False,                     # AtCoder 无付费比赛
             "rated_source": "contests.json:rate_change",
             "rated_comment": f"rate_change={rc or '(空)'}",
         }
+
+    def fetch_upcoming_ratings(self):
+        """未开赛场次的计分区间：官方 /contests/ 页的表格里带 Rated Range。
+
+        为什么不用 kenkoooo：`contests.json` 只收已结束比赛（实测最新一条就是
+        当天），日历要的正是还没开始的那些。返回 {contest_id: 见 `parse_ratings_page`}。
+        """
+        return parse_ratings_page(self._get(self.CONTESTS_PAGE).text)
 
     def filter_contests(self, contests, rated_only=True, exclude_paid=True):
         """按 rated / 付费规则筛选比赛，并把判定结果写回比赛字段"""
@@ -416,6 +434,41 @@ class AtCoderScraper:
             }, f, ensure_ascii=False, indent=2)
         print(f"\n[run] 完成，共抓取 {len(details)}/{len(all_contests)} 场比赛详情 -> {out}")
         return details
+
+
+def parse_ratings_page(html):
+    """从官方 /contests/ 页的表格里抽出 {contest_id: {range, rated, name}}。
+
+    列序在各表格间不一致（Practice 表只有 Name+Rated Range，Upcoming 表还带
+    Start Time / Duration），所以按表头文字定位 Rated Range 列，不写死下标。
+    比赛名取 <a href="/contests/id"> 的文本：单元格里还混着 Ⓐ/◉ 之类的图标，
+    整格剥标签会把它们一起带进来。
+    """
+    out = {}
+    for table in re.findall(r"<table[^>]*>(.*?)</table>", html, re.S):
+        rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table, re.S)
+        if not rows:
+            continue
+        head = [re.sub(r"<[^>]+>", "", c).strip()
+                for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", rows[0], re.S)]
+        col = next((i for i, t in enumerate(head)
+                    if "Rated" in t and "Range" in t), None)
+        if col is None:
+            continue
+        for tr in rows[1:]:
+            link = re.search(r'<a[^>]*href="/contests/([^"?/]+)"[^>]*>(.*?)</a>',
+                             tr, re.S)
+            cells = [re.sub(r"<[^>]+>", "", c).strip()
+                     for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S)]
+            if not link or col >= len(cells):
+                continue
+            rng = cells[col]
+            out[link.group(1)] = {
+                "range": rng,
+                "rated": AtCoderScraper.rated_from_range(rng),
+                "name": re.sub(r"<[^>]+>", "", link.group(2)).strip(),
+            }
+    return out
 
 
 if __name__ == "__main__":

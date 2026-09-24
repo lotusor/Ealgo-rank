@@ -17,7 +17,9 @@ from django.utils import timezone
 
 from apps.accounts.models import PlatformAccount
 from apps.common.models import ExcludeReason, Platform
-from apps.contests.models import Contest, Participation, Problem
+from apps.contests.models import (CALENDAR_RATED_SOURCE,                  # noqa: F401
+                                  PROFILE_RATED_SOURCE,
+                                  Contest, Participation, Problem)
 from apps.schools.models import AtCoderAffiliationAlias, normalize_atcoder_affiliation
 
 logger = logging.getLogger(__name__)
@@ -531,9 +533,8 @@ def compare_nowcoder_history(account, rows, *, min_rank_diff=5):
 # 个人主页来源标记：既是锚点赛次的识别依据（公共比赛列表按它排除），也写进
 # Participation.extra，用于区分「榜单来的」与「主页来的」。
 PROFILE_SOURCE = "profile_joined"
-# 排除条件必须落在非空列上：JSONField 键查找在 SQLite 下会让「没有这个键」的行
-# 参与 NOT 运算后得到 NULL，三值逻辑把全部行一起排除掉（实测列表返回 0 行）。
-PROFILE_RATED_SOURCE = "profile-joined-history"
+# 两个展示型来源标记（PROFILE_RATED_SOURCE / CALENDAR_RATED_SOURCE）已上移到
+# apps/contests/models.py，由本模块 import 再导出。
 
 
 def _ts_to_dt(ms):
@@ -546,13 +547,14 @@ def _ts_to_dt(ms):
 def materialize_profile_rows(account, rows, *, log=None):
     """把「官方不计 Rating、但确有其场」的主页行落库，只服务参赛记录展示。
 
-    为什么可以这样做：积分引擎唯一入口 `Participation.objects.countable()` 要求
-    `contest.is_rated=True`，而这些锚点赛次一律 is_rated=False，所以既不进积分、
-    也不进「参赛场次」统计，纯展示。锚点 Contest 带 `raw_meta.source=profile_joined`
-    标记，公共比赛列表默认排除它，避免校内赛/同步赛混进「比赛列表」和难度系数页。
+    为什么可以这样做：积分引擎唯一入口 `Participation.objects.countable()` 会把带
+    展示型标记（`profile-joined-history` / `calendar-feed`）的赛次整排挡掉，所以这
+    些锚点赛次既不进积分、也不进「参赛场次」统计，纯展示。锚点 Contest 带
+    `raw_meta.source=profile_joined` 标记，公共比赛列表默认排除它，避免校内赛/同步赛
+    混进「比赛列表」和难度系数页。
 
-    已存在的赛次若是 rated（例：平台对该用户取消计分的周赛），交回榜单正常补数
-    路径处理，这里不建半成品行。
+    已存在且来源不是展示型标记的赛次（真实榜单行）交回正常补数路径处理，
+    这里不认领、也不建半成品行。
     """
     log = log or (lambda msg: None)
     created = skipped = 0
@@ -589,7 +591,11 @@ def materialize_profile_rows(account, rows, *, log=None):
                 rated_source=PROFILE_RATED_SOURCE,
                 rated_comment="官方行级 ratingStatus=NO（不计分场次，仅展示）",
                 raw_meta={"source": PROFILE_SOURCE})
-        elif contest.is_rated:
+        elif contest.rated_source not in (CALENDAR_RATED_SOURCE,
+                                          PROFILE_RATED_SOURCE):
+            # 真实榜单行（含赛后转正的日历行）交给正常补数路径，这里不认领。
+            # 判据只用标记、不用 is_rated：日历行现在带的是「预计计分」预判，
+            # 拿它当挡箭牌会把用户真打过的场次挡在展示行外面。
             skipped += 1
             continue
         elif contest.rated_source == CALENDAR_RATED_SOURCE:
@@ -597,9 +603,10 @@ def materialize_profile_rows(account, rows, *, log=None):
             # 不转的话这行会同时带着日历标记和参赛行，而清理任务永不删有参赛行的
             # 日历行 —— 变成一行既不进比赛列表、又永远留在库里的孤儿数据。
             contest.rated_source = PROFILE_RATED_SOURCE
+            contest.is_rated = False   # 日历上的「预计计分」到这里已被官方行级判否
             contest.rated_comment = "由日历行转正：官方不计分场次，仅展示"
-            contest.save(update_fields=["rated_source", "rated_comment",
-                                        "updated_at"])
+            contest.save(update_fields=["rated_source", "is_rated",
+                                        "rated_comment", "updated_at"])
         Participation.objects.create(
             contest=contest, platform_account=account,
             handle=account.handle, handle_lower=account.handle.lower(),
@@ -620,20 +627,18 @@ def materialize_profile_rows(account, rows, *, log=None):
     return {"created": created, "skipped": skipped}
 
 
-# 日历行标记：三平台官方「未开赛 / 进行中」排期在站内的唯一识别依据，
-# 与 PROFILE_RATED_SOURCE 同理，排除条件必须落在非空列上（SQLite 对 JSONField
-# 键做 exclude 会因 NOT + NULL 把全部行一起滤掉）。
-CALENDAR_RATED_SOURCE = "calendar-feed"
+# 日历排期行的识别标记 CALENDAR_RATED_SOURCE 见 apps/contests/models.py。
 
 
 def upsert_calendar_rows(platform, rows, *, now=None):
     """把平台官方排期落成日历行（只建 Contest，不建任何 Participation）。
 
-    为什么安全：日历行一律 `is_rated=False`，而积分引擎唯一入口
-    `Participation.objects.countable()` 要求 `contest.is_rated=True`，所以既不进
-    积分也不进场次统计。比赛结束后正常爬取会走 `ingest_contest` 的
-    `(platform, external_id)` update_or_create，把 is_rated / rated_source 一起
-    改写成真实判定 —— 行自动「转正」进比赛列表，不需要任何迁移动作。
+    为什么安全：这里的 `is_rated` 是「平台是否计分」的预告期预判（由
+    `_annotate_calendar_rated` 按各源给的区间/命名/详情判出），只服务日历的 Rated
+    筛选；积分引擎唯一入口 `Participation.objects.countable()` 按 `rated_source`
+    上的日历标记整排挡掉，判成 True 也不会进积分。比赛结束后正常爬取会走
+    `ingest_contest` 的 `(platform, external_id)` update_or_create，把 is_rated /
+    rated_source 一起改写成真实判定 —— 行自动「转正」进比赛列表，不需要任何迁移动作。
 
     已存在但不是日历行的（真实赛次、个人主页锚点）一律 skip：日历不该覆写榜单
     口径，也不该把已经出现在比赛列表里的场次反向藏出去。
@@ -656,9 +661,11 @@ def upsert_calendar_rows(platform, rows, *, now=None):
             "end_time": end,
             "duration_minutes": duration,
             "series": str(row.get("series") or "")[:100],
-            "is_rated": False,
+            "is_rated": bool(row.get("is_rated")),
+            "is_paid": bool(row.get("is_paid")),
             "rated_source": CALENDAR_RATED_SOURCE,
-            "rated_comment": "官方排期接口，未开赛/进行中，仅日历展示",
+            "rated_comment": (str(row.get("rated_comment") or "").strip()
+                              or "官方排期接口，未开赛/进行中")[:255],
             "raw_meta": {"source": CALENDAR_RATED_SOURCE},
             "crawled_at": now,
             "updated_at": now,

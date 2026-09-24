@@ -37,6 +37,7 @@ import {
   rangeLabel,
   relativeLabel,
   rowBadge as rowBadgeOf,
+  scheduledRatedTag,
 } from '@/utils/format'
 
 type ViewMode = 'month' | 'list'
@@ -235,7 +236,14 @@ const liveContest = computed(() => liveRows.value[0] ?? null)
 /** 页面级派生统一按分钟粒度的 `now` 计算（秒级只属于焦点区） */
 const statusOf = (c: Contest) => contestStatus(c, now.value.getTime())
 const relLabel = (c: Contest) => relativeLabel(c, now.value.getTime())
-const rowBadge = (c: Contest) => rowBadgeOf(c, now.value.getTime())
+/** 行徽标组：状态 + 未结束赛事的计分预判。合成一个数组，模板里只算一次。 */
+const rowBadges = (c: Contest): { text: string; cls: string }[] => {
+  const at = now.value.getTime()
+  const tags = [rowBadgeOf(c, at)]
+  const rated = scheduledRatedTag(c, at)
+  if (rated) tags.push(rated)
+  return tags
+}
 
 async function load() {
   loading.value = true
@@ -300,9 +308,9 @@ const seriesOptions = computed(() => meta.value?.series ?? [])
 
 const kw = computed(() => keyword.value.trim().toLowerCase())
 
-function matches(c: Contest): boolean {
+function matches(c: Contest, ignoreRated = false): boolean {
   if (platforms.value.length && !platforms.value.includes(c.platform)) return false
-  if (ratedOnly.value && !c.is_rated) return false
+  if (!ignoreRated && ratedOnly.value && !c.is_rated) return false
   if (series.value && c.series !== series.value) return false
   if (kw.value) {
     const hay = `${c.name} ${c.series ?? ''}`.toLowerCase()
@@ -311,6 +319,15 @@ function matches(c: Contest): boolean {
   if (statusFilter.value !== 'all' && statusOf(c) !== statusFilter.value) return false
   return true
 }
+
+/** 当前视图里判为「平台计分」的场次数：挂在开关上做可见反馈 */
+const ratedChipCount = computed(() => {
+  const rows =
+    view.value === 'month'
+      ? monthRows.value
+      : [...buckets.value.ongoing, ...buckets.value.upcoming, ...buckets.value.finished]
+  return rows.filter((c) => matches(c, true) && c.is_rated).length
+})
 
 function togglePlatform(key: string) {
   const i = platforms.value.indexOf(key)
@@ -336,7 +353,8 @@ const hasFilter = computed(
 )
 
 // ---------- 月历视图 ----------
-const filteredMonthRows = computed(() => monthRows.value.filter(matches))
+// 不写 .filter(matches)：Array.filter 会把下标当第二个实参传进 ignoreRated
+const filteredMonthRows = computed(() => monthRows.value.filter((c) => matches(c)))
 
 const byDay = computed(() => {
   const map = new Map<string, Contest[]>()
@@ -516,9 +534,11 @@ function fmtSyncTime(iso: string | null) {
           type="button"
           class="cal-chip"
           :class="{ active: ratedOnly }"
+          title="只看平台计分场次；未开赛的按各源公布的计分区间/命名预判，赛后以平台真实结算为准"
           @click="ratedOnly = !ratedOnly"
         >
           仅 Rated
+          <span v-if="ratedChipCount" class="cal-chip-count">{{ ratedChipCount }}</span>
         </button>
       </div>
       <div class="cal-filter-row">
@@ -602,7 +622,7 @@ function fmtSyncTime(iso: string | null) {
                   v-for="c in cell.items.slice(0, 2)"
                   :key="c.id"
                   class="cal-event"
-                  :class="platformTagClass(c.platform)"
+                  :class="[platformTagClass(c.platform), { 'is-unrated': !c.is_rated }]"
                   :title="c.name"
                 >{{ c.name }}</span>
                 <span v-if="cell.items.length > 2" class="cal-more">
@@ -640,7 +660,12 @@ function fmtSyncTime(iso: string | null) {
                 </div>
               </div>
               <span v-if="relLabel(c)" class="cal-rel num">{{ relLabel(c) }}</span>
-              <span class="badge" :class="rowBadge(c).cls">{{ rowBadge(c).text }}</span>
+              <span
+                v-for="b in rowBadges(c)"
+                :key="b.text"
+                class="badge"
+                :class="b.cls"
+              >{{ b.text }}</span>
               <a
                 v-if="c.url"
                 :href="c.url"
@@ -693,7 +718,12 @@ function fmtSyncTime(iso: string | null) {
                 <span v-if="relLabel(c)" class="cal-rel num">{{ relLabel(c) }}</span>
                 <span v-else class="caption text-tertiary">{{ fmtDuration(c.duration_minutes) }}</span>
               </div>
-              <span class="badge" :class="rowBadge(c).cls">{{ rowBadge(c).text }}</span>
+              <span
+                v-for="b in rowBadges(c)"
+                :key="b.text"
+                class="badge"
+                :class="b.cls"
+              >{{ b.text }}</span>
             </li>
           </ul>
           <div v-else class="cal-empty">
@@ -898,6 +928,12 @@ function fmtSyncTime(iso: string | null) {
 .cal-event.nowcoder {
   background: color-mix(in srgb, var(--color-success) 18%, transparent);
   color: var(--color-success);
+}
+.cal-event.is-unrated {
+  /* 官方已宣布不计分的排期：降透明 + 空心描边，与同格里的计分场次一眼区分，
+     又不必为它多引一套颜色（浅色主题下不会漏色） */
+  opacity: .55;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 45%, transparent);
 }
 .cal-more {
   font-size: 11px;
