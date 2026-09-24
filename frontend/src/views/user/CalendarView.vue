@@ -308,9 +308,9 @@ const seriesOptions = computed(() => meta.value?.series ?? [])
 
 const kw = computed(() => keyword.value.trim().toLowerCase())
 
-function matches(c: Contest, ignoreRated = false): boolean {
+function matches(c: Contest): boolean {
   if (platforms.value.length && !platforms.value.includes(c.platform)) return false
-  if (!ignoreRated && ratedOnly.value && !c.is_rated) return false
+  if (ratedOnly.value && !c.is_rated) return false
   if (series.value && c.series !== series.value) return false
   if (kw.value) {
     const hay = `${c.name} ${c.series ?? ''}`.toLowerCase()
@@ -319,15 +319,6 @@ function matches(c: Contest, ignoreRated = false): boolean {
   if (statusFilter.value !== 'all' && statusOf(c) !== statusFilter.value) return false
   return true
 }
-
-/** 当前视图里判为「平台计分」的场次数：挂在开关上做可见反馈 */
-const ratedChipCount = computed(() => {
-  const rows =
-    view.value === 'month'
-      ? monthRows.value
-      : [...buckets.value.ongoing, ...buckets.value.upcoming, ...buckets.value.finished]
-  return rows.filter((c) => matches(c, true) && c.is_rated).length
-})
 
 function togglePlatform(key: string) {
   const i = platforms.value.indexOf(key)
@@ -353,8 +344,7 @@ const hasFilter = computed(
 )
 
 // ---------- 月历视图 ----------
-// 不写 .filter(matches)：Array.filter 会把下标当第二个实参传进 ignoreRated
-const filteredMonthRows = computed(() => monthRows.value.filter((c) => matches(c)))
+const filteredMonthRows = computed(() => monthRows.value.filter(matches))
 
 const byDay = computed(() => {
   const map = new Map<string, Contest[]>()
@@ -538,7 +528,7 @@ function fmtSyncTime(iso: string | null) {
           @click="ratedOnly = !ratedOnly"
         >
           仅 Rated
-          <span v-if="ratedChipCount" class="cal-chip-count">{{ ratedChipCount }}</span>
+          <span v-if="meta?.rated" class="cal-chip-count">{{ meta.rated }}</span>
         </button>
       </div>
       <div class="cal-filter-row">
