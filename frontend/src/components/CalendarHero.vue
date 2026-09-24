@@ -154,9 +154,9 @@ const scheduleSyncLabel = computed(() => {
   position: relative;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--space-6);
+  gap: var(--space-5); /* 基准按窄屏一档，≥768px 放宽到 space-6 */
   align-items: start;
-  padding: var(--space-6);
+  padding: var(--space-5);
   margin-bottom: var(--space-6);
   border: 1px solid var(--glass-border-color);
   border-radius: var(--radius-lg);
@@ -209,8 +209,8 @@ const scheduleSyncLabel = computed(() => {
 .cal-hero-kicker {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--color-text-tertiary);
@@ -228,7 +228,7 @@ const scheduleSyncLabel = computed(() => {
   min-width: 0;
 }
 .cal-hero-title {
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 700;
   color: var(--color-text-primary);
   overflow: hidden;
@@ -236,26 +236,35 @@ const scheduleSyncLabel = computed(() => {
   white-space: nowrap;
 }
 .cal-hero-sub {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
+/* A4：主色 #6366f1 当文字只有 4.1~4.5:1，链接一律走「文本安全色」档 */
 .cal-hero-go {
   display: inline-block;
   margin-top: var(--space-4);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--color-primary);
-}
-.cal-hero-go:hover {
-  color: var(--color-primary-hover);
+  color: var(--color-primary-text);
 }
 .cal-hero-src {
   color: var(--color-text-secondary);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.cal-hero-src:hover {
-  color: var(--color-primary);
+.cal-hero-go:focus-visible,
+.cal-hero-src:focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: 2px;
+}
+/* R5：悬停增强只在真有 hover 的设备上生效 */
+@media (hover: hover) {
+  .cal-hero-go:hover {
+    color: var(--color-text-primary);
+  }
+  .cal-hero-src:hover {
+    color: var(--color-primary-text);
+  }
 }
 .cal-hero-stats {
   display: flex;
@@ -271,18 +280,19 @@ const scheduleSyncLabel = computed(() => {
 .cal-hero-stats b {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 18px;
+  font-size: var(--text-xl);
   font-weight: 700;
   color: var(--color-text-primary);
   min-width: 40px;
 }
 .cal-hero-stats span {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 .cal-hero-statcell {
-  border-left: 1px solid var(--color-divider);
-  padding-left: var(--space-6);
+  /* 基准（窄屏）：竖排堆叠时不该有左分隔线；≥768px 并排才立这根线 */
+  border-left: none;
+  padding-left: 0;
 }
 
 /* 倒计时：等宽数字 + 渐变字面，每秒只改文本，不动布局 */
@@ -295,8 +305,8 @@ const scheduleSyncLabel = computed(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  min-width: 58px;
+  gap: var(--space-05);
+  min-width: 48px; /* 基准按窄屏 4 组倒计时能平排；宽屏再加宽 */
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -305,7 +315,7 @@ const scheduleSyncLabel = computed(() => {
 .cal-cd b {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 22px;
+  font-size: var(--text-xl);
   line-height: 1.1;
   font-weight: 700;
   background: var(--gradient-primary);
@@ -315,7 +325,7 @@ const scheduleSyncLabel = computed(() => {
 }
 .cal-cd i {
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--text-2xs);
   color: var(--color-text-tertiary);
 }
 
@@ -339,7 +349,7 @@ const scheduleSyncLabel = computed(() => {
 }
 .cal-live-more {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-2xs);
   color: var(--color-text-tertiary);
 }
 .cal-progress {
@@ -354,24 +364,27 @@ const scheduleSyncLabel = computed(() => {
   height: 100%;
   border-radius: inherit;
   background: var(--gradient-primary);
-  /* 进度每秒只走一点点，线性过渡把它摊平，避免视觉跳变 */
-  transition: width var(--duration-slow) linear;
+  /* P5：不对 width 做逐帧补间（每帧重排）。原来的 `transition: width 300ms`
+     本意是「摊平每秒的跳变」，但秒级增量 = 1/比赛时长 ≈ 0.01%，在 600px 的条上
+     连一个像素都不到，去掉过渡后视觉等价、且不再有任何布局动画。 */
 }
 
-@media (max-width: 768px) {
+/* R1 移动优先：基准已是窄屏形态，这里只恢复宽屏排布。
+   断点唯一事实源见 tokens.css --bp-md，改值得两处一起改。 */
+@media (min-width: 768px) {
   .cal-hero {
-    gap: var(--space-5);
-    padding: var(--space-5);
+    gap: var(--space-6);
+    padding: var(--space-6);
   }
   .cal-hero-statcell {
-    border-left: none;
-    padding-left: 0;
+    border-left: 1px solid var(--color-divider);
+    padding-left: var(--space-6);
   }
   .cal-cd {
-    min-width: 48px;
+    min-width: 58px;
   }
   .cal-cd b {
-    font-size: 18px;
+    font-size: var(--text-2xl);
   }
 }
 </style>

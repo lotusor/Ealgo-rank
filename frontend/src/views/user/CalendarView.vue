@@ -398,6 +398,18 @@ const monthLabel = computed(
 
 const dayItems = computed(() => byDay.value.get(selectedDay.value) ?? [])
 
+/**
+ * 单元格的可访问名称：号数 + 是否今天 + 场次与平台。
+ * 窄屏下格内文字会退化成圆点（只靠颜色区分平台），读屏用户改由这条标签获取
+ * 同样的信息，A9「颜色不作唯一通道」由此成立。
+ */
+function cellAriaLabel(cell: DayCell): string {
+  const head = `${cell.date.getMonth() + 1} 月 ${cell.date.getDate()} 日${cell.isToday ? '（今天）' : ''}`
+  if (!cell.items.length) return `${head}，无赛事`
+  const plats = cell.items.map((c) => c.platform_display).join('、')
+  return `${head}，${cell.items.length} 场：${plats}`
+}
+
 const selectedDayLabel = computed(() => {
   const d = new Date(`${selectedDay.value}T00:00:00`)
   if (Number.isNaN(d.getTime())) return '当日赛事'
@@ -551,13 +563,24 @@ function fmtSyncTime(iso: string | null) {
         >
           {{ m.label }}
         </button>
-        <select v-if="seriesOptions.length" v-model="series" class="input cal-series">
+        <select
+          v-if="seriesOptions.length"
+          v-model="series"
+          class="input cal-series"
+          aria-label="按系列筛选"
+        >
           <option value="">全部系列</option>
           <option v-for="s in seriesOptions" :key="s" :value="s">{{ s }}</option>
         </select>
         <div class="input-group cal-search">
-          <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
-          <input v-model="keyword" class="input" type="text" placeholder="搜索比赛名称…" />
+          <svg class="input-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
+          <input
+            v-model="keyword"
+            class="input"
+            type="search"
+            aria-label="按比赛名称搜索"
+            placeholder="搜索比赛名称…"
+          />
         </div>
         <button v-if="hasFilter" class="btn btn-ghost btn-sm" @click="clearFilters">
           清空筛选
@@ -565,26 +588,38 @@ function fmtSyncTime(iso: string | null) {
       </div>
     </div>
 
-    <div v-if="error" class="alert alert-error" style="margin-bottom: var(--space-5)">
+    <div v-if="error" class="alert alert-error cal-alert" role="alert">
       {{ error }}
     </div>
 
-    <!-- 加载骨架 -->
-    <div v-if="loading" class="card card-pad">
-      <span class="skel" style="width: 100%; height: 320px" />
+    <!-- 加载骨架：aria-busy 让辅助技术知道这块正在取数 -->
+    <div v-if="loading" class="card card-pad" aria-busy="true">
+      <span class="skel cal-skel" aria-hidden="true" />
     </div>
 
     <template v-else>
       <!-- ============ 月历视图 ============ -->
       <template v-if="view === 'month'">
-        <div class="card cal-month">
+        <section class="card cal-month" aria-labelledby="cal-month-title">
           <div class="cal-month-head">
-            <button class="btn btn-ghost btn-icon" title="上一月" @click="shiftMonth(-1)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+            <button
+              class="btn btn-ghost btn-icon cal-nav-btn"
+              type="button"
+              aria-label="上一月"
+              title="上一月"
+              @click="shiftMonth(-1)"
+            >
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
             </button>
-            <span class="cal-month-label">{{ monthLabel }}</span>
-            <button class="btn btn-ghost btn-icon" title="下一月" @click="shiftMonth(1)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+            <h2 id="cal-month-title" class="cal-month-label">{{ monthLabel }}</h2>
+            <button
+              class="btn btn-ghost btn-icon cal-nav-btn"
+              type="button"
+              aria-label="下一月"
+              title="下一月"
+              @click="shiftMonth(1)"
+            >
+              <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6" /></svg>
             </button>
             <span class="cal-month-hint">点击日期查看当日赛事</span>
           </div>
@@ -598,6 +633,8 @@ function fmtSyncTime(iso: string | null) {
               :key="cell.key"
               type="button"
               class="cal-cell"
+              :aria-label="cellAriaLabel(cell)"
+              :aria-pressed="cell.key === selectedDay"
               :class="{
                 'is-out': !cell.inMonth,
                 'is-today': cell.isToday,
@@ -619,7 +656,9 @@ function fmtSyncTime(iso: string | null) {
                   +{{ cell.items.length - 2 }}
                 </span>
               </span>
-              <span class="cal-cell-dots">
+              <!-- 圆点仅供 sighted 用户快速分辨（形状已按平台区分，不只靠颜色）；
+                   读屏由单元格自身的 aria-label 承载同一信息 -->
+              <span class="cal-cell-dots" aria-hidden="true">
                 <i
                   v-for="c in cell.items.slice(0, 4)"
                   :key="c.id"
@@ -628,11 +667,11 @@ function fmtSyncTime(iso: string | null) {
               </span>
             </button>
           </div>
-        </div>
+        </section>
 
-        <div class="card card-pad cal-day">
+        <section class="card card-pad cal-day" aria-labelledby="cal-day-title">
           <div class="cal-day-head">
-            <span class="cal-day-title">{{ selectedDayLabel }}</span>
+            <h2 id="cal-day-title" class="cal-day-title">{{ selectedDayLabel }}</h2>
             <span class="caption text-tertiary">
               {{ dayItems.length ? `${dayItems.length} 场` : '无赛事' }}
             </span>
@@ -670,7 +709,7 @@ function fmtSyncTime(iso: string | null) {
             title="当天没有赛事"
             hint="赛程来自 clist.by 聚合排期，每日 03:00 同步、往后看 90 天；换一天看看，或切到列表视图浏览近期赛程"
           />
-        </div>
+        </section>
       </template>
 
       <!-- ============ 列表视图（三段式） ============ -->
@@ -746,7 +785,7 @@ function fmtSyncTime(iso: string | null) {
 
 /* 相对时间（3 天后开赛 / 40 分后结束） */
 .cal-rel {
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--color-accent-cyan);
   white-space: nowrap;
@@ -766,7 +805,7 @@ function fmtSyncTime(iso: string | null) {
   flex-wrap: wrap;
 }
 .cal-filter-label {
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--color-text-tertiary);
   min-width: 28px;
@@ -774,39 +813,45 @@ function fmtSyncTime(iso: string | null) {
 .cal-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-full);
   border: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-standard);
+  /* P5：只补间 paint 属性；`all` 会把 box-shadow 与尺寸一起拉进逐帧动画 */
+  transition:
+    color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
 }
-.cal-chip:hover {
-  border-color: var(--color-border-focus);
-  color: var(--color-text-primary);
+/* A3：项目全局没有 :focus-visible，这类自绘按钮先就地补上焦点环 */
+.cal-chip:focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: 2px;
 }
 .cal-chip.active {
   background: var(--color-primary-subtle);
   border-color: var(--color-primary);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
 }
 .cal-chip-count {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  opacity: 0.75;
+  font-size: var(--text-2xs);
+  /* 原本用 opacity .75 压暗，会把 11px 计数打到 4.5:1 以下；换成真正的层级色 */
+  color: var(--color-text-tertiary);
 }
 .cal-series {
   width: auto;
   min-width: 130px;
 }
 .cal-search {
-  margin-left: auto;
-  min-width: 180px;
+  /* 基准（窄屏）独占一行；≥768px 才靠右收回行尾 */
+  width: 100%;
 }
 
 /* ---------- 月历 ---------- */
@@ -821,56 +866,71 @@ function fmtSyncTime(iso: string | null) {
   margin-bottom: var(--space-4);
 }
 .cal-month-label {
-  font-size: 16px;
+  margin: 0; /* <h2> 化之后去掉 UA 默认外边距，保持面板头部行高不变 */
+  font-size: var(--text-lg);
   font-weight: 700;
   color: var(--color-text-primary);
   min-width: 118px;
   text-align: center;
 }
+/* R4：月份切换是移动端唯一的翻页手段，命中区抬到 44px 一档 */
+.cal-nav-btn {
+  min-width: var(--control-height-lg);
+  min-height: var(--control-height-lg);
+}
 .cal-month-hint {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 .cal-weekdays {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 4px;
-  margin-bottom: 4px;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
 }
 .cal-weekdays span {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
   text-align: center;
 }
 .cal-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 4px;
+  gap: var(--space-1);
 }
 .cal-cell {
+  /* 基准服务窄屏（R1 移动优先）：矮格 + 圆点，≥768px 再长高换文字 */
   min-width: 0;
-  min-height: 78px;
+  min-height: 52px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 5px 6px;
+  gap: var(--space-1);
+  padding: var(--space-1);
   text-align: left;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-surface);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-standard);
+  /* P5：显式列属性，`all` 会把 box-shadow 拉成逐帧动画 */
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
 }
-.cal-cell:hover {
-  border-color: var(--color-border-focus);
-  background: var(--color-bg-elevated);
-  /* 一次性浮起：告诉用户「这格可以点」，与 .card-hover 同一套手感 */
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
+.cal-cell:focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: 2px;
 }
 .cal-cell.is-out {
-  opacity: 0.42;
+  /* 非本月靠更深的底与更弱的层级色退到背景后，不用整层 opacity——那会把
+     格内文字压到 4.5:1 以下（A4），且连同圆点一起失去可辨识度 */
+  background: var(--color-bg-inset);
+  border-color: transparent;
+}
+.cal-cell.is-out .cal-cell-day {
+  color: var(--color-text-tertiary);
 }
 .cal-cell.is-today {
   border-color: var(--color-primary);
@@ -884,70 +944,78 @@ function fmtSyncTime(iso: string | null) {
 .cal-cell-day {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--color-text-secondary);
 }
 .cal-cell.is-today .cal-cell-day {
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   font-weight: 700;
 }
 .cal-cell-events {
-  display: flex;
+  /* 基准（窄屏）隐藏：7 列放不下文字，只留圆点；≥768px 换回文字 */
+  display: none;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-05);
   min-width: 0;
 }
 .cal-event {
-  font-size: 11px;
+  font-size: var(--text-2xs);
   line-height: 1.5;
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: var(--space-05) var(--space-1);
+  border-radius: var(--radius-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
 }
+/* A4：色块上的文字一律用「文本安全色」档（实测 ≥ 4.5:1），语义原色只做填充 */
 .cal-event.cf {
   background: color-mix(in srgb, var(--color-info) 18%, transparent);
-  color: var(--color-info);
+  color: var(--color-info-text);
 }
 .cal-event.atcoder {
   background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  color: var(--color-warning);
+  color: var(--color-warning-text);
 }
 .cal-event.nowcoder {
   background: color-mix(in srgb, var(--color-success) 18%, transparent);
-  color: var(--color-success);
+  color: var(--color-success-text);
 }
 .cal-event.is-unrated {
-  /* 官方已宣布不计分的排期：降透明 + 空心描边，与同格里的计分场次一眼区分，
-     又不必为它多引一套颜色（浅色主题下不会漏色） */
-  opacity: .55;
+  /* 官方已宣布不计分的排期：去填充 + 空心描边，与同格里的计分场次一眼区分。
+     原先用整层 opacity .55 做降级，实测把文字对比打到 1.88:1（A4 违规），
+     描边本身已经足够表意，不再压透明度 */
+  background: transparent;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 45%, transparent);
 }
 .cal-more {
-  font-size: 11px;
+  font-size: var(--text-2xs);
   color: var(--color-text-tertiary);
 }
 /* 窄屏只留圆点，避免格内文字挤爆 */
 .cal-cell-dots {
-  display: none;
-  gap: 3px;
+  display: flex;
+  gap: var(--space-05);
   flex-wrap: wrap;
 }
 .cal-cell-dots i {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
 }
+/* A9：三种平台给三种形状（方/菱/环），色觉障碍或灰度屏下也分得出来 */
 .cal-cell-dots i.cf {
   background: var(--color-info);
+  border-radius: 0;
 }
 .cal-cell-dots i.atcoder {
   background: var(--color-warning);
+  border-radius: 0;
+  transform: rotate(45deg);
 }
 .cal-cell-dots i.nowcoder {
-  background: var(--color-success);
+  background: transparent;
+  border: 1px solid var(--color-success);
+  border-radius: 50%;
 }
 
 /* ---------- 当日赛事 ---------- */
@@ -962,7 +1030,8 @@ function fmtSyncTime(iso: string | null) {
   margin-bottom: var(--space-4);
 }
 .cal-day-title {
-  font-size: 15px;
+  margin: 0; /* 现在它是 <h2>，去掉 UA 默认外边距，交给 flex 的 gap */
+  font-size: var(--text-md);
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -989,15 +1058,21 @@ function fmtSyncTime(iso: string | null) {
   min-width: 0;
 }
 .cal-day-name {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--color-text-primary);
 }
 .cal-day-link {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   white-space: nowrap;
+  /* R4：行内文字链接靠上下 padding 把命中区撑到 44px 一档 */
+  padding: var(--space-2) 0;
+}
+.cal-day-link:focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: 2px;
 }
 
 /* ---------- 列表视图 ---------- */
@@ -1013,7 +1088,7 @@ function fmtSyncTime(iso: string | null) {
 .cal-section-count {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 700;
   color: var(--color-text-primary);
 }
@@ -1036,8 +1111,25 @@ function fmtSyncTime(iso: string | null) {
 .cal-list-item:last-child {
   border-bottom: none;
 }
-.cal-list-item:hover {
-  background: var(--color-bg-overlay);
+/* R5：触屏没有 hover，悬停增强一律包进 (hover: hover) */
+@media (hover: hover) {
+  .cal-list-item:hover {
+    background: var(--color-bg-overlay);
+  }
+  .cal-chip:hover {
+    border-color: var(--color-border-focus);
+    color: var(--color-text-primary);
+  }
+  .cal-cell:hover {
+    border-color: var(--color-border-focus);
+    background: var(--color-bg-elevated);
+    /* 一次性浮起：告诉用户「这格可以点」，与 .card-hover 同一套手感 */
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+  }
+  a.cal-list-name:hover {
+    color: var(--color-primary-text);
+  }
 }
 .cal-list-main {
   flex: 1;
@@ -1045,21 +1137,18 @@ function fmtSyncTime(iso: string | null) {
 }
 .cal-list-name {
   display: block;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-a.cal-list-name:hover {
-  color: var(--color-primary);
-}
 .cal-list-time {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
+  align-items: flex-start; /* 窄屏靠左排，≥768px 再收到右侧 */
+  gap: var(--space-05);
   white-space: nowrap;
 }
 .cal-section-foot {
@@ -1073,11 +1162,21 @@ a.cal-list-name:hover {
 /* 段级空态用紧凑单行：整块 EmptyState 会让「正在进行/即将开始」为空时
    占掉大半屏，反而把真正有内容的「已经结束」挤出视野 */
 .cal-empty {
-  padding: var(--space-4) var(--space-4);
+  padding: var(--space-4);
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-lg);
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--color-text-tertiary);
+}
+
+/* 错误条与骨架的尺寸原先写在模板内联 style 里，挪回样式表（M7） */
+.cal-alert {
+  margin-bottom: var(--space-5);
+}
+.cal-skel {
+  display: block;
+  width: 100%;
+  height: 320px;
 }
 
 /* ---------- 入场（板块级错峰，不给每行铺动画） ---------- */
@@ -1099,37 +1198,45 @@ a.cal-list-name:hover {
   animation: cal-rise var(--duration-slower) var(--ease-out) backwards;
 }
 .cal-day {
-  animation-delay: 60ms;
+  animation-delay: var(--stagger-2);
 }
 .cal-section:nth-of-type(2) {
-  animation-delay: 40ms;
+  animation-delay: var(--stagger-1);
 }
 .cal-section:nth-of-type(3) {
-  animation-delay: 80ms;
+  animation-delay: var(--stagger-3);
 }
 
-/* ---------- 响应式 ---------- */
-@media (max-width: 768px) {
-  .cal-search {
-    margin-left: 0;
-    width: 100%;
+/* ---------- 触屏命中区（R4） ---------- */
+@media (pointer: coarse) {
+  .cal-chip {
+    min-height: var(--control-height-lg);
   }
+}
+
+/* ---------- 响应式（R1 移动优先：基准 = 360px 形态，下面只做增强） ----------
+   断点唯一事实源见 tokens.css --bp-md，改值得同步改这里 */
+@media (min-width: 768px) {
   .cal-cell {
-    min-height: 52px;
-    padding: 4px;
+    min-height: 78px;
   }
-  /* 窄屏用圆点代替格内文字，避免 7 列被挤爆 */
+  /* 宽屏格内放得下文字，圆点让位 */
   .cal-cell-events {
-    display: none;
-  }
-  .cal-cell-dots {
     display: flex;
   }
-  .cal-month-hint {
+  .cal-cell-dots {
     display: none;
   }
+  .cal-month-hint {
+    display: block;
+  }
+  .cal-search {
+    width: auto;
+    min-width: 180px;
+    margin-left: auto;
+  }
   .cal-list-time {
-    align-items: flex-start;
+    align-items: flex-end;
   }
 }
 </style>

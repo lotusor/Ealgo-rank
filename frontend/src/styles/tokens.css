@@ -39,6 +39,13 @@
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
   --color-info: #3b82f6;
+  /* 「文本安全色」档：语义色本身（info/warning/success/primary）只做填充与图标，
+     用作文字时对比度不够（如 #3b82f6 on 18% tint 仅 4.04:1）。凡色块上叠文字
+     一律用本组令牌，实测均 ≥ 4.5:1（深色主题按 surface 底、浅色按 white 底）。 */
+  --color-primary-text: #a5b4fc;
+  --color-info-text: #60a5fa;
+  --color-warning-text: #fbbf24;
+  --color-success-text: #34d399;
   --color-success-subtle: rgba(16, 185, 129, 0.12);
   --color-warning-subtle: rgba(245, 158, 11, 0.12);
   --color-danger-subtle: rgba(239, 68, 68, 0.12);
@@ -70,7 +77,19 @@
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'SF Mono', Menlo,
     Consolas, monospace;
 
+  /* ===== Font size（UI 文字刻度，禁止在组件里裸写 px） ===== */
+  --text-2xs: 11px; /* 月历格内条目、计数徽标等密集文本 */
+  --text-xs: 12px; /* caption / 辅助说明 */
+  --text-sm: 13px; /* 次要正文、chip、链接 */
+  --text-base: 14px; /* 正文默认 */
+  --text-md: 15px; /* 面板小标题 */
+  --text-lg: 16px; /* 区块标题 */
+  --text-xl: 18px; /* 焦点区数值 */
+  --text-2xl: 22px; /* 倒计时数字 */
+
   /* ===== Spacing（4px 阶梯，12 级） ===== */
+  /* --space-05 是密集网格专用半档（月历格内行距等），不用于常规块间距 */
+  --space-05: 2px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -118,8 +137,17 @@
   --duration-base: 200ms;
   --duration-slow: 300ms;
   --duration-slower: 400ms;
+  /* 入场错峰步进：只给「板块级」用，不给每行铺动画 */
+  --stagger-1: 40ms;
+  --stagger-2: 60ms;
+  --stagger-3: 80ms;
 
   /* ===== Layout ===== */
+  /* 断点唯一事实源。@media 无法消费 var()，所以媒体查询里必须就地加一条
+     `--bp-*` 同名注释回指本表，禁止再散写新的字面量断点。 */
+  --bp-sm: 560px;
+  --bp-md: 768px;
+  --bp-lg: 1024px;
   --container-max: 1280px;
   --container-wide: 1440px;
   --container-narrow: 720px;
@@ -192,6 +220,11 @@
   --color-divider: rgba(15, 23, 42, 0.07);
 
   --color-primary-subtle: rgba(99, 102, 241, 0.1);
+  /* 浅底要换成深一档的文本安全色，沿用深色的亮档会掉到 2~3:1 */
+  --color-primary-text: #4f46e5;
+  --color-info-text: #1d4ed8;
+  --color-warning-text: #92400e;
+  --color-success-text: #047857;
   --color-success-subtle: rgba(16, 185, 129, 0.12);
   --color-warning-subtle: rgba(245, 158, 11, 0.14);
   --color-danger-subtle: rgba(239, 68, 68, 0.1);
