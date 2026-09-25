@@ -151,6 +151,19 @@ class PlatformHandleEditTests(APITestCase):
         return self.client.post("/api/v1/platform-accounts/", {
             "platform": platform, "handle": handle})
 
+    def test_display_only_platform_cannot_be_bound(self):
+        """只做赛程展示的平台（洛谷）不给绑定：绑上就是一个永远没成绩的空账号位。
+
+        能力开关在 `apps/common/platforms.py` 的注册表里，写入口必须挡住，
+        不能只靠前端把按钮藏掉。
+        """
+        r = self._bind("luogu", "1001")
+        self.assertEqual(r.status_code, 400, r.data)
+        self.assertIn("platform", r.data["errors"])
+        self.assertIn("只用于赛程展示", str(r.data["errors"]["platform"]))
+        self.assertEqual(
+            PlatformAccount.objects.filter(platform="luogu").count(), 0)
+
     def test_patch_handle_first_time_allowed(self):
         r = self._bind("codeforces", "cf_alice")
         self.assertEqual(r.status_code, 201)

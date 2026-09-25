@@ -12,11 +12,16 @@ class TimeStampedModel(models.Model):
 
 
 class Platform(models.TextChoices):
-    """三大平台。值直接用于数据库存储与 API 传参，不要改。"""
+    """站内认的平台。值直接用于数据库存储与 API 传参，不要改。
+
+    加一项还不够：能力（可否绑定/是否计分/排期从哪来/预告期怎么判）必须在
+    `apps/common/platforms.py` 的注册表里一并声明，漏声明由启动自检拦下。
+    """
 
     CODEFORCES = "codeforces", "Codeforces"
     ATCODER = "atcoder", "AtCoder"
     NOWCODER = "nowcoder", "牛客"
+    LUOGU = "luogu", "洛谷"
 
 
 class ExcludeReason(models.TextChoices):

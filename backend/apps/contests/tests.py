@@ -215,10 +215,19 @@ class ContestApiTests(APITestCase):
         platform_keys = {p["key"] for p in resp.data["platforms"]}
         self.assertEqual(
             platform_keys,
-            {Platform.CODEFORCES, Platform.ATCODER, Platform.NOWCODER},
-        )
+            {p.value for p in Platform},
+            "meta 的平台清单必须与注册表同步：漏一项前端筛选就少一个平台")
         counts = {p["key"]: p["count"] for p in resp.data["platforms"]}
         self.assertEqual(counts[Platform.CODEFORCES], 1)
+        # 只做日历展示的平台（洛谷）也在清单里，0 场次也要给出来，
+        # 否则前端 chip 会随同步状态闪进闪出
+        self.assertEqual(counts[Platform.LUOGU], 0)
+        flags = {p["key"]: p for p in resp.data["platforms"]}
+        self.assertTrue(flags[Platform.CODEFORCES]["scoring"])
+        self.assertTrue(flags[Platform.CODEFORCES]["bindable"])
+        self.assertFalse(flags[Platform.LUOGU]["scoring"])
+        self.assertFalse(flags[Platform.LUOGU]["bindable"])
+        self.assertTrue(flags[Platform.LUOGU]["calendar"])
         self.assertEqual(set(resp.data["series"]), {"Div. 2", "ABC", "牛客周赛"})
         self.assertIn("latest_sync_at", resp.data)
 

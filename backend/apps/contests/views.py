@@ -13,6 +13,7 @@ from rest_framework.response import Response
 
 from apps.common.models import ExcludeReason, Platform
 from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin
+from apps.common.platforms import spec
 from apps.contests.models import Contest, ContestDifficultyFactor, Participation
 from apps.contests.serializers import (
     ContestDifficultyFactorSerializer,
@@ -129,14 +130,19 @@ class ContestViewSet(viewsets.ReadOnlyModelViewSet):
             finished=Count("id", filter=Q(end_time__lte=now)),
             rated=Count("id", filter=Q(is_rated=True)),
         )
-        platforms = [
-            {
+        platforms = []
+        for p in Platform:
+            s = spec(p.value)
+            platforms.append({
                 "key": p.value,
                 "label": p.label,
                 "count": base.filter(platform=p.value).count(),
-            }
-            for p in Platform
-        ]
+                # 能力位一并给出：前端「哪些平台可绑定 / 有成绩 / 只出现在日历」
+                # 从此读接口，不再各写一份并列的平台清单。
+                "scoring": s.scoring,
+                "bindable": s.bindable,
+                "calendar": bool(s.calendar_source),
+            })
         series = list(
             base.exclude(series="")
             .values_list("series", flat=True)

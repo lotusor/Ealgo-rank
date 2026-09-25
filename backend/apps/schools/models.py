@@ -1,6 +1,7 @@
 from django.db import models
 
-from apps.common.models import Platform, TimeStampedModel
+from apps.common.models import TimeStampedModel
+from apps.common.platforms import factor_fields
 
 
 class School(TimeStampedModel):
@@ -142,11 +143,15 @@ class ScoreConfig(TimeStampedModel):
         return obj
 
     def platform_factor(self, platform):
-        return {
-            Platform.CODEFORCES: self.cf_factor,
-            Platform.ATCODER: self.atcoder_factor,
-            Platform.NOWCODER: self.nowcoder_factor,
-        }.get(platform, self.default_contest_factor)
+        """平台系数。列名由平台注册表声明，加计分平台时一并补 `factor_field`；
+        没声明就报错，别退回 `default_contest_factor` —— 那是「比赛难度默认系数」，
+        语义不同，静默套用会让该平台按错误的权重进排位。
+        """
+        field = factor_fields().get(platform)
+        if not field:
+            raise ValueError(
+                f"平台 {platform!r} 未声明平台系数列（注册表 factor_field 为空）")
+        return getattr(self, field)
 
 
 class AtCoderAffiliationAlias(TimeStampedModel):

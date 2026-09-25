@@ -684,22 +684,29 @@ def upsert_calendar_rows(platform, rows, *, now=None):
     return {"created": created, "updated": updated, "skipped": skipped}
 
 
-def prune_stale_calendar_rows(days=7, *, now=None):
+def prune_stale_calendar_rows(days=7, *, now=None, platforms=None):
     """删除「仍是日历行、且已结束满 days 天」的排期。
 
     转正的窗口就是正常爬取的窗口（CF/AtCoder 最近若干场、牛客按月），超期仍未
     转正的场站本就不打算收录（非 rated、被取消、在我们窗口之外）。留着它们，日历
     的「已经结束」段会堆满点不开、也没有成绩的条目。带参赛行的一律不删（防御性，
     日历行按设计不该有参赛行）。
+
+    `platforms` 限定只清理这些平台 —— 日历现在是多源的，某个源本轮取数失败时，
+    它的排期行还是上一轮的合法数据，不能被另一个源的清理动作连带删掉。
+    传 None 表示不限平台（手动全量清理）。
     """
     cutoff = (now or timezone.now()) - timedelta(days=days)
     doomed = Contest.objects.filter(
         rated_source=CALENDAR_RATED_SOURCE, end_time__lt=cutoff
     ).filter(participations=None)
+    if platforms is not None:
+        doomed = doomed.filter(platform__in=list(platforms))
     deleted = doomed.count()
     if deleted:
         doomed.delete()
-        logger.info("清理过期日历行 %s 条（结束满 %s 天且未转正）", deleted, days)
+        logger.info("清理过期日历行 %s 条（结束满 %s 天且未转正，平台=%s）",
+                    deleted, days, sorted(platforms) if platforms else "全部")
     return deleted
 
 

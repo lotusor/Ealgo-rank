@@ -9,15 +9,15 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.common.models import Platform
 from apps.common.permissions import IsSuperAdmin
+from apps.common.platforms import spec
 from apps.crawler.models import CrawlConfig, CrawlJob
 from apps.crawler.serializers import (
     CrawlConfigSerializer,
     CrawlJobSerializer,
     CrawlTriggerSerializer,
 )
-from apps.crawler.tasks import TASK_MAP, enqueue_crawl
+from apps.crawler.tasks import crawl_window_params, enqueue_crawl
 from config.pagination import StandardPagination
 
 
@@ -53,16 +53,17 @@ class CrawlJobViewSet(viewsets.ReadOnlyModelViewSet):
         platform = data["platform"]
         force = bool(data.get("force", False))
 
-        if platform == Platform.CODEFORCES:
-            params = {"count": data.get("count", 20), "mode": "rating"}
-        elif platform == Platform.ATCODER:
-            params = {"count": data.get("count", 20)}
-        else:  # NOWCODER
+        # 参数形状由注册表声明（crawl_param + crawl_defaults），不再按平台名并列写
+        # 分支：加一个平台若忘了在这里补 elif，接口会按「else」给它错参数。
+        s = spec(platform)
+        if s.crawl_param == "months_back":
             params = {}
             if data.get("months"):
                 params["months"] = data["months"]
             elif data.get("months_back"):
                 params["months_back"] = data["months_back"]
+        else:
+            params = crawl_window_params(s, data.get("count", 20))
         if force:
             params["force"] = True
 

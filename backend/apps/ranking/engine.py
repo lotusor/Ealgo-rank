@@ -23,6 +23,7 @@ from statistics import NormalDist
 from django.utils import timezone
 
 from apps.accounts.models import User
+from apps.common.platforms import perf_bases
 from apps.contests.models import ContestDifficultyFactor
 from apps.ranking.models import RankSnapshot, ScoreRecord, UserBestRecord
 from apps.schools.models import ScoreConfig
@@ -59,11 +60,10 @@ PERF_BASES = {
     ("nowcoder", "牛客寒假算法基础集训营"): 1750,
     ("nowcoder", "牛客暑期多校训练营"): 1750,
 }
-PLATFORM_DEFAULT_BASE = {
-    "codeforces": 1400,
-    "atcoder": 900,
-    "nowcoder": 1000,
-}
+# 平台默认难度基线 D 来自平台注册表：新平台要计分就必须显式声明基线。
+# 原先这里是一张并列的字面量表 + `get(platform, 1200)` 兜底，未注册的平台会
+# 被按 1200 静默算进排位 —— 现在改成直接抛（见 contest_perf_base 末尾）。
+PLATFORM_DEFAULT_BASE = perf_bases()
 
 _NORM = NormalDist()
 
@@ -90,7 +90,14 @@ def contest_perf_base(contest):
         for (p, s), base in PERF_BASES.items():
             if p == platform and series.startswith(s):
                 return float(base)
-    return float(PLATFORM_DEFAULT_BASE.get(platform, 1200))
+    base = PLATFORM_DEFAULT_BASE.get(platform)
+    if base is None:
+        # 原先这里是 `.get(platform, 1200)`：没登记基线的平台会被按一个凭空的
+        # 中间难度算进排位，且没有任何痕迹。计分平台的基线现在由注册表强制声明。
+        raise ValueError(
+            f"平台 {platform!r} 没有声明表现分默认基线 perf_base，"
+            f"series={series!r} 也未在 PERF_BASES / ContestDifficultyFactor 里给出")
+    return float(base)
 
 
 def rank_z(rank, valid_count):

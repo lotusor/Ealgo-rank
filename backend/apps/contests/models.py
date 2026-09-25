@@ -1,6 +1,7 @@
 from django.db import models
 
 from apps.common.models import ExcludeReason, Platform, TimeStampedModel
+from apps.common.platforms import non_scoring_platforms
 
 # 展示型赛次的来源标记：日历排期行与个人主页锚点行都不是「榜单来的比赛」，
 # 只为日历 / 参赛记录展示而存在，永不参与积分。
@@ -9,6 +10,9 @@ from apps.common.models import ExcludeReason, Platform, TimeStampedModel
 CALENDAR_RATED_SOURCE = "calendar-feed"
 PROFILE_RATED_SOURCE = "profile-joined-history"
 DISPLAY_ONLY_RATED_SOURCES = (CALENDAR_RATED_SOURCE, PROFILE_RATED_SOURCE)
+
+# 注册表里声明为「只做展示」的平台：见 ParticipationQuerySet.countable 的第二道闸
+NON_SCORING_PLATFORMS = non_scoring_platforms()
 
 
 class Contest(TimeStampedModel):
@@ -71,8 +75,12 @@ class Contest(TimeStampedModel):
 
     @property
     def countable(self):
-        """是否应计入积分：rated 且来源不是展示型赛次（付费不影响，付费 rated 照样计分）。"""
-        return self.is_rated and self.rated_source not in DISPLAY_ONLY_RATED_SOURCES
+        """是否应计入积分：rated、来源不是展示型赛次、且平台本身参与计分
+        （付费不影响，付费 rated 照样计分）。与 `ParticipationQuerySet.countable()`
+        同一条规则的两面，改一处必须同时改另一处。"""
+        return (self.is_rated
+                and self.rated_source not in DISPLAY_ONLY_RATED_SOURCES
+                and self.platform not in NON_SCORING_PLATFORMS)
 
 
 class Problem(TimeStampedModel):
@@ -114,7 +122,16 @@ class ParticipationQuerySet(models.QuerySet):
             is_excluded=False,
             platform_account__isnull=False,
             contest__is_rated=True,
-        ).exclude(contest__rated_source__in=DISPLAY_ONLY_RATED_SOURCES)
+        ).exclude(
+            # 展示型赛次（日历排期行 / 个人主页锚点行）：它们的 is_rated 只是
+            # 预告期预判或官方「不计分」标记，不参与积分
+            contest__rated_source__in=DISPLAY_ONLY_RATED_SOURCES
+        ).exclude(
+            # 注册表里声明为「不计分」的平台（只做日历展示的洛谷）。这一道与上面
+            # 那条是不同维度：上面挡的是行的来历，这条挡的是平台本身 —— 万一将来
+            # 有人给这类平台补进了榜单行，也不至于让它在没人察觉的情况下改变排名。
+            contest__platform__in=NON_SCORING_PLATFORMS
+        )
 
     def for_school(self, school_id):
         return self.filter(platform_account__school_id=school_id)

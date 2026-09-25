@@ -24,6 +24,7 @@ from apps.accounts.models import (
     notify,
 )
 from apps.common.permissions import IsSuperAdmin
+from apps.common.platforms import PLATFORM_SPECS
 from apps.schools.models import (
     AdminApplicationStatus,
     School,
@@ -278,10 +279,11 @@ class ScoreRulesView(APIView):
                 "recent_contest_limit": cfg.recent_contest_limit,
                 "rating_decay": cfg.rating_decay,
                 "rating_prior": cfg.rating_prior,
+                # 只列计分平台：展示型平台（如只做日历的洛谷）没有平台系数，
+                # 列出来会让人以为它参与积分。
                 "platforms": [
-                    {"platform": "codeforces", "factor": cfg.cf_factor},
-                    {"platform": "atcoder", "factor": cfg.atcoder_factor},
-                    {"platform": "nowcoder", "factor": cfg.nowcoder_factor},
+                    {"platform": s.value, "factor": getattr(cfg, s.factor_field)}
+                    for s in PLATFORM_SPECS if s.scoring
                 ],
             }
         return Response({

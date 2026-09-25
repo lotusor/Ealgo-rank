@@ -1,7 +1,7 @@
 """Crawler 相关序列化器：CrawlJob 只读展示 + 触发参数 + 自动爬取配置。"""
 from rest_framework import serializers
 
-from apps.common.models import Platform
+from apps.common.platforms import crawl_choices
 from apps.crawler.models import CrawlConfig, CrawlJob
 
 
@@ -27,13 +27,8 @@ class CrawlJobSerializer(serializers.ModelSerializer):
 
 
 class CrawlTriggerSerializer(serializers.Serializer):
-    """手动触发一次爬取。"""
-    PLATFORM_CHOICES = (
-        (Platform.CODEFORCES, "Codeforces"),
-        (Platform.ATCODER, "AtCoder"),
-        (Platform.NOWCODER, "牛客"),
-    )
-    platform = serializers.ChoiceField(choices=PLATFORM_CHOICES)
+    """手动触发一次爬取。可选平台 = 注册表里声明了爬取任务的那些。"""
+    platform = serializers.ChoiceField(choices=crawl_choices())
     count = serializers.IntegerField(required=False, min_value=1, max_value=200,
                                      help_text="Codeforces/AtCoder：抓取最近 N 场")
     months = serializers.ListField(

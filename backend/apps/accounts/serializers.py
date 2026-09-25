@@ -15,6 +15,7 @@ from rest_framework import serializers
 
 from apps.accounts.models import Notification, PlatformAccount, User
 from apps.accounts.validators import validate_username as validate_username_value
+from apps.common.platforms import bindable_platforms, is_known, spec
 from apps.schools.models import School
 
 
@@ -62,6 +63,12 @@ class PlatformAccountSerializer(serializers.ModelSerializer):
         platform = attrs.get("platform") or (
             self.instance.platform if self.instance else None)
         handle = (attrs.get("handle") or "").strip()
+        if platform and is_known(platform) and platform not in bindable_platforms():
+            # 只做赛程展示的平台（洛谷）没有榜单可归属，绑上只会得到一个永远
+            # 没有成绩的空账号位 —— 在写入口就挡住，比在前端藏掉按钮可靠。
+            raise serializers.ValidationError({
+                "platform": f"{spec(platform).label} 暂未开放绑定："
+                            f"该平台目前只用于赛程展示"})
         is_create = self.instance is None
         if platform and handle and user is not None:
             # 一个用户在同一平台只能绑一个账号（uniq_user_platform 兜底）

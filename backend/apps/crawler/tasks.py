@@ -5,6 +5,7 @@ Celery 任务：调用 crawlers/ 下已验证的三个爬虫，把结果送进 i
 这里通过 sys.path 引入，避免复制一份代码造成两边逻辑漂移。
 """
 
+import importlib
 import json
 import logging
 import socket
@@ -21,6 +22,8 @@ from pathlib import Path
 
 from apps.accounts.models import PlatformAccount
 from apps.common.models import Platform
+from apps.common.platforms import (PLATFORM_SPECS, calendar_specs,
+                                   crawlable_specs, spec)
 from apps.contests.models import Contest, Participation
 from apps.crawler.ingest import (CALENDAR_RATED_SOURCE, ingest_contest)
 from apps.crawler.models import CrawlConfig, CrawlJob
@@ -110,16 +113,34 @@ def create_crawl_job(platform, params, triggered_by=None):
     return job, True
 
 
+def crawl_task_for(platform):
+    """平台 -> Celery 爬取任务。不可爬取的平台直接抛，别留下没人消费的孤儿 job。"""
+    s = spec(platform)
+    if not s.crawl_task:
+        raise ValueError(f"平台 {platform} 只做展示、不爬榜单")
+    return TASK_MAP[platform]
+
+
+def crawl_window_params(s, value):
+    """把注册表声明的窗口参数形状实例化成任务参数（自动爬取与手动触发共用）。"""
+    params = dict(s.crawl_defaults)
+    if s.crawl_param == "count":
+        params["count"] = value
+    elif s.crawl_param == "months_back":
+        params["months_back"] = value
+    return params
+
+
 def enqueue_crawl(platform, params, triggered_by=None):
     """统一的爬取派发入口（手动触发与定时任务共用）。
 
     先创建 CrawlJob（带去重），再后台派发 Celery 任务；返回创建的 job
     （去重命中时返回既有的进行中 job）。
     """
+    task = crawl_task_for(platform)
     job, _created = create_crawl_job(platform, params, triggered_by=triggered_by)
     if job is None:
         return None
-    task = TASK_MAP[platform]
     # 后台派发，避免 broker 不可达时阻塞调用线程
     threading.Thread(
         target=_dispatch_crawl, args=(task, job.pk, params),
@@ -132,7 +153,8 @@ def enqueue_crawl(platform, params, triggered_by=None):
 def auto_crawl_task():
     """定时自动激活爬虫（由 Celery Beat 每日调用）。
 
-    读取 CrawlConfig：未启用则跳过；否则按配置窗口为三大平台各派发一次爬取。
+    读取 CrawlConfig：未启用则跳过；否则为注册表里每个「有榜单爬虫」的平台各派发
+    一次。加平台只改 `apps/common/platforms.py`，这里不再并列写平台名。
     派发本身走 enqueue_crawl，自带重复防护（不会因 beat 抖动重复爬取）。
     """
     cfg = CrawlConfig.get_config()
@@ -140,14 +162,11 @@ def auto_crawl_task():
         logger.info("自动爬取已停用（CrawlConfig.enabled=False），跳过本次调度")
         return {"skipped": True, "reason": "disabled"}
 
-    plans = [
-        (Platform.CODEFORCES, {"count": cfg.cf_count, "mode": "rating"}),
-        (Platform.ATCODER, {"count": cfg.atcoder_count}),
-        (Platform.NOWCODER, {"months_back": cfg.nowcoder_months_back}),
-    ]
     created = []
-    for platform, params in plans:
-        job = enqueue_crawl(platform, params, triggered_by=None)
+    for s in crawlable_specs():
+        value = getattr(cfg, s.config_field) if s.config_field else None
+        job = enqueue_crawl(s.value, crawl_window_params(s, value),
+                            triggered_by=None)
         if job is not None:
             created.append(job.pk)
 
@@ -156,17 +175,15 @@ def auto_crawl_task():
 
 
 def _load_scraper(platform):
-    """延迟导入，避免 Django 启动时就依赖爬虫模块。"""
-    if platform == Platform.CODEFORCES:
-        from cf_scraper import CodeforcesScraper
-        return CodeforcesScraper()
-    if platform == Platform.ATCODER:
-        from atcoder_scraper import AtCoderScraper
-        return AtCoderScraper()
-    if platform == Platform.NOWCODER:
-        from nowcoder_scraper import NowCoderScraper
-        return NowCoderScraper()
-    raise ValueError(f"未知平台: {platform}")
+    """按注册表延迟实例化平台客户端，避免 Django 启动时就依赖爬虫模块。
+
+    未注册的平台由 `spec()` 抛错；注册了但没有榜单客户端的平台（只做日历展示的
+    那类）单独报错，别让它退化成「跑了个空爬取」。
+    """
+    s = spec(platform)
+    if not s.scraper_module:
+        raise ValueError(f"平台 {platform} 未声明榜单客户端，不能爬取")
+    return getattr(importlib.import_module(s.scraper_module), s.scraper_class)()
 
 
 def relevant_contest_ids(platform):
@@ -765,14 +782,20 @@ def _annotate_calendar_rated(rows):
     （2026-09-24 线上实测：25 条排期行 25 条 is_rated=false）。
     is_rated 在这里只是展示口径：积分链路由 `rated_source` 上的日历标记挡住
     （见 contests.models.countable），赛后正常爬取会用平台自己的判定覆盖整行。
+
+    判定方式来自注册表的 `rated_preview`，不再按平台名并列写分支：
+      provider       —— 排期源给的就是官方判定（洛谷读的是官方 `rated` 位），不加工；
+      official_page  —— 官方赛事页公布的计分区间；
+      contest_api    —— 官方详情接口逐场判；
+      name_hint      —— 只有命名可用，算预判，赛后由真实判定覆盖。
     """
     from clist_scraper import preview_codeforces_rated
 
-    by_platform = {r.get("platform") for r in rows}
+    wanted = {spec(r.get("platform")).rated_preview for r in rows}
     at_map = (_calendar_atcoder_ratings()
-              if Platform.ATCODER in by_platform else {})
+              if "official_page" in wanted else {})
     nc_scraper = None
-    if Platform.NOWCODER in by_platform:
+    if "contest_api" in wanted:
         try:
             nc_scraper = _load_scraper(Platform.NOWCODER)
         except Exception as exc:  # noqa: BLE001
@@ -780,10 +803,16 @@ def _annotate_calendar_rated(rows):
 
     stat = {"rated": 0, "unrated": 0, "unknown": 0}
     for r in rows:
-        eid = str(r.get("real_contest_id") or r.get("contest_id") or "")
         platform = r.get("platform")
+        kind = spec(platform).rated_preview
+        if kind == "provider":
+            # 判定已由 provider 按官方字段算出，这里只归类计数；再走一遍
+            # `bool(rated)` 会把「判不出」和「不计分」混成一谈。
+            stat["rated" if r.get("is_rated") else "unrated"] += 1
+            continue
+        eid = str(r.get("real_contest_id") or r.get("contest_id") or "")
         rated, note = None, ""
-        if platform == Platform.ATCODER:
+        if kind == "official_page":
             info = (at_map or {}).get(eid)
             if info is None:
                 note = "官方页未列出该场，计分区间待赛后确认"
@@ -793,7 +822,7 @@ def _annotate_calendar_rated(rows):
                 # clist 偶尔给不出 event 名（回退成 id），官方页的名字更可靠
                 if (not r.get("name") or r["name"] == eid) and info.get("name"):
                     r["name"] = str(info["name"])[:255]
-        elif platform == Platform.NOWCODER:
+        elif kind == "contest_api":
             flags = _calendar_nowcoder_flags(eid, nc_scraper) if nc_scraper else None
             if flags:
                 rated = bool(flags.get("is_rated"))
@@ -803,13 +832,15 @@ def _annotate_calendar_rated(rows):
                 note = str(flags.get("rated_comment") or "")[:200]
             else:
                 note = "详情接口未取到，计分判定待赛后"
-        elif platform == Platform.CODEFORCES:
+        elif kind == "name_hint":
             rated = preview_codeforces_rated(r.get("name"))
             note = ("按官方命名预判：" + ("计分系列" if rated is True else
                                           "不计分名称" if rated is False else
                                           "无计分线索"))
-        else:
-            note = "该平台无预告期计分判定源"
+        else:                                     # 注册表漏声明判定源
+            note = "该平台未声明计分判定源"
+            logger.warning("日历 rated 富化：平台 %s 没有声明 rated_preview，"
+                           "其排期行会一直显示「不计分」", platform)
 
         r["is_rated"] = bool(rated)
         r["rated_comment"] = note
@@ -824,15 +855,86 @@ def _load_clist_scraper():
     return ClistScraper(settings.CLIST_USERNAME, settings.CLIST_API_KEY)
 
 
+#: `_load_calendar_provider` 已实现的排期源清单。加新源要同时改这里和那个函数，
+#: 漏一处不会静默：`check_calendar_wiring()` 在启动期就把不一致拦下来（本次改造
+#: 过程中就真的先撞过一次「一边加了、另一边没加」）。
+IMPLEMENTED_CALENDAR_SOURCES = ("clist", "luogu")
+
+#: 源故障前缀：凭据/依赖缺失属于**永久性**故障，得和网络抖动区分开 —— 否则机器
+#: 配错只会每天在 worker 日志里留一行 warning，功能静默停摆。
+FATAL_PREFIX = "fatal: "
+
+
+def _load_calendar_provider(source):
+    """按名字构造排期 provider。加新源时在这里补一行，并在注册表里挂上平台。"""
+    if source == "clist":
+        return _load_clist_scraper()
+    if source == "luogu":
+        from luogu_scraper import LuoguScraper
+        return LuoguScraper()
+    raise ValueError(f"未知的排期源: {source}")
+
+
+def _calendar_rows(source, days_ahead):
+    """一个排期源本轮的产出：(标准化行, 错误串)。错误为空表示这个源取数成功。
+
+    各源的取数入口同名（`fetch_upcoming`），返回同一套标准化行，所以新增一个源
+    不必改同步任务 —— 但失败必须在这里被咽成值往上交，让调用方保留该平台上一轮
+    的日历行：清成空页会把一次 503 放大成整站日历缺失。
+    """
+    try:
+        provider = _load_calendar_provider(source)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("排期源 %s 未启动（凭据或依赖缺失）: %s", source, exc)
+        return [], f"{FATAL_PREFIX}{exc}"
+    try:
+        rows = provider.fetch_upcoming(days_ahead=days_ahead) or []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("排期源 %s 取数失败，保留上一轮数据: %s", source, exc)
+        return [], str(exc)
+    # 每个源只认领注册表派给它的平台，其余丢掉并喊出来：聚合源覆盖 20+ 平台，
+    # 收进站内没注册（或归别的源）的行，只会得到永远转不了正、也判不出计分的僵尸行。
+    owned = {s.value for s in calendar_specs(source)}
+    stray = sorted({str(r.get("platform")) for r in rows
+                    if r.get("platform") not in owned})
+    if stray:
+        logger.warning("排期源 %s 给出了不属于它的平台 %s，相关行已丢弃",
+                       source, stray)
+    return [r for r in rows if r.get("platform") in owned], ""
+
+
+#: 排期源 -> 本轮取到数时应由它负责刷新日历行的平台。平台归属仍由注册表声明，
+#: 这里只是让「源」与「平台」对得上（`check_calendar_wiring` 启动期核对）。
+def check_calendar_wiring():
+    """注册表声明的排期源与 `_load_calendar_provider` 实现的覆盖必须一致。
+
+    漏实现的后果不是报错而是该平台在日历里永久缺席 —— 与本轮修掉的「恒判不计分」
+    同一类故障，所以拦在启动期。
+    """
+    from django.core.exceptions import ImproperlyConfigured
+
+    implemented = set(IMPLEMENTED_CALENDAR_SOURCES)
+    declared = {s.calendar_source for s in calendar_specs()}
+    if declared - implemented:
+        raise ImproperlyConfigured(
+            "注册表声明了排期源但没有实现: "
+            f"{sorted(declared - implemented)} —— 需在 _load_calendar_provider 补上")
+    if implemented - declared:
+        raise ImproperlyConfigured(
+            f"排期源 {sorted(implemented - declared)} 没有任何平台使用：注册表的 "
+            f"calendar_source 未声明它")
+    return True
+
+
 @shared_task(soft_time_limit=60 * 5, time_limit=60 * 8)
 def sync_calendar_contests(days_ahead=None):
-    """用 clist.by 的聚合排期刷新站内日历行（未开赛 + 进行中，只建 Contest）。
+    """刷新站内日历行（未开赛 + 进行中，只建 Contest）。
 
-    为什么换 clist 而不是三个官方源：`contest.list` 与牛客月历只给得出近处排期，
-    kenkoooo `contests.json` 实测（2026-09-23）最新一条就是当天、根本不含未来场
-    —— 三源凑不出一张能往后翻的月历。clist 一次请求覆盖 20+ 平台，我们按比赛
-    URL 反解出站内 `external_id`（与各自爬虫同口径），只认其中三平台，其余平台
-    要等 `Platform` 枚举扩了才收。
+    多源：`clist` 一次请求覆盖 CF/AtCoder/牛客三平台，洛谷走自己的官方列表。
+    为什么不让洛谷也吃 clist —— clist 的排期名里虽然挂着 `[rated, oi]` 这类标签，
+    但那是它自己的分类噪音，而洛谷官方字段 `rated` 的位含义与站内「计入平台
+    rating」完全同口径（2026-09-26 实测：`rated=1` 的 ICPC 重现赛页面上同样印着
+    "Rated" 标签，正文却写明「不计算等级分，计入咕值比赛分」）。
 
     为什么必须沉淀成行：既有爬取只消费「已结束」窗口（见 crawl_codeforces 的
     phase=FINISHED 过滤），未开赛场次从不入库 → `status=upcoming` 实测恒为 0。
@@ -845,20 +947,21 @@ def sync_calendar_contests(days_ahead=None):
                                      upsert_calendar_rows)
 
     now = timezone.now()
-    try:
-        scraper = _load_clist_scraper()
-    except Exception as exc:  # noqa: BLE001
-        # 凭据/依赖缺失是**永久性**故障：和一次上游 503 分开记，否则机器配错
-        # 只会每天在 worker 日志里留一行 warning，功能静默停摆。
-        logger.error("日历排期同步未启动（凭据或依赖缺失）: %s", exc)
-        return {"ok": False, "fatal": True, "error": str(exc)[:200]}
+    days = days_ahead or settings.CALENDAR_AHEAD_DAYS
+    rows, errors, fresh_platforms = [], {}, set()
+    for source in sorted({s.calendar_source for s in calendar_specs()}):
+        got, err = _calendar_rows(source, days)
+        if not err:
+            fresh_platforms |= {s.value for s in calendar_specs(source)}
+        else:
+            errors[source] = err[:200]
+        rows.extend(got)
 
-    try:
-        rows = scraper.fetch_upcoming(
-            days_ahead=days_ahead or settings.CALENDAR_AHEAD_DAYS)
-    except Exception as exc:  # noqa: BLE001 - 上游故障不该清空日历
-        logger.warning("日历排期同步失败，保留上一轮数据: %s", exc)
-        return {"ok": False, "error": str(exc)[:200]}
+    if not fresh_platforms:
+        # 没有任何源取到数：一行都不该动、更不该清理，否则一次全网故障就把
+        # 已经渲染好的日历打成空页。
+        return {"ok": False, "fetched": 0, "sources": {}, "errors": errors,
+                "fatal": _has_fatal(errors)}
 
     grouped = {}
     for r in rows:
@@ -874,12 +977,19 @@ def sync_calendar_contests(days_ahead=None):
     written = sum(s["created"] + s["updated"] for s in sources.values())
     if rows and not written:
         # 上游给数正常、站内一行没落 → 八成是对方改了字段口径，必须喊出来
-        logger.warning("clist 给了 %s 场却零行落库，样本: %s", len(rows), rows[:2])
+        logger.warning("排期给了 %s 场却零行落库，样本: %s", len(rows), rows[:2])
     pruned = prune_stale_calendar_rows(days=settings.CALENDAR_PRUNE_AFTER_DAYS,
-                                       now=now)
-    logger.info("日历排期同步完成: %s（清理过期行 %s 条）", sources, pruned)
-    return {"ok": True, "fetched": len(rows), "sources": sources,
-            "rated": rated_stat, "pruned": pruned}
+                                       now=now, platforms=fresh_platforms)
+    logger.info("日历排期同步完成: %s（清理过期行 %s 条，取数失败源 %s）",
+                sources, pruned, errors or "无")
+    return {"ok": not errors, "fetched": len(rows), "sources": sources,
+            "rated": rated_stat, "pruned": pruned, "errors": errors,
+            "fatal": _has_fatal(errors)}
+
+
+def _has_fatal(errors):
+    """有源是「永久性」故障（凭据/依赖缺失），不是一次网络抖动。"""
+    return any(e.startswith(FATAL_PREFIX) for e in (errors or {}).values())
 
 
 def _last_n_months(n):
@@ -909,9 +1019,7 @@ def _get_or_create_job(job_id, platform, task_id, params):
     )
 
 
-# 平台 -> 对应 Celery 爬取任务（定义于本文件上方，放在末尾避免循环引用时的未定义问题）
-TASK_MAP = {
-    Platform.CODEFORCES: crawl_codeforces,
-    Platform.ATCODER: crawl_atcoder,
-    Platform.NOWCODER: crawl_nowcoder,
-}
+# 平台 -> 对应 Celery 爬取任务。任务名取自注册表的 crawl_task，本文件里同名任务
+# 定义在上方，故放在末尾构造（避免循环引用时的未定义问题）。
+TASK_MAP = {s.value: getattr(sys.modules[__name__], s.crawl_task)
+            for s in crawlable_specs()}

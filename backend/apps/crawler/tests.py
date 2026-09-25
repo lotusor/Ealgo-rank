@@ -1862,6 +1862,26 @@ class _FakeClist:
         return list(self.rows)
 
 
+class _FakeLuogu(_FakeClist):
+    """洛谷排期源替身。它产出的行自带 `is_rated`（官方 rated 位算出来的），
+    与 clist 那种「要再富化一轮」的行不同，正好用来验证 provider 判定不被覆盖。"""
+
+
+def _luogu_row(eid, start, *, dur_min=300, name=None, rated=True,
+               series="洛谷月赛"):
+    """构造一条 LuoguScraper 产出的排期行（自带官方计分判定）。"""
+    epoch = int(start.timestamp())
+    return {
+        "platform": Platform.LUOGU, "contest_id": str(eid),
+        "real_contest_id": str(eid), "name": name or f"洛谷 {eid}",
+        "link": f"https://www.luogu.com.cn/contest/{eid}",
+        "start_time": epoch, "end_time": epoch + dur_min * 60,
+        "duration_minutes": dur_min, "series": series, "source": "luogu",
+        "is_rated": rated, "is_paid": False,
+        "rated_comment": "官方 rated=3：计入等级分（IOI 赛制）",
+    }
+
+
 class _FakeRatedSource:
     """牛客客户端替身：只实现日历用到的 check_rated。"""
 
@@ -1887,15 +1907,24 @@ class CalendarSyncTaskTests(TestCase):
     def setUp(self):
         self.now = dj_tz.now()
 
-    def _run(self, fake, *, at_ratings=None, at_fails=False, nc_flags=None):
-        """跑一次同步。两个富化源都换成假值：测试绝不打外网。
+    def _run(self, fake, *, luogu=None, at_ratings=None, at_fails=False,
+             nc_flags=None):
+        """跑一次同步。所有外网入口都换成替身：测试绝不打外网。
 
         `at_ratings` = 官方页给出的 {id: 区间}；`at_fails=True` 表示富化源本身
         取不到（返回 None），与「取到了但没这场」（返回 {}）是两回事。
+        `luogu` 默认给一个「取数成功但零场次」的替身 —— 多源之后，一个源不装
+        替身就会真打网络，这条底线比单源时代更容易破。
         """
         ratings = None if at_fails else (at_ratings or {})
-        with mock.patch.object(tasks_mod, "_load_clist_scraper",
-                               return_value=fake), \
+        providers = {"clist": fake,
+                     "luogu": _FakeLuogu() if luogu is None else luogu}
+
+        def _load(source):
+            return providers[source]
+
+        with mock.patch.object(tasks_mod, "_load_calendar_provider",
+                               side_effect=_load), \
                 mock.patch.object(tasks_mod, "_calendar_atcoder_ratings",
                                   return_value=ratings), \
                 mock.patch.object(tasks_mod, "_load_scraper",
@@ -1929,16 +1958,44 @@ class CalendarSyncTaskTests(TestCase):
         before = Contest.objects.filter(rated_source=CALENDAR_RATED_SOURCE).count()
         res = self._run(_FakeClist(error=RuntimeError("clist 503")))
         self.assertFalse(res["ok"])
-        self.assertIn("503", res["error"])
+        self.assertIn("503", res["errors"]["clist"])
+        self.assertFalse(res["fatal"])       # 网络抖动不是配错，别按致命报
         self.assertEqual(
             Contest.objects.filter(rated_source=CALENDAR_RATED_SOURCE).count(),
             before)
 
+    def test_failed_source_does_not_prune_the_other_ones_rows(self):
+        """分区清理：一个源取数失败时，它的行归它自己管，不能被另一源的清理连带删掉。
+
+        多源之后这条是新的正确性要求 —— 洛谷官方页与 clist 各有各的节奏，
+        一侧故障不该让另一侧的「本轮没有这场」变成删除依据。
+        """
+        stale = _clist_row(Platform.CODEFORCES, "2400",
+                           self.now + timedelta(days=1), dur_min=120)
+        self._run(_FakeClist([stale]))
+        row = Contest.objects.get(external_id="2400")
+        row.end_time = self.now - timedelta(days=20)     # 过期满 7 天，本该被清
+        row.save(update_fields=["end_time"])
+        lg = _luogu_row(900, self.now + timedelta(days=2))
+        # clist 挂了、洛谷正常：洛谷的清理只扫洛谷平台，那行过期 CF 必须还在
+        res = self._run(_FakeClist(error=RuntimeError("clist down")),
+                        luogu=_FakeLuogu([lg]))
+        self.assertFalse(res["ok"])
+        self.assertTrue(Contest.objects.filter(pk=row.pk).exists())
+        self.assertTrue(Contest.objects.filter(external_id="900").exists())
+        self.assertEqual(res["pruned"], 0)
+
     def test_missing_credentials_reported_not_silent(self):
-        with override_settings(CLIST_USERNAME="", CLIST_API_KEY=""):
+        """凭据缺失要说得出原因，并标成永久性故障（与一次网络抖动分开）。"""
+        with override_settings(CLIST_USERNAME="", CLIST_API_KEY=""), \
+                mock.patch.object(tasks_mod, "_load_calendar_provider",
+                                  side_effect=lambda src: (
+                                      tasks_mod._load_clist_scraper()
+                                      if src == "clist" else _FakeLuogu())):
             res = sync_calendar_contests()
         self.assertFalse(res["ok"])
-        self.assertIn("凭据", res["error"])
+        self.assertIn("凭据", res["errors"]["clist"])
+        self.assertTrue(res["fatal"])
 
     def test_rated_prediction_written_per_platform(self):
         """三源各自的判定落到对应行；判不出的仍是不计分，但说明里写清为什么。"""
@@ -2311,3 +2368,260 @@ class CalendarBeatScheduleTests(TestCase):
         self.assertTrue(pt.enabled)
         self.assertEqual(pt.crontab.hour, "3")        # 避开 00:00 爬取 / 04:00 重算
         self.assertEqual(pt.crontab.timezone.key, "Asia/Shanghai")
+
+
+class LuoguRatedFlagTests(TestCase):
+    """官方 `rated` 位 → 站内 is_rated。
+
+    真值取自 2026-09-26 页面自己印的文案：rated=1 的 ICPC 重现赛写着「本场
+    不计算等级分，但计入咕值比赛分」，rated=3 / 65539 的场次写「本场计入等级分」。
+    ⚠️ 页面上那枚 "Rated" 彩色标签连 rated=1 都挂，所以判定只能是位运算。
+    """
+
+    def test_bit_mapping(self):
+        _crawler_dir()
+        from luogu_scraper import is_rated_by_flag
+        cases = [(None, None), (0, False), (1, False), (2, True), (3, True),
+                 (65539, True), ("3", True), ("", None), ("abc", None)]
+        for flag, want in cases:
+            with self.subTest(flag=flag):
+                self.assertIs(is_rated_by_flag(flag), want)
+
+    def test_series_words(self):
+        _crawler_dir()
+        from luogu_scraper import series_of
+        official = {"id": 1000, "name": "洛谷官方团队"}
+        cases = [
+            ("【LGR-302-Div.1】洛谷 9 月月赛 I & 月都异变调查", official, "洛谷月赛"),
+            ("【LGR-299-Div.3】洛谷基础赛 #39", official, "洛谷基础赛"),
+            ("【LGR-306-Div.4】洛谷入门赛 #52", official, "洛谷入门赛"),
+            ("【LGR-308】SCP 2026 第二轮（复赛 J 组）模拟", official, "洛谷模拟赛"),
+            ("C₂H₆OI Round 1", {"id": 121003, "name": "中山市乙醇学校"}, "洛谷公开赛"),
+            ("Math+Girl×1 Div.2", None, "洛谷公开赛"),
+        ]
+        for name, host, want in cases:
+            with self.subTest(name=name):
+                self.assertEqual(series_of(name, host), want)
+
+
+class _Resp:
+    """requests.Response 的最小替身。"""
+
+    def __init__(self, text, status_code=200):
+        self.text = text
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class LuoguScraperTests(TestCase):
+    """排期 provider 纯逻辑：解析官方 JSON、只收计等级分场次、窗口、翻页终止、
+    故障一律上抛给同步任务（好让它保留上一轮数据）。零真实外网。"""
+
+    def setUp(self):
+        _crawler_dir()
+        import json
+
+        self.json = json
+        from luogu_scraper import LuoguScraper
+        self.cls = LuoguScraper
+        self.now = dj_tz.now()
+
+    def _payload(self, contests, status=200):
+        return {"instance": "main", "template": "contest.list", "status": status,
+                "locale": "zh-CN",
+                "data": {"contests": {"perPage": 20, "count": len(contests),
+                                      "result": contests}},
+                "user": None, "time": 0}
+
+    def _html(self, contests, status=200):
+        """按真实响应形态造壳：正文里只有这一段内嵌 JSON 可直接解析。"""
+        return ('<!DOCTYPE html><html lang="zh-CN" class="no-js"><body>'
+                '<div id="app"></div><script id="lentille-context" '
+                'type="application/json">'
+                + self.json.dumps(self._payload(contests, status),
+                                  ensure_ascii=False) + '</script></body></html>')
+
+    def _c(self, cid, start, dur_min=300, *, rated=3, name=None, method=4,
+           host=None):
+        return {"id": cid, "startTime": int(start.timestamp()),
+                "endTime": int((start + timedelta(minutes=dur_min)).timestamp()),
+                "name": name or f"洛谷月赛 {cid}", "method": method,
+                "visibility": 1, "invitationCodeType": 1, "rated": rated,
+                "host": host or {"id": 1000, "name": "洛谷官方团队"},
+                "squad": False, "problemCount": 5}
+
+    def _scrape(self, pages):
+        """pages: {页码: [contest]}，未列出的页返回空。"""
+        sc = self.cls()
+        asked = []
+
+        def fake_get(url, params=None, timeout=None):
+            page = (params or {}).get("page", 1)
+            asked.append(page)
+            return _Resp(self._html(pages.get(page, [])))
+
+        sc.session = mock.MagicMock()
+        sc.session.get.side_effect = fake_get
+        sc._sleep = lambda: None
+        return sc.fetch_upcoming(days_ahead=90), asked
+
+    def test_row_shape_matches_calendar_contract(self):
+        rows, _asked = self._scrape(
+            {1: [self._c(356815, self.now + timedelta(days=2))]})
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["platform"], Platform.LUOGU)
+        self.assertEqual(r["real_contest_id"], "356815")
+        self.assertEqual(r["link"], "https://www.luogu.com.cn/contest/356815")
+        self.assertTrue(r["is_rated"])
+        self.assertFalse(r["is_paid"])
+        self.assertEqual(r["duration_minutes"], 300)
+        self.assertEqual(r["series"], "洛谷月赛")
+        self.assertIn("计入等级分", r["rated_comment"])
+        # 时间给秒级时间戳，与 clist 行同口径（由入库层 _parse_dt 统一转 aware）
+        self.assertIsInstance(r["start_time"], int)
+
+    def test_only_rating_counting_contests_are_kept(self):
+        """只收 rated（含非官方）：只计咕值的场、自测场、判不出的场都不进日历。"""
+        pages = {1: [
+            self._c(1, self.now + timedelta(days=1), rated=3),
+            self._c(2, self.now + timedelta(days=2), rated=1,
+                    name="[ICPC2019 Nanjing R] ICPC 区域赛南京站重现赛"),
+            self._c(3, self.now + timedelta(days=3), rated=0, name="LABOI Round 1"),
+            self._c(4, self.now + timedelta(days=4), rated=None),
+            self._c(5, self.now + timedelta(days=5), rated=65539,
+                    host={"id": 121003, "name": "中山市乙醇学校"}),
+        ]}
+        rows, _asked = self._scrape(pages)
+        self.assertEqual(sorted(r["real_contest_id"] for r in rows), ["1", "5"])
+
+    def test_window_bounds(self):
+        day = timedelta(days=1)
+        pages = {1: [
+            self._c(11, self.now - day * 30),        # 早结束了 → 归正常爬取管
+            self._c(12, self.now - timedelta(hours=1)),   # 进行中 → 收
+            self._c(13, self.now + day * 89),        # 窗口内 → 收
+            self._c(14, self.now + day * 120),       # 超出前瞻窗口 → 不收
+        ]}
+        rows, _asked = self._scrape(pages)
+        self.assertEqual(sorted(r["real_contest_id"] for r in rows), ["12", "13"])
+
+    def test_stops_paging_once_past_the_window_floor(self):
+        """列表按开始时间降序：第一页已越过下界就不必再翻（一次同步 1 个请求）。"""
+        # 20 条从 +10 天排到 -9 天，末尾几条已经在窗口下界之外
+        full = [self._c(100 + i, self.now + timedelta(days=10 - i))
+                for i in range(self.cls.PER_PAGE)]
+        rows, asked = self._scrape({1: full, 2: [self._c(999, self.now)]})
+        self.assertEqual(asked, [1], "越界后还翻页就是白打一次外网")
+        self.assertTrue(rows)
+        self.assertNotIn("999", [r["real_contest_id"] for r in rows])
+        self.assertLess(len(rows), self.cls.PER_PAGE)   # 旧的那截被窗口滤掉
+
+    def test_keeps_paging_while_all_rows_are_in_the_future(self):
+        future = [self._c(200 + i, self.now + timedelta(days=10 + i))
+                  for i in range(self.cls.PER_PAGE)]
+        _rows, asked = self._scrape({1: future, 2: []})
+        self.assertEqual(asked, [1, 2])
+
+    def test_short_page_ends_pagination(self):
+        future = [self._c(300 + i, self.now + timedelta(days=10 + i)) for i in range(3)]
+        _rows, asked = self._scrape({1: future})
+        self.assertEqual(asked, [1])
+
+    def test_shell_without_json_raises(self):
+        """§0.26 那次探测就是栽在「拿到 HTML 但没数据」上 —— 必须抛，不能当成空排期。"""
+        sc = self.cls()
+        sc.session = mock.MagicMock()
+        sc.session.get.return_value = _Resp(
+            '<!DOCTYPE html><html><body><div id="app"></div></body></html>')
+        with self.assertRaises(RuntimeError) as cm:
+            sc._fetch_page(1)
+        self.assertIn("lentille-context", str(cm.exception))
+
+    def test_error_payload_raises_instead_of_returning_empty(self):
+        """CDN 挑战换成拦截页时，内嵌 JSON 的 status 不是 200 —— 报错而不是给空表，
+        否则一次拦截会被当成「今天没有比赛」。"""
+        sc = self.cls()
+        sc.session = mock.MagicMock()
+        sc.session.get.return_value = _Resp(self._html([], status=403))
+        with self.assertRaises(RuntimeError):
+            sc._fetch_page(1)
+
+    def test_http_error_propagates(self):
+        sc = self.cls()
+        sc.session = mock.MagicMock()
+        sc.session.get.return_value = _Resp("boom", status_code=503)
+        with self.assertRaises(RuntimeError):
+            sc._fetch_page(1)
+
+    def test_bad_time_fields_are_dropped_not_crashed(self):
+        pages = {1: [
+            {"id": 1, "startTime": None, "endTime": None, "name": "x", "rated": 3},
+            self._c(2, self.now + timedelta(days=1)),
+        ]}
+        rows, _asked = self._scrape(pages)
+        self.assertEqual([r["real_contest_id"] for r in rows], ["2"])
+
+
+class CalendarLuoguSourceTests(TestCase):
+    """洛谷源接进同步任务后的口径。跑法与 CalendarSyncTaskTests 相同：
+    所有排期源与富化源都换成替身，零真实外网。"""
+
+    def setUp(self):
+        self.now = dj_tz.now()
+
+    def _run(self, clist_rows, luogu_rows):
+        providers = {"clist": _FakeClist(clist_rows), "luogu": _FakeLuogu(luogu_rows)}
+        with mock.patch.object(tasks_mod, "_load_calendar_provider",
+                               side_effect=lambda src: providers[src]), \
+                mock.patch.object(tasks_mod, "_calendar_atcoder_ratings",
+                                  return_value={}), \
+                mock.patch.object(tasks_mod, "_load_scraper",
+                                  return_value=_FakeRatedSource({})):
+            return sync_calendar_contests()
+
+    def test_luogu_rows_land_with_provider_judgement(self):
+        lg = [_luogu_row(900, self.now + timedelta(days=1)),
+              _luogu_row(901, self.now + timedelta(days=3), series="洛谷公开赛")]
+        res = self._run([], lg)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["fetched"], 2)
+        self.assertEqual(res["rated"], {"rated": 2, "unrated": 0, "unknown": 0})
+        c = Contest.objects.get(external_id="900")
+        self.assertTrue(c.is_rated)
+        self.assertEqual(c.platform, Platform.LUOGU)
+        self.assertEqual(c.rated_source, CALENDAR_RATED_SOURCE)
+        self.assertEqual(c.series, "洛谷月赛")
+        self.assertIn("计入等级分", c.rated_comment)
+        self.assertEqual(c.url, "https://www.luogu.com.cn/contest/900")
+        self.assertEqual(c.duration_minutes, 300)
+
+    def test_two_sources_write_side_by_side(self):
+        """两源同轮各落各的平台，互不覆盖。"""
+        res = self._run([_clist_row(Platform.CODEFORCES, "2600",
+                                    self.now + timedelta(days=1))],
+                        [_luogu_row(902, self.now + timedelta(days=2))])
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(set(res["sources"]), {Platform.CODEFORCES, Platform.LUOGU})
+        self.assertEqual(Contest.objects.filter(external_id="2600").count(), 1)
+        self.assertEqual(Contest.objects.filter(external_id="902").count(), 1)
+
+    def test_luogu_calendar_rows_never_enter_scoring(self):
+        """日历上的洛谷场次再怎么说「计分」，也不能进积分 —— 它还没有榜单。"""
+        user = User.objects.create_user(username="lgu", password="pwd12345")
+        PlatformAccount.objects.create(user=user, platform=Platform.LUOGU,
+                                       handle="1001")
+        self._run([], [_luogu_row(905, self.now + timedelta(days=2))])
+        self.assertEqual(Participation.objects.countable().count(), 0)
+
+    def test_row_from_wrong_source_is_dropped(self):
+        """每个源只认领注册表派给它的平台：别的平台的行不收货。"""
+        stray = _clist_row(Platform.CODEFORCES, "2500",
+                           self.now + timedelta(days=1))
+        res = self._run([], [stray])
+        self.assertFalse(Contest.objects.filter(external_id="2500").exists())
+        self.assertEqual(res["fetched"], 0)
+
