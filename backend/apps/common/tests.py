@@ -30,8 +30,19 @@ class PublicStatsViewTests(TestCase):
         self.assertGreaterEqual(resp.data["users"], 1)
         self.assertEqual(
             set(resp.data.keys()),
-            {"schools", "contests", "users", "participations"},
+            {"schools", "contests", "users", "participations", "platforms"},
         )
+
+    def test_platforms_breakdown_covers_every_registered_platform(self):
+        """首页「支持的平台」卡片按这份真实计数出数，不再写死 712/2103 这类假数字。"""
+        resp = self.client.get("/api/v1/stats/")
+        got = {p["key"] for p in resp.data["platforms"]}
+        self.assertEqual(got, {p.value for p in Platform})
+        for row in resp.data["platforms"]:
+            self.assertIn(row["scoring"], (True, False))
+            self.assertGreaterEqual(row["contests"], 0)
+            self.assertLessEqual(row["contests"], resp.data["contests"],
+                                 "逐平台计数不得多于总数（排期行不算收录）")
 
     def test_contests_exclude_display_only_rows(self):
         """首页「比赛数」只算真正收录的赛次。

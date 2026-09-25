@@ -3,6 +3,7 @@ import { reactive, ref, onMounted } from 'vue'
 import { listScoreConfigs, createScoreConfig, listDifficultyFactors, updateDifficultyFactor } from '@/api'
 import type { ScoreConfig, ContestDifficultyFactor } from '@/api/types'
 import { useToast } from '@/composables/useToast'
+import { platformLabel } from '@/platforms/meta'
 
 const toast = useToast()
 const loading = ref(false)
@@ -83,8 +84,7 @@ async function onBaseBlur(item: ContestDifficultyFactor) {
   }
 }
 
-const platformLabel = (p: string) =>
-  p === 'codeforces' ? 'Codeforces' : p === 'atcoder' ? 'AtCoder' : '牛客'
+// 平台显示名统一走 @/platforms/meta（原先这里也是一条 else 兜到「牛客」的三元链）
 
 onMounted(load)
 </script>

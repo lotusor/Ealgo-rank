@@ -6,6 +6,7 @@ import type { UserRoster, School } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import DataPagination from '@/components/ui/DataPagination.vue'
 import { fmtDate } from '@/utils/format'
+import { BINDABLE_COUNT } from '@/platforms/meta'
 
 const auth = useAuthStore()
 const toast = useToast()
@@ -27,9 +28,12 @@ const bind = ref<'all' | 'full' | 'partial'>('all')
 const schools = ref<School[]>([])
 const schoolSel = ref<number | null>(null)
 
+// 「全绑了」的分母是可绑定平台数，不是硬编码 3：只做赛程展示的平台（洛谷）
+// 不提供绑定入口，把它算进分母会让所有人都永远「未完全绑定」
+const BIND_TOTAL = BINDABLE_COUNT
 const bindOptions = [
   { label: '全部绑定状态', value: 'all' as const },
-  { label: '三平台已绑定', value: 'full' as const },
+  { label: `${BIND_TOTAL} 平台已绑定`, value: 'full' as const },
   { label: '部分绑定', value: 'partial' as const },
 ]
 
@@ -41,8 +45,8 @@ async function load() {
     if (auth.isSuperAdmin && schoolSel.value) params.school = schoolSel.value
     const res = await listUsers(params)
     let rows = res.results
-    if (bind.value === 'full') rows = rows.filter((u) => u.platform_accounts_count >= 3)
-    else if (bind.value === 'partial') rows = rows.filter((u) => u.platform_accounts_count < 3)
+    if (bind.value === 'full') rows = rows.filter((u) => u.platform_accounts_count >= BIND_TOTAL)
+    else if (bind.value === 'partial') rows = rows.filter((u) => u.platform_accounts_count < BIND_TOTAL)
     data.value = rows
     total.value = res.count
   } catch (e: any) {
@@ -151,8 +155,8 @@ onMounted(() => {
               <td class="num-cell">{{ u.student_no || '—' }}</td>
               <td class="cell-ellipsis">{{ u.school_name || '—' }}</td>
               <td class="num-cell num">
-                <span :class="u.platform_accounts_count >= 3 ? 'text-success' : 'text-warning'">{{ u.platform_accounts_count }}</span>
-                <span class="text-tertiary">/3</span>
+                <span :class="u.platform_accounts_count >= BIND_TOTAL ? 'text-success' : 'text-warning'">{{ u.platform_accounts_count }}</span>
+                <span class="text-tertiary">/{{ BIND_TOTAL }}</span>
               </td>
               <td>
                 <select

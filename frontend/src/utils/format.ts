@@ -115,42 +115,11 @@ export function fmtDate(s: string | null | undefined): string {
   })
 }
 
-/** 平台代码 → 展示用标签（class + 文案）。对齐原型 platformTag。 */
-export function platformTag(platform: string | null | undefined): {
-  cls: string
-  label: string
-} {
-  switch (platform) {
-    case 'codeforces':
-    case 'cf':
-      return { cls: 'cf', label: 'CF' }
-    case 'atcoder':
-      return { cls: 'atcoder', label: 'AtCoder' }
-    case 'nowcoder':
-      return { cls: 'nowcoder', label: '牛客' }
-    default:
-      return { cls: 'atcoder', label: platform || '未知' }
-  }
-}
-
 /**
- * 平台代码 → 英文名称（纯字符串）。
- * 用于分类标注等直接展示场景，避免模板里 `{{ platformTag(x) }}` 把 `{cls,label}`
- * 对象渲染成一串 JSON。
+ * 平台展示口径（显示名 / 短名 / CSS 类名 / 可绑定可计费等能力位）整体在
+ * `@/platforms/meta`。原先这里有两个 switch 加一个三元链，default 与 else 分支
+ * 会返回**别的平台**的类名（'atcoder' / 'nowcoder'），第 4 个平台进来就会串色。
  */
-export function platformName(platform: string | null | undefined): string {
-  switch (platform) {
-    case 'codeforces':
-    case 'cf':
-      return 'Codeforces'
-    case 'atcoder':
-      return 'AtCoder'
-    case 'nowcoder':
-      return 'NowCoder'
-    default:
-      return platform || '未知'
-  }
-}
 
 
 // ==================== 竞赛日历展示口径 ====================
@@ -221,10 +190,6 @@ export function rangeLabel(c: Contest): string {
   const n = crossDays(c)
   const base = `${formatDayMonth(c.start_time)} ${formatTime(c.start_time)} – ${formatTime(c.end_time)}`
   return n > 0 ? `${base}（+${n}）` : base
-}
-
-export function platformTagClass(p: ContestPlatform): string {
-  return p === 'codeforces' ? 'cf' : p === 'atcoder' ? 'atcoder' : 'nowcoder'
 }
 
 /** 倒计时四段固定（天/时/分/秒）：段数固定才不会每秒抖动布局 */

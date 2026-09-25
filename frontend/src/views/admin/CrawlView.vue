@@ -1,27 +1,27 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { listCrawlJobs, triggerCrawl, recomputeRanking, getCrawlConfig, saveCrawlConfig } from '@/api'
 import type { CrawlJob, CrawlConfig } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import { fmtDate } from '@/utils/format'
+import { CRAWLABLE_PLATFORMS, platformMeta } from '@/platforms/meta'
 
 const auth = useAuthStore()
 const toast = useToast()
 
 const jobs = ref<CrawlJob[]>([])
 const loading = ref(false)
-const platform = ref<'codeforces' | 'atcoder' | 'nowcoder'>('codeforces')
+const platform = ref(CRAWLABLE_PLATFORMS[0].key)
 const count = ref(20)
 const monthsBack = ref(2)
 const triggering = ref(false)
 
-const platformOptions = [
-  { label: 'Codeforces', value: 'codeforces' as const },
-  { label: 'AtCoder', value: 'atcoder' as const },
-  { label: '牛客', value: 'nowcoder' as const },
-]
+// 只做日历展示的平台（洛谷）没有榜单可爬，不该出现在触发清单里
+const platformOptions = CRAWLABLE_PLATFORMS.map((p) => ({ label: p.label, value: p.key }))
+/** 窗口参数形状跟着平台声明走，不再写死「是不是牛客」 */
+const crawlParam = computed(() => platformMeta(platform.value)?.crawlParam ?? 'count')
 
 async function load() {
   loading.value = true
@@ -37,7 +37,7 @@ async function onTrigger() {
   triggering.value = true
   try {
     const payload: any = { platform: platform.value }
-    if (platform.value === 'nowcoder') payload.months_back = monthsBack.value
+    if (crawlParam.value === 'months_back') payload.months_back = monthsBack.value
     else payload.count = count.value
     await triggerCrawl(payload)
     toast.success('已派发爬取任务（worker 启动后自动执行）')
@@ -139,7 +139,7 @@ async function onSaveCrawlConfig() {
           <label class="field-label">选择平台</label>
           <SegmentedControl v-model="platform" :options="platformOptions" />
         </div>
-        <div class="field" v-if="platform !== 'nowcoder'">
+        <div class="field" v-if="crawlParam === 'count'">
           <label class="field-label">抓取场数</label>
           <input v-model.number="count" class="input" type="number" min="1" max="200" placeholder="抓取场数" />
         </div>
@@ -210,7 +210,7 @@ async function onSaveCrawlConfig() {
         自动爬取设置
       </div>
       <p class="body-sm text-tertiary" style="margin-bottom: var(--space-4)">
-        开启后，系统每日按设定时间自动触发三大平台爬取。各平台抓取范围与触发小时均可在此配置，保存后 Beat 调度自动同步。
+        开启后，系统每日按设定时间自动触发各平台爬取。各平台抓取范围与触发小时均可在此配置，保存后 Beat 调度自动同步。
       </p>
 
       <div v-if="loadingCfg" class="body-sm text-tertiary">加载中…</div>

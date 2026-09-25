@@ -6,7 +6,7 @@ import type { UserPublicProfile, ContestPlatform, RatingHistoryPoint } from '@/a
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import RatingLineChart from '@/components/RatingLineChart.vue'
-import { platformName } from '@/utils/format'
+import { SCORING_PLATFORMS, platformClass, platformLabel } from '@/platforms/meta'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,8 +23,8 @@ const chartPlatformOptions = computed(() => {
     ...(profile.value?.participations || []).map((p) => p.contest_platform),
   ])
   const opts: { label: string; value: '' | ContestPlatform }[] = [{ label: '全部', value: '' }]
-  for (const p of ['codeforces', 'atcoder', 'nowcoder'] as ContestPlatform[]) {
-    if (plats.has(p)) opts.push({ label: platformName(p), value: p })
+  for (const p of SCORING_PLATFORMS.map((x) => x.key)) {
+    if (plats.has(p)) opts.push({ label: platformLabel(p), value: p })
   }
   return opts
 })
@@ -86,7 +86,7 @@ const emptyChartHint = computed(() => {
   if (chartPlatform.value === '') {
     return { title: '最近一年无 rating 变化', hint: '该用户近一年内没有计入排名的比赛记录' }
   }
-  const name = platformName(chartPlatform.value)
+  const name = platformLabel(chartPlatform.value)
   const all = platformRatingRows.value
   if (!all.length) {
     return {
@@ -121,9 +121,6 @@ onMounted(async () => {
   }
 })
 
-function accountTag(p: string) {
-  return p === 'codeforces' ? 'cf' : p === 'atcoder' ? 'atcoder' : p === 'nowcoder' ? 'nowcoder' : ''
-}
 function fmtDate(s: string | null) {
   if (!s) return '—'
   return new Date(s).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -198,7 +195,7 @@ function fmtDelta(v: number) {
         <div class="grid grid-3" style="gap: var(--space-4)">
           <div v-for="pr in profile.platform_ratings" :key="pr.platform" class="stat-card">
             <div class="stat-label">
-              <span class="platform-tag" :class="accountTag(pr.platform)">{{ platformName(pr.platform) }}</span>
+              <span class="platform-tag" :class="platformClass(pr.platform)">{{ platformLabel(pr.platform) }}</span>
               <span class="caption text-tertiary" style="margin-left: var(--space-2)">{{ pr.handle }}</span>
             </div>
             <div class="stat-value num">{{ pr.rating }}</div>
@@ -234,7 +231,7 @@ function fmtDelta(v: number) {
                   <a v-if="p.contest_url" :href="p.contest_url" target="_blank" rel="noopener" class="title-link">{{ p.contest_name }}</a>
                   <span v-else class="title-link">{{ p.contest_name }}</span>
                 </td>
-                <td><span class="platform-tag" :class="accountTag(p.contest_platform)">{{ platformName(p.contest_platform) }}</span></td>
+                <td><span class="platform-tag" :class="platformClass(p.contest_platform)">{{ platformLabel(p.contest_platform) }}</span></td>
                 <td class="num-cell">{{ fmtDate(p.contest_start_time) }}</td>
                 <td class="num-cell">{{ p.rank != null ? '#' + p.rank : '—' }}</td>
                 <td class="num-cell hide-mobile">{{ p.solved_count != null ? p.solved_count : '—' }}</td>

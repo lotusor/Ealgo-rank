@@ -9,7 +9,8 @@
  *
  * 数据来源：
  *  - `GET /contests/?include_calendar=1` —— 月历与三段列表。**未开赛的场次在站内
- *    只以「日历排期行」存在**（每日 03:00 由 clist.by 聚合排期同步，往后 90 天），
+ *    只以「日历排期行」存在**（每日 03:00 同步：CF / AtCoder / 牛客 走 clist.by 聚合
+ *    排期，洛谷走它自己的官方赛事列表 —— 那里有官方「是否计等级分」字段），
  *    公共比赛列表默认不含它们，所以这里必须显式带上这个参数。
  *  - `GET /contests/meta/` —— 平台、系列、各状态计数与最近同步时间。
  *
@@ -22,6 +23,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchContestMeta, listContests } from '@/api'
+import { ALL_PLATFORMS, platformClass } from '@/platforms/meta'
 import type { Contest, ContestMeta, PageQuery } from '@/api/types'
 import CalendarHero from '@/components/CalendarHero.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -33,7 +35,6 @@ import {
   formatDayMonth as fmtDayMonth,
   formatDuration as fmtDuration,
   formatTime as fmtTime,
-  platformTagClass,
   rangeLabel,
   relativeLabel,
   rowBadge as rowBadgeOf,
@@ -294,15 +295,17 @@ onUnmounted(() => {
 watch([view, cursor], () => load())
 
 // ---------- 客户端筛选 ----------
-const platformOptions = computed(() => {
-  const fromMeta = meta.value?.platforms
-  if (fromMeta?.length) return fromMeta
-  return [
-    { key: 'codeforces', label: 'Codeforces', count: 0 },
-    { key: 'atcoder', label: 'AtCoder', count: 0 },
-    { key: 'nowcoder', label: '牛客', count: 0 },
-  ]
-})
+// 平台筛选条：以后端 meta 为准；请求还没回来时兜一份同源的清单
+// （两处必须同源，否则同步中会闪出少一个平台的筛选条）
+const fallbackPlatforms = ALL_PLATFORMS.map((p) => ({
+  key: p.key, label: p.label, count: 0,
+  scoring: p.scoring, bindable: p.bindable, calendar: true,
+}))
+const platformOptions = computed(
+  () => meta.value?.platforms?.length ? meta.value.platforms : fallbackPlatforms)
+/** 副标题的平台串，跟着清单走 */
+const platformLine = computed(() =>
+  `${ALL_PLATFORMS.map((p) => p.label).join(' · ')} ${ALL_PLATFORMS.length} 平台赛程`)
 
 const seriesOptions = computed(() => meta.value?.series ?? [])
 
@@ -493,7 +496,7 @@ function fmtSyncTime(iso: string | null) {
         <div class="breadcrumb"><span>竞赛日历</span></div>
         <h1 class="page-title">竞赛日历</h1>
         <p class="page-subtitle">
-          Codeforces · AtCoder · 牛客 三平台赛程
+          {{ platformLine }}
           <template v-if="meta">
             &nbsp;·&nbsp; 已收录 {{ meta.catalog }} 场 &nbsp;·&nbsp; 最近同步
             {{ fmtSyncTime(meta.latest_sync_at) }}
@@ -649,7 +652,7 @@ function fmtSyncTime(iso: string | null) {
                   v-for="c in cell.items.slice(0, 2)"
                   :key="c.id"
                   class="cal-event"
-                  :class="[platformTagClass(c.platform), { 'is-unrated': !c.is_rated }]"
+                  :class="[platformClass(c.platform), { 'is-unrated': !c.is_rated }]"
                   :title="c.name"
                 >{{ c.name }}</span>
                 <span v-if="cell.items.length > 2" class="cal-more">
@@ -662,7 +665,7 @@ function fmtSyncTime(iso: string | null) {
                 <i
                   v-for="c in cell.items.slice(0, 4)"
                   :key="c.id"
-                  :class="platformTagClass(c.platform)"
+                  :class="platformClass(c.platform)"
                 />
               </span>
             </button>
@@ -678,7 +681,7 @@ function fmtSyncTime(iso: string | null) {
           </div>
           <ul v-if="dayItems.length" class="cal-day-list">
             <li v-for="c in dayItems" :key="c.id" class="cal-day-item">
-              <span class="platform-tag" :class="platformTagClass(c.platform)">
+              <span class="platform-tag" :class="platformClass(c.platform)">
                 {{ c.platform_display }}
               </span>
               <div class="cal-day-main">
@@ -707,7 +710,7 @@ function fmtSyncTime(iso: string | null) {
           <EmptyState
             v-else
             title="当天没有赛事"
-            hint="赛程来自 clist.by 聚合排期，每日 03:00 同步、往后看 90 天；换一天看看，或切到列表视图浏览近期赛程"
+            hint="赛程来自 clist.by 聚合排期与各平台官方赛事列表，每日 03:00 同步、往后看 90 天；换一天看看，或切到列表视图浏览近期赛程"
           />
         </section>
       </template>
@@ -723,7 +726,7 @@ function fmtSyncTime(iso: string | null) {
 
           <ul v-if="sec.items.length" class="cal-list">
             <li v-for="c in sec.items" :key="c.id" class="cal-list-item">
-              <span class="platform-tag" :class="platformTagClass(c.platform)">
+              <span class="platform-tag" :class="platformClass(c.platform)">
                 {{ c.platform_display }}
               </span>
               <div class="cal-list-main">
@@ -969,17 +972,21 @@ function fmtSyncTime(iso: string | null) {
   max-width: 100%;
 }
 /* A4：色块上的文字一律用「文本安全色」档（实测 ≥ 4.5:1），语义原色只做填充 */
-.cal-event.cf {
-  background: color-mix(in srgb, var(--color-info) 18%, transparent);
-  color: var(--color-info-text);
+.cal-event.codeforces {
+  background: color-mix(in srgb, var(--platform-codeforces) 18%, transparent);
+  color: var(--platform-codeforces-text);
 }
 .cal-event.atcoder {
-  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  color: var(--color-warning-text);
+  background: color-mix(in srgb, var(--platform-atcoder) 18%, transparent);
+  color: var(--platform-atcoder-text);
 }
 .cal-event.nowcoder {
-  background: color-mix(in srgb, var(--color-success) 18%, transparent);
-  color: var(--color-success-text);
+  background: color-mix(in srgb, var(--platform-nowcoder) 18%, transparent);
+  color: var(--platform-nowcoder-text);
+}
+.cal-event.luogu {
+  background: color-mix(in srgb, var(--platform-luogu) 18%, transparent);
+  color: var(--platform-luogu-text);
 }
 .cal-event.is-unrated {
   /* 官方已宣布不计分的排期：去填充 + 空心描边，与同格里的计分场次一眼区分。
@@ -1002,20 +1009,26 @@ function fmtSyncTime(iso: string | null) {
   width: 6px;
   height: 6px;
 }
-/* A9：三种平台给三种形状（方/菱/环），色觉障碍或灰度屏下也分得出来 */
-.cal-cell-dots i.cf {
-  background: var(--color-info);
+/* A9：每个平台一种形状（方/菱/环/三角），色觉障碍或灰度屏下也分得出来。
+   形状数与平台数必须同步加 —— 少一个就是新平台顶着别人的形状出现。 */
+.cal-cell-dots i.codeforces {
+  background: var(--platform-codeforces);
   border-radius: 0;
 }
 .cal-cell-dots i.atcoder {
-  background: var(--color-warning);
+  background: var(--platform-atcoder);
   border-radius: 0;
   transform: rotate(45deg);
 }
 .cal-cell-dots i.nowcoder {
   background: transparent;
-  border: 1px solid var(--color-success);
+  border: 1px solid var(--platform-nowcoder);
   border-radius: 50%;
+}
+.cal-cell-dots i.luogu {
+  background: var(--platform-luogu);
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
 }
 
 /* ---------- 当日赛事 ---------- */

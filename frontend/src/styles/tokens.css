@@ -35,6 +35,7 @@
   /* ===== Color · 强调 / 语义 ===== */
   --color-accent-cyan: #06b6d4;
   --color-accent-cyan-subtle: rgba(6, 182, 212, 0.12);
+  --color-accent-cyan-text: #22d3ee;
   --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
@@ -50,6 +51,21 @@
   --color-warning-subtle: rgba(245, 158, 11, 0.12);
   --color-danger-subtle: rgba(239, 68, 68, 0.12);
   --color-info-subtle: rgba(59, 130, 246, 0.12);
+
+  /* ===== Color · 平台识别 ===== */
+  /* 一组令牌喂给「列表标签 + 日历色块 + 月历小点」。
+     原先 .platform-tag 自己写死三组十六进制、.cal-event 另用一组语义色，
+     结果同一场比赛在月历格里是蓝、在下面的行里是红 —— 平台身份应当只有一个色。
+     类名后缀用站内平台值（codeforces/atcoder/nowcoder/luogu），加平台只需在这里
+     补一对令牌 + `src/platforms/meta.ts` 补一条声明。 */
+  --platform-codeforces: var(--color-info);
+  --platform-codeforces-text: var(--color-info-text);
+  --platform-atcoder: var(--color-warning);
+  --platform-atcoder-text: var(--color-warning-text);
+  --platform-nowcoder: var(--color-success);
+  --platform-nowcoder-text: var(--color-success-text);
+  --platform-luogu: var(--color-accent-cyan);
+  --platform-luogu-text: var(--color-accent-cyan-text);
 
   /* ===== Color · 文字 ===== */
   --color-text-primary: #f4f4f5;
@@ -225,6 +241,7 @@
   --color-info-text: #1d4ed8;
   --color-warning-text: #92400e;
   --color-success-text: #047857;
+  --color-accent-cyan-text: #0e7490;
   --color-success-subtle: rgba(16, 185, 129, 0.12);
   --color-warning-subtle: rgba(245, 158, 11, 0.14);
   --color-danger-subtle: rgba(239, 68, 68, 0.1);

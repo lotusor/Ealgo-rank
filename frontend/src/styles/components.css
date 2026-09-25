@@ -681,18 +681,26 @@ table.data-table {
   font-weight: 700;
   letter-spacing: 0.02em;
   font-family: var(--font-mono);
+  /* 变体只负责把两个通道指到该平台的令牌上（见 tokens.css「平台识别」段）：
+     加一个平台 = 加一行，不必再抄一遍背景与文字色 */
+  background: color-mix(in srgb, var(--pc, var(--color-text-tertiary)) 12%, transparent);
+  color: var(--pc-text, var(--color-text-secondary));
 }
-.platform-tag.cf {
-  background: rgba(239, 68, 68, 0.12);
-  color: #f87171;
+.platform-tag.codeforces {
+  --pc: var(--platform-codeforces);
+  --pc-text: var(--platform-codeforces-text);
 }
 .platform-tag.atcoder {
-  background: rgba(210, 210, 210, 0.1);
-  color: #e4e4e7;
+  --pc: var(--platform-atcoder);
+  --pc-text: var(--platform-atcoder-text);
 }
 .platform-tag.nowcoder {
-  background: rgba(34, 197, 94, 0.12);
-  color: #4ade80;
+  --pc: var(--platform-nowcoder);
+  --pc-text: var(--platform-nowcoder-text);
+}
+.platform-tag.luogu {
+  --pc: var(--platform-luogu);
+  --pc-text: var(--platform-luogu-text);
 }
 
 /* ===== Inputs ===== */

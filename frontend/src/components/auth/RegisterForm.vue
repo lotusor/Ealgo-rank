@@ -12,6 +12,7 @@ import {
 import type { PlatformAccount, School, UserMe } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import PlatformAccountsEditor from '@/components/auth/PlatformAccountsEditor.vue'
+import { bindableNames } from '@/platforms/meta'
 
 const props = defineProps<{
   mode: 'create' | 'complete'
@@ -238,7 +239,7 @@ function finish() {
       <div v-if="submitted">
         <div class="section-title" style="margin-bottom: var(--space-2)">绑定竞赛平台账号</div>
         <p class="body-sm text-secondary" style="margin-bottom: var(--space-5)">
-          绑定你在 Codeforces / AtCoder / 牛客 的账号 ID，用于同步参赛成绩并纳入学校排名。可跳过，稍后在「编辑资料」中补充。
+          绑定你在 {{ bindableNames() }} 的账号 ID，用于同步参赛成绩并纳入学校排名。可跳过，稍后在「编辑资料」中补充。
         </p>
         <div v-if="accountsLoading" class="caption text-tertiary">加载中…</div>
         <PlatformAccountsEditor v-else :accounts="accounts" @changed="onAccountsChanged" />

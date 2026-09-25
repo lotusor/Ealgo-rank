@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { platformLabel } from '@/platforms/meta'
 
 interface Tier {
   min: number
@@ -10,7 +11,9 @@ interface TierSet {
   lines: number[]
 }
 
-// 各平台官方段位配置：tiers 的 min 为该档起点，lines 为参考线阈值（= 档位边界）
+// 各平台官方段位配置：tiers 的 min 为该档起点，lines 为参考线阈值（= 档位边界）。
+// ⚠️ 只服务「有平台 rating 的计分平台」；注册表里新增可计分平台时必须在这里补一份
+// 段位表，否则折线图会静默退化成站点品牌色、右侧段位标尺一起消失。
 const TIER_SETS: Record<string, TierSet> = {
   codeforces: {
     tiers: [
@@ -258,15 +261,6 @@ function fmtDateTime(s: string) {
 }
 function fmtNum(v: number) {
   return v.toLocaleString('en-US')
-}
-function platformLabel(p: string) {
-  return p === 'codeforces'
-    ? 'Codeforces'
-    : p === 'atcoder'
-      ? 'AtCoder'
-      : p === 'nowcoder'
-        ? 'NowCoder'
-        : p
 }
 
 // ---- 进场动画 ----

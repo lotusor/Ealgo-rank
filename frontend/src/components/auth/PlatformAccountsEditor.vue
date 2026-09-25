@@ -6,39 +6,13 @@ import {
   unbindPlatformAccount,
 } from '@/api'
 import type { PlatformAccount } from '@/api/types'
-import { platformTag } from '@/utils/format'
+import { BINDABLE_PLATFORMS, platformClass, platformLabel } from '@/platforms/meta'
 import { useToast } from '@/composables/useToast'
 
 const props = defineProps<{ accounts: PlatformAccount[] }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const toast = useToast()
-
-const PLATFORMS: {
-  key: 'codeforces' | 'atcoder' | 'nowcoder'
-  name: string
-  hint: string
-  guide: string
-}[] = [
-  {
-    key: 'codeforces',
-    name: 'Codeforces',
-    hint: '输入你的 CF 用户名 handle（如 tourist）',
-    guide: '即 codeforces.com/profile/ 后面的用户名，不是邮箱、不是学号',
-  },
-  {
-    key: 'atcoder',
-    name: 'AtCoder',
-    hint: '输入你的 AtCoder 用户名（UserScreenName）',
-    guide: '即 atcoder.jp/users/ 后面的用户名',
-  },
-  {
-    key: 'nowcoder',
-    name: '牛客',
-    hint: '输入你的牛客用户 ID（纯数字）',
-    guide: '竞赛站 ac.nowcoder.com 个人主页网址里 contest/profile/ 后面的数字，不是学号',
-  },
-]
 
 const accounts = computed(() => props.accounts)
 
@@ -133,12 +107,12 @@ function fmtNextEdit(s: string | null) {
 
 <template>
   <div class="pa-list">
-    <div v-for="p in PLATFORMS" :key="p.key" class="pa-item">
+    <div v-for="p in BINDABLE_PLATFORMS" :key="p.key" class="pa-item">
       <div class="pa-head">
-        <span class="platform-tag" :class="platformTag(p.key).cls">
-          {{ platformTag(p.key).label }}
+        <span class="platform-tag" :class="platformClass(p.key)">
+          {{ platformLabel(p.key) }}
         </span>
-        <span class="pa-name">{{ p.name }}</span>
+        <span class="pa-name">{{ p.label }}</span>
         <span v-if="!accountOf(p.key)" class="badge badge-muted">未绑定</span>
         <span v-else class="badge badge-success">已绑定</span>
       </div>
@@ -176,11 +150,11 @@ function fmtNextEdit(s: string | null) {
         <input
           v-model="input[p.key]"
           class="input"
-          :placeholder="p.hint"
+          :placeholder="p.bindHint"
           :disabled="busy[p.key]"
           @keyup.enter="save(p.key)"
         />
-        <div class="caption text-tertiary">{{ p.guide }}</div>
+        <div class="caption text-tertiary">{{ p.bindGuide }}</div>
         <div v-if="error[p.key]" class="field-hint" style="color: var(--color-danger)">{{ error[p.key] }}</div>
         <div class="pa-actions">
           <button class="btn btn-ghost btn-sm" :disabled="busy[p.key]" @click="cancel(p.key)">取消</button>
@@ -193,8 +167,8 @@ function fmtNextEdit(s: string | null) {
       <!-- 未绑定引导 -->
       <div v-else class="pa-body pa-empty">
         <div style="display: flex; flex-direction: column; gap: 2px; flex: 1">
-          <span class="caption text-tertiary">{{ p.hint }}</span>
-          <span class="caption text-tertiary" style="font-size: 12px">{{ p.guide }}</span>
+          <span class="caption text-tertiary">{{ p.bindHint }}</span>
+          <span class="caption text-tertiary" style="font-size: 12px">{{ p.bindGuide }}</span>
         </div>
         <button class="btn btn-secondary btn-sm" @click="startAdd(p.key)">绑定账号</button>
       </div>

@@ -5,6 +5,7 @@ import type { Contest, ContestPlatform } from '@/api/types'
 import DataPagination from '@/components/ui/DataPagination.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import { SCORING_PLATFORMS, platformClass } from '@/platforms/meta'
 
 const platform = ref<'' | ContestPlatform>('')
 const rated = ref<'all' | 'yes' | 'no'>('all')
@@ -17,12 +18,12 @@ const rows = ref<Contest[]>([])
 const total = ref(0)
 const loading = ref(false)
 
-const platformOptions = [
+// 比赛目录列的是「有榜单的真实赛次」，所以只给可计分平台；
+// 只做日历展示的平台（洛谷）在 /calendar 里出现，这里点了必然是空列表
+const platformOptions = computed(() => [
   { label: '全部', value: '' as const },
-  { label: 'Codeforces', value: 'codeforces' as const },
-  { label: 'AtCoder', value: 'atcoder' as const },
-  { label: '牛客', value: 'nowcoder' as const },
-]
+  ...SCORING_PLATFORMS.map((p) => ({ label: p.label, value: p.key })),
+])
 const ratedOptions = [
   { label: '全部', value: 'all' as const },
   { label: '仅 Rated', value: 'yes' as const },
@@ -68,9 +69,6 @@ function fmtDate(s: string | null) {
   if (!s) return '—'
   return new Date(s).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
-function platformTagClass(p: ContestPlatform) {
-  return p === 'codeforces' ? 'cf' : p === 'atcoder' ? 'atcoder' : 'nowcoder'
-}
 </script>
 
 <template>
@@ -79,7 +77,7 @@ function platformTagClass(p: ContestPlatform) {
       <div>
         <div class="breadcrumb"><span>比赛列表</span></div>
         <h1 class="page-title">比赛列表</h1>
-        <p class="page-subtitle">已收录的三大平台算法竞赛，按时间倒序排列</p>
+        <p class="page-subtitle">已收录的各平台算法竞赛，按时间倒序排列</p>
       </div>
     </div>
 
@@ -102,7 +100,7 @@ function platformTagClass(p: ContestPlatform) {
     <div v-else-if="sortedRows.length" class="grid grid-2 contest-grid">
       <div v-for="c in sortedRows" :key="c.id" class="card card-hover card-pad contest-card">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3)">
-          <span class="platform-tag" :class="platformTagClass(c.platform)">{{ c.platform_display }}</span>
+          <span class="platform-tag" :class="platformClass(c.platform)">{{ c.platform_display }}</span>
           <span v-if="c.is_rated" class="badge badge-success">Rated</span>
           <span v-else-if="c.is_paid" class="badge badge-warning">付费</span>
           <span v-else class="badge badge-muted">非 Rated</span>

@@ -3,7 +3,7 @@ import { ref, onMounted } from 'vue'
 import { getScoreRules } from '@/api'
 import type { ScoreRules } from '@/api/types'
 import SimpleMarkdown from '@/components/ui/SimpleMarkdown.vue'
-import { platformName } from '@/utils/format'
+import { platformClass, platformLabel } from '@/platforms/meta'
 
 const data = ref<ScoreRules | null>(null)
 const loading = ref(true)
@@ -59,7 +59,7 @@ function fmtFactor(v: string | number | null | undefined) {
             </thead>
             <tbody>
               <tr v-for="p in data.config.platforms" :key="p.platform">
-                <td><span class="platform-tag" :class="p.platform === 'codeforces' ? 'cf' : p.platform === 'atcoder' ? 'atcoder' : p.platform === 'nowcoder' ? 'nowcoder' : ''">{{ platformName(p.platform) }}</span></td>
+                <td><span class="platform-tag" :class="platformClass(p.platform)">{{ platformLabel(p.platform) }}</span></td>
                 <td class="num-cell num">{{ fmtFactor(p.factor) }}</td>
               </tr>
             </tbody>

@@ -1,3 +1,5 @@
+import type { PlatformKey } from '@/platforms/meta'
+
 // 后端返回的分页结构（StandardPagination）
 export interface Paginated<T> {
   count: number
@@ -17,10 +19,10 @@ export interface PageQuery {
 // 用户 / 角色
 export type UserRole = 'user' | 'school_admin' | 'super_admin'
 
-// 平台账号（绑定到三大算法竞赛平台的账号 ID）
+// 平台账号（可绑定的平台清单见 @/platforms/meta 的 bindable 位）
 export interface PlatformAccount {
   id: number
-  platform: 'codeforces' | 'atcoder' | 'nowcoder'
+  platform: ContestPlatform
   platform_display: string
   handle: string
   display_name: string
@@ -221,7 +223,8 @@ export interface Participation {
 }
 
 // 比赛（只读）
-export type ContestPlatform = 'codeforces' | 'atcoder' | 'nowcoder'
+/** 站内认的平台。唯一来源是 `@/platforms/meta`，加平台只改那一处。 */
+export type ContestPlatform = PlatformKey
 
 export interface Contest {
   id: number
@@ -246,9 +249,13 @@ export interface Contest {
 
 // 竞赛日历所需的元数据（GET /contests/meta/）
 export interface ContestMetaPlatform {
-  key: string
+  key: PlatformKey
   label: string
   count: number
+  /** 能力位由后端注册表下发，前端不要另写一份平台清单 */
+  scoring: boolean
+  bindable: boolean
+  calendar: boolean
 }
 
 export interface ContestMeta {

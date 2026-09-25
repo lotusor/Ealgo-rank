@@ -7,7 +7,8 @@ import type { MyParticipation, ContestPlatform, RankSnapshot, UserBestRecord, Ra
 import RatingLineChart from '@/components/RatingLineChart.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
-import { fmtCount, initial, platformName } from '@/utils/format'
+import { fmtCount, initial } from '@/utils/format'
+import { SCORING_PLATFORMS, platformClass, platformLabel } from '@/platforms/meta'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -16,12 +17,11 @@ const platform = ref<'' | ContestPlatform>('')
 const rows = ref<MyParticipation[]>([])
 const loading = ref(false)
 
-const platformOptions = [
+// 成绩维度只对可计分平台有意义（只做日历展示的平台没有榜单）
+const platformOptions = computed(() => [
   { label: '全部', value: '' as const },
-  { label: 'Codeforces', value: 'codeforces' as const },
-  { label: 'AtCoder', value: 'atcoder' as const },
-  { label: '牛客', value: 'nowcoder' as const },
-]
+  ...SCORING_PLATFORMS.map((p) => ({ label: p.label, value: p.key })),
+])
 
 function load() {
   loading.value = true
@@ -142,7 +142,7 @@ const emptyChartHint = computed(() => {
   if (platform.value === '') {
     return { title: '最近一年无 rating 变化', hint: '近一年内没有计入排名的比赛记录' }
   }
-  const name = platformName(platform.value)
+  const name = platformLabel(platform.value)
   const all = platformRatingRows.value
   if (!all.length) {
     return {
@@ -190,9 +190,6 @@ function fmtDelta(v: number) {
 function fmtBest(v: number | null | undefined) {
   return v == null ? '—' : (Math.round(v * 10) / 10).toString()
 }
-function accountTag(p: string) {
-  return p === 'codeforces' ? 'cf' : p === 'atcoder' ? 'atcoder' : p === 'nowcoder' ? 'nowcoder' : ''
-}
 </script>
 
 <template>
@@ -227,7 +224,7 @@ function accountTag(p: string) {
         </div>
         <div class="profile-accounts">
           <div v-for="a in accounts" :key="a.id" class="badge badge-muted account-badge">
-            <span class="platform-tag" :class="accountTag(a.platform)">{{ platformName(a.platform) }}</span>
+            <span class="platform-tag" :class="platformClass(a.platform)">{{ platformLabel(a.platform) }}</span>
             <span class="num" style="font-size: 13px; color: var(--color-text-primary)">{{ a.handle || a.display_name || '—' }}</span>
           </div>
           <div v-if="!accounts.length" class="caption text-tertiary">尚未绑定平台账号</div>
@@ -264,7 +261,7 @@ function accountTag(p: string) {
       <div class="card-title" style="margin-bottom: var(--space-4)">各平台官方 Rating</div>
       <div class="grid grid-3" style="gap: var(--space-4)">
         <div v-for="pr in platformRatings" :key="pr.platform" class="stat-card">
-          <div class="stat-label"><span class="platform-tag" :class="accountTag(pr.platform)">{{ platformName(pr.platform) }}</span></div>
+          <div class="stat-label"><span class="platform-tag" :class="platformClass(pr.platform)">{{ platformLabel(pr.platform) }}</span></div>
           <div class="stat-value num">{{ pr.rating }}</div>
           <div class="stat-sub">
             <template v-if="pr.delta == null">—</template>
@@ -328,7 +325,7 @@ function accountTag(p: string) {
                   <a v-if="r.contest_url" :href="r.contest_url" target="_blank" rel="noopener" class="title-link">{{ r.contest_name }}</a>
                   <span v-else class="title-link">{{ r.contest_name }}</span>
                 </td>
-                <td><span class="platform-tag" :class="accountTag(r.contest_platform)">{{ platformName(r.contest_platform) }}</span></td>
+                <td><span class="platform-tag" :class="platformClass(r.contest_platform)">{{ platformLabel(r.contest_platform) }}</span></td>
                 <td class="num-cell">{{ fmtDate(r.contest_start_time) }}</td>
                 <td class="num-cell">{{ r.rank != null ? '#' + r.rank : '—' }}</td>
                 <td class="num-cell hide-mobile">{{ r.solved_count != null ? r.solved_count : '—' }}</td>

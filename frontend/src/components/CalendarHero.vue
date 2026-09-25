@@ -8,11 +8,11 @@
  */
 import { computed, onUnmounted, ref } from 'vue'
 import type { Contest, ContestMeta } from '@/api/types'
+import { platformClass } from '@/platforms/meta'
 import {
   countdownParts,
   formatDateTime,
   formatDuration,
-  platformTagClass,
   progressPct,
   rangeLabel,
   relativeLabel,
@@ -74,7 +74,7 @@ const scheduleSyncLabel = computed(() => {
         下一场开赛
       </div>
       <div class="cal-hero-name">
-        <span class="platform-tag" :class="platformTagClass(next.platform)">
+        <span class="platform-tag" :class="platformClass(next.platform)">
           {{ next.platform_display }}
         </span>
         <span class="cal-hero-title">{{ next.name }}</span>
@@ -106,7 +106,7 @@ const scheduleSyncLabel = computed(() => {
         <span v-if="liveCount > 1" class="cal-live-more">+{{ liveCount - 1 }}</span>
       </div>
       <div class="cal-hero-name">
-        <span class="platform-tag" :class="platformTagClass(live.platform)">
+        <span class="platform-tag" :class="platformClass(live.platform)">
           {{ live.platform_display }}
         </span>
         <span class="cal-hero-title">{{ live.name }}</span>

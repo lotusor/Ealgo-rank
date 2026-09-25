@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { updateMe, updateAvatar, listPlatformAccounts } from '@/api'
 import type { PlatformAccount, UserMe } from '@/api/types'
+import { bindableNames } from '@/platforms/meta'
 import { useToast } from '@/composables/useToast'
 import { initial } from '@/utils/format'
 import PlatformAccountsEditor from '@/components/auth/PlatformAccountsEditor.vue'
@@ -207,7 +208,7 @@ function onAccountsChanged() {
     <div class="card card-pad">
       <div class="section-title" style="margin-bottom: var(--space-2)">竞赛平台账号</div>
       <p class="body-sm text-secondary" style="margin-bottom: var(--space-5)">
-        绑定你在 Codeforces / AtCoder / 牛客 的账号 ID，用于同步参赛成绩并纳入学校排名。平台账号 ID 一周仅可修改一次。
+        绑定你在 {{ bindableNames() }} 的账号 ID，用于同步参赛成绩并纳入学校排名。平台账号 ID 一周仅可修改一次。
       </p>
       <div v-if="accountsLoading" class="caption text-tertiary">加载中…</div>
       <PlatformAccountsEditor v-else :accounts="accounts" @changed="onAccountsChanged" />

@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { listRankings, listSchools, getPublicStats } from '@/api'
+import { computed, ref, onMounted } from 'vue'
+import { getPublicStats, listRankings, listSchools } from '@/api'
+import type { PublicStats } from '@/api'
 import type { RankSnapshot, School } from '@/api/types'
+import { ALL_PLATFORMS, platformMeta } from '@/platforms/meta'
 import { fmtScore, fmtCount, medalRowClass, orgShort } from '@/utils/format'
 import RankBadge from '@/components/ui/RankBadge.vue'
 import OrgLogo from '@/components/ui/OrgLogo.vue'
@@ -9,43 +11,36 @@ import SeasonBanner from '@/components/SeasonBanner.vue'
 
 const top5 = ref<RankSnapshot[]>([])
 const schoolsMap = ref<Record<number, School>>({})
-const stats = ref({ schools: 0, contests: 0, users: 0, participations: 0 })
+const stats = ref<PublicStats>({
+  schools: 0, contests: 0, users: 0, participations: 0, platforms: [],
+})
 const loading = ref(true)
 
-const platforms = [
-  {
-    name: 'Codeforces',
-    domain: 'codeforces.com',
-    desc: '全球最活跃的算法竞赛平台，Rating 系统权威，高校选手主战场。',
-    icon: 'https://codeforces.org/s/0/favicon-32x32.png',
-    color: '#f87171',
-    contests: 712,
-    users: 2103,
-  },
-  {
-    name: 'AtCoder',
-    domain: 'atcoder.jp',
-    desc: '日本老牌竞赛平台，题目质量高，ABC / ARC 系列深受高校欢迎。',
-    icon: 'https://atcoder.jp/favicon.ico',
-    color: '#e4e4e7',
-    contests: 348,
-    users: 1247,
-  },
-  {
-    name: '牛客竞赛',
-    domain: 'nowcoder.com',
-    desc: '国内高校赛事核心阵地，多校训练赛、寒假集训营覆盖面广。',
-    icon: 'https://www.nowcoder.com/favicon.ico',
-    color: '#4ade80',
-    contests: 187,
-    users: 1894,
-  },
-]
+/** 平台清单只有一份来源（`@/platforms/meta`），这里派生文案 */
+const platformCount = ALL_PLATFORMS.length
+const platformNames = ALL_PLATFORMS.map((p) => p.label).join('、')
+
+/**
+ * 「支持的平台」卡片：文案来自 meta，数字来自 /stats/ 的真实计数。
+ * 原先这里是写死的 3 张卡 + `contests: 712 / users: 2103` 一组演示数字 ——
+ * 加一个平台就得再编一个数，页面也会永远停在「三大平台」。
+ */
+const platformCards = computed(() =>
+  stats.value.platforms.map((p) => {
+    const m = platformMeta(p.key)
+    return {
+      ...p,
+      icon: m?.icon ?? '',
+      site: m?.site ?? p.key,
+      desc: m?.desc ?? '',
+    }
+  }),
+)
 
 const features = [
   { icon: 'M3 3v18h18M7 14l4-4 4 4 5-5', cls: 'primary', title: '学校积分排名', desc: '按学校维度聚合选手成绩，科学积分模型，实时更新榜单。' },
   { icon: 'M3 3v18h18M7 14l4-4 4 4 5-5', cls: 'cyan', title: '个人成绩追踪', desc: '跨平台 Rating 折线图、参赛历史、积分明细，一目了然。' },
-  { icon: 'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M12 12a3 3 0 1 0 0 0', cls: 'success', title: '自动数据采集', desc: '爬虫定时同步三大平台比赛与成绩，零人工录入。' },
+  { icon: 'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M12 12a3 3 0 1 0 0 0', cls: 'success', title: '自动数据采集', desc: '爬虫定时同步各已接入平台的比赛成绩与赛程排期，零人工录入。' },
   { icon: 'M13 2L3 14h9l-1 8 10-12h-9l1-8z', cls: 'warning', title: '智能积分引擎', desc: '融合难度系数、参赛规模、排名表现，公平量化实力。' },
 ]
 
@@ -83,10 +78,10 @@ onMounted(async () => {
       <div class="hero-glow" />
       <div class="hero-orb" />
       <div class="hero-inner">
-        <span class="badge badge-primary"><span class="dot dot-pulse" />已覆盖 {{ fmtCount(stats.schools) }} 所高校 · 实时同步三大平台</span>
+        <span class="badge badge-primary"><span class="dot dot-pulse" />已覆盖 {{ fmtCount(stats.schools) }} 所高校 · 实时同步 {{ platformCount }} 大赛事平台</span>
         <h1 class="display">高校算法竞赛，<span class="gradient-text">谁与争锋</span></h1>
         <p class="body text-secondary hero-sub">
-          自动采集 Codeforces、AtCoder、牛客三大平台比赛数据，按学校维度智能积分排名。让每一行代码的实力，被看见、被衡量、被铭记。
+          自动汇聚 {{ platformNames }} 的比赛成绩与赛程排期，按学校维度智能积分排名。让每一行代码的实力，被看见、被衡量、被铭记。
         </p>
         <div class="hero-actions">
           <router-link to="/u/rankings" class="btn btn-primary btn-lg">
@@ -151,13 +146,13 @@ onMounted(async () => {
     <!-- Platforms -->
     <div class="section-block">
       <div class="section-title"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z" /></svg>支持的平台</div>
-      <div class="grid grid-3">
-        <div v-for="p in platforms" :key="p.name" class="card card-hover card-pad">
+      <div class="grid grid-auto">
+        <div v-for="p in platformCards" :key="p.key" class="card card-hover card-pad">
           <div style="display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4)">
-            <div class="platform-logo" :style="{ background: p.color + '1f' }">
+            <div class="platform-logo" :class="p.key">
               <img
                 :src="p.icon"
-                :alt="p.name"
+                :alt="p.label"
                 width="26"
                 height="26"
                 loading="lazy"
@@ -166,15 +161,16 @@ onMounted(async () => {
               />
             </div>
             <div>
-              <div class="h4">{{ p.name }}</div>
-              <div class="caption text-tertiary">{{ p.domain }}</div>
+              <div class="h4">{{ p.label }}</div>
+              <div class="caption text-tertiary">{{ p.site }}</div>
             </div>
           </div>
           <p class="body-sm text-secondary" style="margin-bottom: var(--space-4)">{{ p.desc }}</p>
-          <div style="display: flex; gap: var(--space-4)">
-            <div><div class="caption text-tertiary">收录比赛</div><div class="num" style="font-weight: 600; font-size: 15px">{{ p.contests }}</div></div>
-            <div><div class="caption text-tertiary">活跃选手</div><div class="num" style="font-weight: 600; font-size: 15px">{{ p.users }}</div></div>
+          <div v-if="p.scoring" style="display: flex; gap: var(--space-4)">
+            <div><div class="caption text-tertiary">收录比赛</div><div class="num" style="font-weight: 600; font-size: 15px">{{ fmtCount(p.contests) }}</div></div>
+            <div><div class="caption text-tertiary">活跃选手</div><div class="num" style="font-weight: 600; font-size: 15px">{{ fmtCount(p.accounts) }}</div></div>
           </div>
+          <div v-else class="caption text-tertiary">赛程已接入，成绩待同步</div>
         </div>
       </div>
     </div>
@@ -287,6 +283,11 @@ onMounted(async () => {
   object-fit: contain;
   border-radius: 6px;
 }
+/* 底色吃平台令牌，不再在模板里写 hex + 拼 '1f' 透明度 */
+.platform-logo.codeforces { background: color-mix(in srgb, var(--platform-codeforces) 12%, transparent); }
+.platform-logo.atcoder { background: color-mix(in srgb, var(--platform-atcoder) 12%, transparent); }
+.platform-logo.nowcoder { background: color-mix(in srgb, var(--platform-nowcoder) 12%, transparent); }
+.platform-logo.luogu { background: color-mix(in srgb, var(--platform-luogu) 12%, transparent); }
 .data-table td.score {
   color: var(--color-primary);
   font-weight: 700;

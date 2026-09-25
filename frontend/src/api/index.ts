@@ -589,11 +589,21 @@ export async function getRatingHistory(user?: number): Promise<RatingHistoryPoin
 }
 
 // ---------- 公开站点统计（首页数字看板） ----------
+/** 逐平台真实计数：首页「支持的平台」卡片用它出数，不再写死演示数字 */
+export interface PublicStatsPlatform {
+  key: string
+  label: string
+  contests: number
+  accounts: number
+  scoring: boolean
+}
+
 export interface PublicStats {
   schools: number
   contests: number
   users: number
   participations: number
+  platforms: PublicStatsPlatform[]
 }
 
 export async function getPublicStats(): Promise<PublicStats> {

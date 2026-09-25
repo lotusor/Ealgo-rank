@@ -6,6 +6,7 @@ import { useToast } from '@/composables/useToast'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import DataPagination from '@/components/ui/DataPagination.vue'
 import { fmtDate, fmtScore } from '@/utils/format'
+import { SCORING_PLATFORMS, type PlatformKey } from '@/platforms/meta'
 
 const toast = useToast()
 
@@ -22,14 +23,13 @@ const page = ref(1)
 const pageSize = 20
 
 const user = ref('')
-const platform = ref<'all' | 'codeforces' | 'atcoder' | 'nowcoder'>('all')
+const platform = ref<'all' | PlatformKey>('all')
 const exStatus = ref<'all' | 'normal' | 'excluded'>('all')
 
+// 参赛记录只可能来自可计分平台（只做日历展示的平台没有榜单）
 const platformOptions = [
   { label: '全部平台', value: 'all' as const },
-  { label: 'CF', value: 'codeforces' as const },
-  { label: 'AtCoder', value: 'atcoder' as const },
-  { label: '牛客', value: 'nowcoder' as const },
+  ...SCORING_PLATFORMS.map((p) => ({ label: p.chip, value: p.key })),
 ]
 const statusOptions = [
   { label: '全部', value: 'all' as const },
