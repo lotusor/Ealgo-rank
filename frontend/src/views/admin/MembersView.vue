@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   listUsers, listSchools, setUserRole,
@@ -115,9 +115,15 @@ const accounts = ref<AdminPlatformAccount[]>([])
 const audits = ref<HandleAuditRow[]>([])
 const acctLoading = ref(false)
 const busy = ref<number | 'bind' | null>(null)
-const reason = ref('')
-const rebindTo = ref<Record<number, string>>({})
+// 每个动作自带理由：共用一个输入框会让「这条留痕到底记给了谁」说不清
+const bindReason = ref('')
 const newBind = ref({ platform: BINDABLE_PLATFORMS[0]?.key ?? 'codeforces', handle: '' })
+const rebindDlg = ref<AdminPlatformAccount | null>(null)
+const rebindHandle = ref('')
+const rebindReason = ref('')
+const rebindInput = ref<HTMLInputElement | null>(null)
+const unbindDlg = ref<AdminPlatformAccount | null>(null)
+const unbindReason = ref('')
 
 /** 后端错误既可能是 detail，也可能是 DRF 的 errors 字典，都要能显示出来。 */
 function apiErr(e: any, fallback: string): string {
@@ -151,10 +157,15 @@ async function refreshAccounts(u: UserRoster) {
 
 async function openAccounts(u: UserRoster) {
   acctUser.value = u
-  reason.value = ''
-  rebindTo.value = {}
+  bindReason.value = ''
   newBind.value = { platform: BINDABLE_PLATFORMS[0]?.key ?? 'codeforces', handle: '' }
   await refreshAccounts(u)
+}
+
+function closeAccounts() {
+  acctUser.value = null
+  rebindDlg.value = null
+  unbindDlg.value = null
 }
 
 async function afterMutation() {
@@ -162,15 +173,26 @@ async function afterMutation() {
   await load()
 }
 
-async function doUnbind(a: AdminPlatformAccount) {
-  const ok = confirm(
-    `确认解绑「${a.username}」的 ${a.platform_display} 账号 ID ${a.handle}？\n\n` +
-    `该账号名下 ${a.participation_count} 条参赛记录会一并删除并触发排名重算（不可恢复）。`)
-  if (!ok) return
+function openUnbind(a: AdminPlatformAccount) {
+  unbindReason.value = ''
+  unbindDlg.value = a
+}
+
+function openRebind(a: AdminPlatformAccount) {
+  rebindHandle.value = ''
+  rebindReason.value = ''
+  rebindDlg.value = a
+  nextTick(() => rebindInput.value?.focus())
+}
+
+async function confirmUnbind() {
+  const a = unbindDlg.value
+  if (!a) return
   busy.value = a.id
   try {
-    const res = await adminUnbindPlatformAccount(a.id, reason.value.trim())
+    const res = await adminUnbindPlatformAccount(a.id, unbindReason.value.trim())
     toast.success(res.detail || '已解绑')
+    unbindDlg.value = null
     await afterMutation()
   } catch (e: any) {
     toast.error(apiErr(e, '解绑失败'))
@@ -179,20 +201,23 @@ async function doUnbind(a: AdminPlatformAccount) {
   }
 }
 
-async function doRebind(a: AdminPlatformAccount) {
-  const next = (rebindTo.value[a.id] || '').trim()
+async function confirmRebind() {
+  const a = rebindDlg.value
+  if (!a) return
+  const next = rebindHandle.value.trim()
   if (!next) {
     toast.error('请先填写新的平台账号 ID')
     return
   }
-  const ok = confirm(
-    `确认把「${a.username}」的 ${a.platform_display} 账号 ID 由 ${a.handle} 改为 ${next}？\n\n` +
-    `改名语义：已入库的旧 ID 成绩仍留在该账号名下；新 ID 的历史成绩随后自动补抓。`)
-  if (!ok) return
+  if (next.toLowerCase() === a.handle.toLowerCase()) {
+    toast.error('新 ID 与当前 ID 相同')
+    return
+  }
   busy.value = a.id
   try {
-    await adminRebindPlatformAccount(a.id, next, reason.value.trim())
+    await adminRebindPlatformAccount(a.id, next, rebindReason.value.trim())
     toast.success('已改绑，历史成绩补抓已排队')
+    rebindDlg.value = null
     await afterMutation()
   } catch (e: any) {
     toast.error(apiErr(e, '改绑失败'))
@@ -210,9 +235,10 @@ async function doBind() {
   busy.value = 'bind'
   try {
     await adminBindPlatformAccount(
-      acctUser.value.id, newBind.value.platform, handle, reason.value.trim())
+      acctUser.value.id, newBind.value.platform, handle, bindReason.value.trim())
     toast.success(`已为「${acctUser.value.real_name || acctUser.value.username}」绑定 ${handle}`)
     newBind.value.handle = ''
+    bindReason.value = ''
     await afterMutation()
   } catch (e: any) {
     toast.error(apiErr(e, '绑定失败'))
@@ -324,8 +350,15 @@ onMounted(() => {
           </p>
 
           <table class="data-table">
+            <colgroup>
+              <col style="width: 15%" />
+              <col style="width: 28%" />
+              <col style="width: 12%" />
+              <col style="width: 14%" />
+              <col style="width: 31%" />
+            </colgroup>
             <thead>
-              <tr><th>平台</th><th>账号 ID</th><th class="num-cell">成绩</th><th>状态</th><th class="num-cell">操作</th></tr>
+              <tr><th>平台</th><th>账号 ID</th><th class="num-cell">成绩条数</th><th>状态</th><th class="num-cell">操作</th></tr>
             </thead>
             <tbody>
               <tr v-for="a in accounts" :key="a.id">
@@ -341,22 +374,15 @@ onMounted(() => {
                 </td>
                 <td class="num-cell">
                   <div class="acct-actions">
-                    <input
-                      v-model="rebindTo[a.id]"
-                      class="input rebind-input"
-                      type="text"
-                      :placeholder="`新 ${a.platform_display} ID`"
-                      :aria-label="`改绑 ${a.username} 的 ${a.platform_display} 账号 ID`"
-                    />
                     <button
                       class="btn btn-ghost btn-sm"
-                      :disabled="busy === a.id || !(rebindTo[a.id] || '').trim()"
-                      @click="doRebind(a)"
+                      :disabled="busy === a.id"
+                      @click="openRebind(a)"
                     >改绑</button>
                     <button
                       class="btn btn-danger btn-sm"
                       :disabled="busy === a.id"
-                      @click="doUnbind(a)"
+                      @click="openUnbind(a)"
                     >解绑</button>
                   </div>
                 </td>
@@ -385,9 +411,9 @@ onMounted(() => {
             </button>
           </div>
 
-          <div class="field" style="margin-top: var(--space-4)">
-            <label class="field-label" for="acct-reason">操作理由（写入留痕，可空）</label>
-            <input id="acct-reason" v-model="reason" class="input" type="text" maxlength="200" placeholder="如：本人申诉，ID 填错" />
+          <div class="field" style="margin-top: var(--space-3)">
+            <label class="field-label" for="bind-reason">绑定理由（写入留痕，可空）</label>
+            <input id="bind-reason" v-model="bindReason" class="input" type="text" maxlength="200" placeholder="如：本人申诉，ID 填错" />
           </div>
 
           <div class="audit-box">
@@ -405,7 +431,75 @@ onMounted(() => {
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-ghost" @click="acctUser = null">关闭</button>
+          <button class="btn btn-ghost" @click="closeAccounts">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 二级确认：改绑（同名 ID 改名语义） -->
+    <div v-if="rebindDlg" class="modal-overlay" @click.self="rebindDlg = null">
+      <div class="modal">
+        <div class="modal-header">改绑 · {{ rebindDlg.platform_display }}</div>
+        <div class="modal-body">
+          <p class="field-hint">
+            改绑是「改名」语义：{{ rebindDlg.real_name || rebindDlg.username }} 已入库的
+            {{ rebindDlg.participation_count }} 条旧 ID 成绩仍留在其名下，新 ID 的历史成绩随后自动补抓。
+          </p>
+          <div class="field">
+            <label class="field-label">当前账号 ID</label>
+            <div class="num cell-strong">{{ rebindDlg.handle }}</div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="rebind-handle">新账号 ID</label>
+            <input
+              id="rebind-handle"
+              ref="rebindInput"
+              v-model="rebindHandle"
+              class="input"
+              type="text"
+              :placeholder="`请输入新的 ${rebindDlg.platform_display} 账号 ID`"
+              @keyup.enter="confirmRebind"
+            />
+          </div>
+          <div class="field">
+            <label class="field-label" for="rebind-reason">理由（写入留痕，可空）</label>
+            <input id="rebind-reason" v-model="rebindReason" class="input" type="text" maxlength="200" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" @click="rebindDlg = null">取消</button>
+          <button
+            class="btn btn-primary"
+            :disabled="busy === rebindDlg.id || !rebindHandle.trim()"
+            @click="confirmRebind"
+          >{{ busy === rebindDlg.id ? '提交中…' : '确认改绑' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 二级确认：解绑（连带删除参赛记录） -->
+    <div v-if="unbindDlg" class="modal-overlay" @click.self="unbindDlg = null">
+      <div class="modal">
+        <div class="modal-header">解绑 · {{ unbindDlg.platform_display }}</div>
+        <div class="modal-body">
+          <p class="field-hint">
+            将解除 {{ unbindDlg.real_name || unbindDlg.username }} 与账号 ID
+            <b class="num">{{ unbindDlg.handle }}</b> 的绑定，其名下
+            {{ unbindDlg.participation_count }} 条参赛记录一并删除并触发排名重算，不可恢复。
+            解绑后该 ID 进入冷却期，期间仅原持有者可自助重绑；管理员改绑不受冷却限制。
+          </p>
+          <div class="field">
+            <label class="field-label" for="unbind-reason">理由（写入留痕，可空）</label>
+            <input id="unbind-reason" v-model="unbindReason" class="input" type="text" maxlength="200" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" @click="unbindDlg = null">取消</button>
+          <button
+            class="btn btn-danger"
+            :disabled="busy === unbindDlg.id"
+            @click="confirmUnbind"
+          >{{ busy === unbindDlg.id ? '提交中…' : '确认解绑' }}</button>
         </div>
       </div>
     </div>
@@ -415,16 +509,13 @@ onMounted(() => {
 <style scoped>
 .empty-cell { text-align: center; color: var(--color-text-tertiary); padding: var(--space-5); }
 .filter-bar { flex-wrap: wrap; }
-.acct-actions { display: flex; gap: var(--space-2); justify-content: flex-end; align-items: center; }
-.acct-actions .rebind-input { width: 150px; }
+/* 面板内表格是 table-layout: fixed，操作列宽度受限时宁可换行也不能溢出压到邻列 */
+.acct-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: flex-end; align-items: center; }
 .bind-row { display: flex; gap: var(--space-2); align-items: center; margin-top: var(--space-4); }
 .audit-box { margin-top: var(--space-4); border-top: 1px solid var(--color-border); padding-top: var(--space-3); }
 .audit-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
 .audit-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; font-size: 13px; }
 @media (max-width: 768px) {
-  /* 窄屏下改绑输入换行，避免把操作列挤成不可点 */
-  .acct-actions { flex-wrap: wrap; }
-  .acct-actions .rebind-input { width: 100%; }
   .bind-row { flex-wrap: wrap; }
 }
 </style>
