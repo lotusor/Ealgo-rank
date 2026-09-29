@@ -8,6 +8,9 @@ app_name = "accounts"
 router = DefaultRouter()
 router.register("platform-accounts", views.PlatformAccountViewSet,
                 basename="platform-account")
+router.register("admin/platform-accounts",
+                views.AdminPlatformAccountViewSet,
+                basename="admin-platform-account")
 router.register("notifications", views.NotificationViewSet,
                 basename="notification")
 router.register("users", views.UserViewSet, basename="user")

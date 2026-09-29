@@ -1,7 +1,7 @@
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import AuthLog, PlatformAccount, User
+from .models import AuthLog, HandleAudit, PlatformAccount, User
 
 
 class PlatformAccountInline(admin.TabularInline):
@@ -52,6 +52,24 @@ class AuthLogAdmin(admin.ModelAdmin):
     search_fields = ("identifier", "ip", "device_fp", "user__username",
                      "detail")
     readonly_fields = [f.name for f in AuthLog._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(HandleAudit)
+class HandleAuditAdmin(admin.ModelAdmin):
+    """归属变动留痕：只读，争议时按 handle 回查谁在何时动的。"""
+
+    list_display = ("created_at", "action", "platform", "handle", "user",
+                    "actor", "reason")
+    list_filter = ("action", "platform")
+    search_fields = ("handle", "handle_lower", "user__username",
+                    "actor__username", "reason")
+    readonly_fields = tuple(f.name for f in HandleAudit._meta.fields)
 
     def has_add_permission(self, request):
         return False

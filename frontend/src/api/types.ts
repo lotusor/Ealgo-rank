@@ -68,6 +68,40 @@ export interface UsernameAvailability {
   reason: string
 }
 
+/** 管理端视角的平台账号（含归属人与成绩行数）。 */
+export interface AdminPlatformAccount {
+  id: number
+  platform: string
+  platform_display: string
+  handle: string
+  display_name: string
+  verified: boolean
+  created_at: string
+  user: number
+  username: string
+  real_name: string | null
+  school_name: string | null
+  participation_count: number
+  /** 该 ID 最近一次被卸下的时刻；非空即在「仅原持有者可重绑」的冷却窗口内 */
+  released_at: string | null
+}
+
+/** 平台账号 ID 的归属变动留痕。 */
+export interface HandleAuditRow {
+  id: number
+  platform: string
+  platform_display: string
+  handle: string
+  action: string
+  action_display: string
+  user: number | null
+  user_name: string | null
+  actor: number | null
+  actor_name: string | null
+  reason: string
+  created_at: string
+}
+
 export interface UserRoster {
   id: number
   username: string

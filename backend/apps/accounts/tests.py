@@ -2,14 +2,21 @@ import json
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
+from datetime import timedelta
+
 from apps.accounts.models import (
+    HandleAudit,
+    HandleAuditAction,
     Notification,
     NotificationType,
     PlatformAccount,
     UserRole,
 )
+from apps.accounts.serializers import PlatformAccountSerializer
 from apps.contests.models import Contest, Participation
 from apps.schools.models import School
 
@@ -510,3 +517,201 @@ class SetRoleTests(APITestCase):
             f"/api/v1/users/{self.schooled.id}/set_role/",
             {"role": "user"})
         self.assertEqual(r.status_code, 403)
+
+
+class HandleReleaseCooldownTests(APITestCase):
+    """抢注防护：ID 卸下后一段时间只允许原持有者重绑，管理端随时可纠正。
+
+    平台 ID 没有归属证明手段，自助绑定等于「先到先得」——别人可以把你还没绑的
+    handle 抢先绑走，从而把你的公开成绩算到自己学校名下，而你之后被唯一约束挡在
+    门外。冷却关掉这段空档；管理员接口负责善后。
+    """
+
+    def setUp(self):
+        self.school = School.objects.create(name="甲大", code="jd", short_name="甲")
+        self.other = School.objects.create(name="乙大", code="yd", short_name="乙")
+        self.u1 = User.objects.create_user(username="u1", password="Test1234!",
+                                           school=self.school)
+        self.u2 = User.objects.create_user(username="u2", password="Test1234!",
+                                           school=self.school)
+        self.admin = User.objects.create_user(username="adm", password="Test1234!",
+                                              school=self.school,
+                                              role=UserRole.SCHOOL_ADMIN)
+        self.foreign_admin = User.objects.create_user(
+            username="admB", password="Test1234!", school=self.other,
+            role=UserRole.SCHOOL_ADMIN)
+        self.root = User.objects.create_superuser(
+            username="rootx", email="rootx@x.com", password="Root12345!")
+        # 绑定成功的副作用都走 Celery，测试里只验证数据，不起线程
+        for target in ("apps.crawler.tasks.dispatch_account_history_backfill",
+                        "apps.accounts.views._dispatch_recompute"):
+            patcher = patch(target)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _bind(self, user, handle, platform="codeforces"):
+        self.client.force_authenticate(user)
+        return self.client.post("/api/v1/platform-accounts/",
+                                {"platform": platform, "handle": handle},
+                                format="json")
+
+    def _unbind(self, user, pk):
+        self.client.force_authenticate(user)
+        return self.client.delete(f"/api/v1/platform-accounts/{pk}/")
+
+    # ---------- 冷却本体 ----------
+
+    def test_other_user_blocked_within_window(self):
+        r = self._bind(self.u1, "tourist")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(self._unbind(self.u1, r.json()["id"]).status_code, 204)
+
+        r2 = self._bind(self.u2, "ToUrIst")        # 大小写归一后同一个 ID
+        self.assertEqual(r2.status_code, 400, r2.data)
+        self.assertIn("仅原持有者", str(r2.json().get("errors")))
+
+    def test_original_holder_may_rebind_immediately(self):
+        r = self._bind(self.u1, "tourist")
+        pk = r.json()["id"]
+        self._unbind(self.u1, pk)
+        self.assertEqual(self._bind(self.u1, "tourist").status_code, 201)
+
+    def test_blocked_after_window_expires(self):
+        r = self._bind(self.u1, "tourist")
+        self._unbind(self.u1, r.json()["id"])
+        HandleAudit.objects.filter(
+            action=HandleAuditAction.USER_UNBIND).update(
+            created_at=timezone.now() - timedelta(days=8))
+        self.assertEqual(self._bind(self.u2, "tourist").status_code, 201)
+
+    @override_settings(HANDLE_RELEASE_COOLDOWN_DAYS=0)
+    def test_zero_days_disables_policy(self):
+        r = self._bind(self.u1, "tourist")
+        self._unbind(self.u1, r.json()["id"])
+        self.assertEqual(self._bind(self.u2, "tourist").status_code, 201)
+
+    def test_taken_handle_still_reported_as_bound_first(self):
+        """已被占用时的提示不该被冷却文案抢先后：先说「已被绑定」。"""
+        self._bind(self.u1, "tourist")
+        r = self._bind(self.u2, "tourist")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("已被其他用户绑定", str(r.json().get("errors")))
+
+    # ---------- 留痕 ----------
+
+    def test_destroy_writes_release_audit(self):
+        r = self._bind(self.u1, "tourist")
+        self._unbind(self.u1, r.json()["id"])
+        row = HandleAudit.objects.get(action=HandleAuditAction.USER_UNBIND)
+        self.assertEqual((row.handle, row.handle_lower, row.user_id, row.actor_id),
+                         ("tourist", "tourist", self.u1.id, self.u1.id))
+
+    def test_rebind_writes_release_plus_bind_pair(self):
+        r = self._bind(self.u1, "cf_a")
+        pk = r.json()["id"]
+        self.client.force_authenticate(self.u1)
+        self.assertEqual(
+            self.client.patch(f"/api/v1/platform-accounts/{pk}/",
+                              {"handle": "cf_b"}, format="json").status_code, 200)
+        kinds = set(HandleAudit.objects.values_list("action", flat=True))
+        self.assertIn(HandleAuditAction.USER_REBIND, kinds)   # 旧 ID 释放
+        self.assertIn(HandleAuditAction.USER_BIND, kinds)     # 新 ID 归属
+        old_release = HandleAudit.objects.get(
+            action=HandleAuditAction.USER_REBIND)
+        self.assertEqual(old_release.handle, "cf_a")
+
+    # ---------- 并发兜底 ----------
+
+    def test_integrity_error_becomes_400_not_500(self):
+        """两人同时绑同一 ID：校验都放行时，DB 约束要翻成 400 提示。"""
+        self._bind(self.u1, "tourist")
+        with patch.object(PlatformAccountSerializer, "validate",
+                          lambda self, attrs: attrs):
+            r = self._bind(self.u2, "tourist")
+        self.assertEqual(r.status_code, 400, r.data)
+        self.assertIn("已被其他用户绑定", str(r.content.decode()))
+        self.assertEqual(PlatformAccount.objects.filter(handle="tourist").count(), 1)
+
+    # ---------- 管理端 ----------
+
+    def test_admin_bind_bypasses_cooldown_and_audits(self):
+        r = self._bind(self.u1, "tourist")
+        self._unbind(self.u1, r.json()["id"])
+        self.client.force_authenticate(self.admin)
+        resp = self.client.post("/api/v1/admin/platform-accounts/bind/",
+                                {"user": self.u2.id, "platform": "codeforces",
+                                 "handle": "tourist", "reason": "本人申诉核实"},
+                                format="json")
+        self.assertEqual(resp.status_code, 201, resp.data)
+        row = HandleAudit.objects.get(action=HandleAuditAction.ADMIN_BIND)
+        self.assertEqual((row.user_id, row.actor_id, row.reason),
+                         (self.u2.id, self.admin.id, "本人申诉核实"))
+
+    def test_admin_unbind_deletes_scores_and_notifies(self):
+        r = self._bind(self.u1, "tourist")
+        pa = PlatformAccount.objects.get(pk=r.json()["id"])
+        c = Contest.objects.create(platform="codeforces", external_id="1",
+                                   name="Round 1", is_rated=True)
+        Participation.objects.create(contest=c, platform_account=pa,
+                                     handle="tourist", handle_lower="tourist",
+                                     rank=5)
+        self.client.force_authenticate(self.admin)
+        resp = self.client.post(
+            f"/api/v1/admin/platform-accounts/{pa.pk}/unbind/",
+            {"reason": "填错 ID"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(Participation.objects.filter(contest=c).count(), 0)
+        self.assertFalse(PlatformAccount.objects.filter(pk=pa.pk).exists())
+        self.assertTrue(Notification.objects.filter(
+            user=self.u1, title__contains="解绑").exists())
+        self.assertEqual(HandleAudit.objects.filter(
+            action=HandleAuditAction.ADMIN_UNBIND).count(), 1)
+
+    def test_admin_rebind_bypasses_week_limit(self):
+        r = self._bind(self.u1, "cf_a")
+        pk = r.json()["id"]
+        self.client.force_authenticate(self.u1)
+        self.assertEqual(
+            self.client.patch(f"/api/v1/platform-accounts/{pk}/",
+                              {"handle": "cf_b"}, format="json").status_code, 200)
+        # 一周内用户自己不能再改，管理员可以随时改
+        again = self.client.patch(f"/api/v1/platform-accounts/{pk}/",
+                                  {"handle": "cf_c"}, format="json")
+        self.assertEqual(again.status_code, 400)
+        self.client.force_authenticate(self.admin)
+        resp = self.client.post(
+            f"/api/v1/admin/platform-accounts/{pk}/rebind/",
+            {"handle": "cf_d", "reason": "改名核实"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(PlatformAccount.objects.get(pk=pk).handle, "cf_d")
+
+    def test_school_admin_cannot_touch_other_school(self):
+        r = self._bind(self.u1, "tourist")
+        pk = r.json()["id"]
+        self.client.force_authenticate(self.foreign_admin)
+        resp = self.client.post(
+            f"/api/v1/admin/platform-accounts/{pk}/unbind/",
+            {"reason": "越权尝试"}, format="json")
+        self.assertIn(resp.status_code, (403, 404))
+        self.assertTrue(PlatformAccount.objects.filter(pk=pk).exists())
+
+    def test_list_scoped_to_school_and_carries_counts(self):
+        self._bind(self.u1, "tourist")
+        self.client.force_authenticate(self.admin)
+        resp = self.client.get("/api/v1/admin/platform-accounts/?keyword=tourist")
+        self.assertEqual(resp.status_code, 200)
+        results = resp.json()["results"]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["participation_count"], 0)
+        self.assertEqual(results[0]["username"], "u1")
+
+    def test_audits_endpoint_filters_by_handle(self):
+        r = self._bind(self.u1, "tourist")
+        self._unbind(self.u1, r.json()["id"])
+        self.client.force_authenticate(self.root)
+        resp = self.client.get("/api/v1/admin/platform-accounts/audits/?handle=TOURIST")
+        self.assertEqual(resp.status_code, 200)
+        acts = [row["action"] for row in resp.json()["results"]]
+        self.assertIn(HandleAuditAction.USER_BIND, acts)
+        self.assertIn(HandleAuditAction.USER_UNBIND, acts)
+

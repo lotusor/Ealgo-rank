@@ -10,10 +10,13 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
+from django.db import transaction
+from django.db.utils import IntegrityError
 from django.utils import timezone
 from rest_framework import serializers
 
-from apps.accounts.models import Notification, PlatformAccount, User
+from apps.accounts.models import (HandleAudit, HandleAuditAction, Notification,
+                                  PlatformAccount, User)
 from apps.accounts.validators import validate_username as validate_username_value
 from apps.common.platforms import bindable_platforms, is_known, spec
 from apps.schools.models import School
@@ -58,7 +61,10 @@ class PlatformAccountSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         request = self.context.get("request")
-        user = request.user if request else None
+        actor = request.user if request else None
+        # 管理端可代别人绑定：归属人由 context 显式给出，否则就是操作者本人
+        owner = self.context.get("owner") or actor
+        bypass = bool(self.context.get("admin_bypass"))
         # PATCH 时可能只传 handle，platform 需回退到 instance
         platform = attrs.get("platform") or (
             self.instance.platform if self.instance else None)
@@ -70,38 +76,108 @@ class PlatformAccountSerializer(serializers.ModelSerializer):
                 "platform": f"{spec(platform).label} 暂未开放绑定："
                             f"该平台目前只用于赛程展示"})
         is_create = self.instance is None
-        if platform and handle and user is not None:
+        if platform and handle and owner is not None:
+            hl = handle.lower()
             # 一个用户在同一平台只能绑一个账号（uniq_user_platform 兜底）
             if is_create and PlatformAccount.objects.filter(
-                    user=user, platform=platform).exists():
+                    user=owner, platform=platform).exists():
                 raise serializers.ValidationError(
                     {"platform": "你已在该平台绑定过账号，请先解绑再重新绑定"})
             # 跨用户：同一平台账号(handle)只能被一个人绑定
             if PlatformAccount.objects.filter(
-                    platform=platform, handle_lower=handle.lower()
+                    platform=platform, handle_lower=hl
             ).exclude(pk=self.instance.pk if self.instance else None).exists():
                 raise serializers.ValidationError(
                     {"handle": "该平台账号已被其他用户绑定，无法重复绑定"})
+            # 抢注防护：别人刚卸下的 ID 在窗口内只允许原持有者拿回去
+            if not bypass:
+                blocker = HandleAudit.cooldown_blocker(
+                    platform, hl, user_id=owner.id)
+                if blocker is not None:
+                    days = settings.HANDLE_RELEASE_COOLDOWN_DAYS
+                    free_at = timezone.localtime(
+                        blocker.created_at + timedelta(days=days))
+                    raise serializers.ValidationError(
+                        {"handle": f"该平台账号 ID 近期被解绑，{days} 天内仅原持有者"
+                                   f"可重新绑定，请于 {free_at:%Y-%m-%d %H:%M} 后再试；"
+                                   f"如确需接管请联系管理员"})
         return attrs
 
+    def _owner(self):
+        """这条记录最终归属的用户：管理端代绑由 context 指定。"""
+        request = self.context.get("request")
+        return self.context.get("owner") or (request.user if request else None)
+
+    def _audit(self, platform, handle, action, *, holder=None, reason=""):
+        """写一条归属变动留痕。holder 缺省取本次归属人。"""
+        request = self.context.get("request")
+        HandleAudit.objects.create(
+            platform=platform, handle=handle,
+            handle_lower=(handle or "").strip().lower(),
+            user=holder if holder is not None else self._owner(),
+            actor=request.user if request else None,
+            action=action, reason=(reason or "")[:255])
+
+    @staticmethod
+    def _duplicate_message(exc):
+        """并发绕过校验时 DB 唯一约束会拦，把它翻译成人能看懂的提示。"""
+        text = str(exc)
+        if "uniq_user_platform" in text:
+            return "你已在该平台绑定过账号，请先解绑再重新绑定"
+        return "该平台账号已被其他用户绑定，无法重复绑定"
+
     def update(self, instance, validated_data):
-        # 修改 handle 受「一周一次」冷却限制
+        admin = bool(self.context.get("admin_bypass"))
+        reason = self.context.get("reason") or ""
+        # 修改 handle 受「一周一次」冷却限制（管理端随时可改）
         new_handle = (validated_data.get("handle") or "").strip()
         old_handle = (instance.handle or "").strip()
-        if new_handle and new_handle.lower() != old_handle.lower():
-            next_at = self._next_edit_at(instance)
-            if next_at is not None:
-                raise serializers.ValidationError(
-                    {"handle": f"平台账号 ID 一周仅可修改一次，请于 "
-                               f"{timezone.localtime(next_at):%Y-%m-%d %H:%M} 后再试"})
-            validated_data["handle_changed_at"] = timezone.now()
-        return super().update(instance, validated_data)
+        old_platform = instance.platform
+        owner = instance.user
+        changed = bool(new_handle) and new_handle.lower() != old_handle.lower()
+        if changed:
+            if not admin:
+                next_at = self._next_edit_at(instance)
+                if next_at is not None:
+                    raise serializers.ValidationError(
+                        {"handle": f"平台账号 ID 一周仅可修改一次，请于 "
+                                   f"{timezone.localtime(next_at):%Y-%m-%d %H:%M} 后再试"})
+                validated_data["handle_changed_at"] = timezone.now()
+            else:
+                validated_data["handle_changed_at"] = timezone.now()
+        try:
+            with transaction.atomic():
+                pa = super().update(instance, validated_data)
+        except IntegrityError as exc:
+            raise serializers.ValidationError(
+                {"handle": self._duplicate_message(exc)})
+        if changed:
+            kind = (HandleAuditAction.ADMIN_REBIND if admin
+                    else HandleAuditAction.USER_REBIND)
+            bind_kind = (HandleAuditAction.ADMIN_BIND if admin
+                         else HandleAuditAction.USER_BIND)
+            # 旧 ID 释放（进入冷却）+ 新 ID 落到人名下，两条都留痕
+            self._audit(old_platform, old_handle, kind, holder=owner, reason=reason)
+            self._audit(old_platform, new_handle, bind_kind, holder=owner,
+                        reason=reason)
+        return pa
 
     def create(self, validated_data):
-        request = self.context["request"]
-        validated_data["user"] = None  # 占位，下面赋值
-        validated_data["user"] = request.user
-        pa = super().create(validated_data)
+        owner = self._owner()
+        if owner is None:
+            raise serializers.ValidationError({"user": "缺少归属用户"})
+        admin = bool(self.context.get("admin_bypass"))
+        validated_data["user"] = owner
+        try:
+            with transaction.atomic():
+                pa = super().create(validated_data)
+        except IntegrityError as exc:
+            raise serializers.ValidationError(
+                {"handle": self._duplicate_message(exc)})
+        self._audit(pa.platform, pa.handle,
+                    HandleAuditAction.ADMIN_BIND if admin
+                    else HandleAuditAction.USER_BIND,
+                    holder=owner, reason=self.context.get("reason") or "")
         # 回填历史上无人认领的参赛记录（作弊记录不解除排除）
         try:
             from apps.crawler.ingest import rebind_unbound_participations
@@ -118,6 +194,51 @@ class PlatformAccountSerializer(serializers.ModelSerializer):
         from apps.crawler.tasks import dispatch_account_history_backfill
         dispatch_account_history_backfill(pa.pk)
         return pa
+
+
+class AdminPlatformAccountSerializer(PlatformAccountSerializer):
+    """管理端视角：带上归属人与成绩行数，供解绑/换绑面板决策。"""
+
+    user = serializers.IntegerField(source="user_id")
+    username = serializers.CharField(source="user.username")
+    real_name = serializers.CharField(source="user.real_name", allow_null=True)
+    school_name = serializers.CharField(source="user.school.name",
+                                        allow_null=True, default=None)
+    participation_count = serializers.SerializerMethodField()
+    # 该 ID 最近一次被谁在什么时候卸下：管理员接管前需要看到这个
+    released_at = serializers.SerializerMethodField()
+
+    class Meta(PlatformAccountSerializer.Meta):
+        fields = PlatformAccountSerializer.Meta.fields + [
+            "user", "username", "real_name", "school_name",
+            "participation_count", "released_at",
+        ]
+
+    def get_participation_count(self, obj):
+        return obj.participations.count()
+
+    def get_released_at(self, obj):
+        return HandleAudit.release_at(obj.platform, obj.handle_lower)
+
+
+class HandleAuditSerializer(serializers.ModelSerializer):
+    """留痕列表（争议回溯用），只读。"""
+
+    platform_display = serializers.CharField(source="get_platform_display",
+                                             read_only=True)
+    action_display = serializers.CharField(source="get_action_display",
+                                           read_only=True)
+    user_name = serializers.CharField(source="user.username", default=None,
+                                      allow_null=True)
+    actor_name = serializers.CharField(source="actor.username", default=None,
+                                       allow_null=True)
+
+    class Meta:
+        model = HandleAudit
+        fields = ["id", "platform", "platform_display", "handle", "action",
+                  "action_display", "user", "user_name", "actor", "actor_name",
+                  "reason", "created_at"]
+        read_only_fields = fields
 
 
 class RegisterSerializer(serializers.ModelSerializer):

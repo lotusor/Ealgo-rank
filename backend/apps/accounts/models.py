@@ -1,6 +1,7 @@
 import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
@@ -298,3 +299,87 @@ class AuthLog(TimeStampedModel):
     def __str__(self):
         who = self.user.username if self.user else self.identifier or "?"
         return f"{self.get_event_type_display()}:{who}"
+
+
+class HandleAuditAction(models.TextChoices):
+    USER_BIND = "user_bind", "用户自行绑定"
+    USER_UNBIND = "user_unbind", "用户自行解绑"
+    USER_REBIND = "user_rebind", "用户改绑"
+    ADMIN_BIND = "admin_bind", "管理端绑定"
+    ADMIN_UNBIND = "admin_unbind", "管理端解绑"
+    ADMIN_REBIND = "admin_rebind", "管理端改绑"
+
+
+class HandleAudit(TimeStampedModel):
+    """平台账号 ID 的归属变动留痕（append-only）。
+
+    一张表两个用途：
+
+      1. **争议可查** —— 谁在什么时候把哪个 handle 绑给谁、理由是什么。
+      2. **「解绑冷却」的数据源** —— handle 被卸下后一段时间内只允许**原持有者**
+         重新绑定。CF / AtCoder / 牛客的 ID 都没有归属证明手段，「先到先得」等于
+         任何人都能抢注别人尚未绑定的 handle，把别人的公开成绩算到自己学校名下，
+         而本人之后被唯一约束挡在门外。冷却把这段空档关掉。
+    """
+
+    # 会让该 handle 进入冷却窗口的动作：只要「卸下过」就算释放
+    RELEASE_ACTIONS = (
+        HandleAuditAction.USER_UNBIND, HandleAuditAction.USER_REBIND,
+        HandleAuditAction.ADMIN_UNBIND, HandleAuditAction.ADMIN_REBIND,
+    )
+
+    platform = models.CharField("平台", max_length=20,
+                                choices=Platform.choices, db_index=True)
+    handle = models.CharField("平台账号标识", max_length=100)
+    handle_lower = models.CharField("小写标识", max_length=100, db_index=True)
+    user = models.ForeignKey("accounts.User", verbose_name="当时的持有者",
+                             null=True, blank=True, on_delete=models.SET_NULL,
+                             related_name="handle_audits")
+    actor = models.ForeignKey("accounts.User", verbose_name="操作人",
+                              null=True, blank=True, on_delete=models.SET_NULL,
+                              related_name="handle_audit_actions")
+    action = models.CharField("动作", max_length=20,
+                              choices=HandleAuditAction.choices, db_index=True)
+    reason = models.CharField("理由", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "绑定变动留痕"
+        verbose_name_plural = verbose_name
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["platform", "handle_lower", "created_at"])]
+
+    def __str__(self):
+        return f"{self.get_action_display()} {self.platform}:{self.handle}"
+
+    @classmethod
+    def cooldown_blocker(cls, platform, handle_lower, *, user_id=None,
+                         days=None, now=None):
+        """handle 仍在冷却期且操作者不是原持有者时，返回那条「卸下」记录。
+
+        `days=None` 取 settings.HANDLE_RELEASE_COOLDOWN_DAYS；<=0 视为关闭该策略。
+        """
+        if days is None:
+            days = getattr(settings, "HANDLE_RELEASE_COOLDOWN_DAYS", 0)
+        if days <= 0 or not handle_lower:
+            return None
+        now = now or timezone.now()
+        latest = (cls.objects
+                  .filter(platform=platform, handle_lower=handle_lower,
+                          action__in=cls.RELEASE_ACTIONS,
+                          created_at__gte=now - timedelta(days=days))
+                  .order_by("-created_at").first())
+        if latest is None:
+            return None
+        if user_id is not None and latest.user_id == user_id:
+            # 本人解绑后反悔重绑不受冷却限制：冷却针对的是「别人抢空位」
+            return None
+        return latest
+
+    @classmethod
+    def release_at(cls, platform, handle_lower):
+        """该 handle 最近一次被卸下的时刻（前端提示「何时可绑」用）。"""
+        return (cls.objects
+                .filter(platform=platform, handle_lower=handle_lower,
+                        action__in=cls.RELEASE_ACTIONS)
+                .order_by("-created_at").values_list("created_at", flat=True).first())
+

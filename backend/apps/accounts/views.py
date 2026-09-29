@@ -7,7 +7,9 @@ accounts 视图：
 - 改密
 - 站内信（本人列表 / 单条已读 / 全部已读）
 """
+from django.db import transaction
 from django.db.models import Count, Q
+from django.db.utils import IntegrityError
 from django.utils import timezone
 from rest_framework import serializers as drf_serializers
 from rest_framework import status, viewsets
@@ -20,6 +22,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.accounts.models import (
+    HandleAudit,
+    HandleAuditAction,
     Notification,
     NotificationType,
     PlatformAccount,
@@ -28,7 +32,9 @@ from apps.accounts.models import (
     notify,
 )
 from apps.accounts.serializers import (
+    AdminPlatformAccountSerializer,
     ChangePasswordSerializer,
+    HandleAuditSerializer,
     NotificationPublishSerializer,
     NotificationSerializer,
     PlatformAccountSerializer,
@@ -51,6 +57,7 @@ from apps.accounts.security import (
 )
 from apps.accounts.validators import first_error_message, validate_username
 from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin
+from apps.common.platforms import spec
 from config.pagination import StandardPagination
 
 import logging
@@ -358,10 +365,203 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
         """
         instance = self.get_object()
         deleted, _ = instance.participations.all().delete()
+        # 留痕 + 让该 ID 进入「仅原持有者可重绑」的冷却窗口（见 HandleAudit）
+        HandleAudit.objects.create(
+            platform=instance.platform, handle=instance.handle,
+            handle_lower=instance.handle_lower, user=instance.user,
+            actor=request.user, action=HandleAuditAction.USER_UNBIND)
         self.perform_destroy(instance)
         if deleted:
             _dispatch_recompute()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminPlatformAccountViewSet(viewsets.ReadOnlyModelViewSet):
+    """管理端平台账号：随时解绑 / 改绑 / 代绑，并回看归属变动留痕。
+
+    存在理由：平台 ID 没有归属证明手段，一旦有人抢注了别人尚未绑定的 handle、
+    或学生填错了 ID，只有管理员能在冷却期之外立刻纠正。与自助端点的差别只有
+    两点 —— 绕过「一周改绑」与「解绑冷却」，以及每个动作都写 HandleAudit（可带理由）。
+
+    口径不变的部分（刻意保持与自助一致，避免管理端成为第二套语义）：
+      - 解绑 = 删掉该账号全部参赛记录并重算，不是「暂存」；
+      - 改绑 = 改名语义，旧 handle 已入库的成绩仍留在这个账号名下；
+        要把某人的成绩整体迁走，请「解绑错的一方 → 给正确的人代绑」。
+    权限：学校管理员只能操作本校用户（超管不限）。
+    """
+
+    serializer_class = AdminPlatformAccountSerializer
+    permission_classes = [IsSchoolAdmin]
+    pagination_class = StandardPagination
+    http_method_names = ["get", "post"]
+
+    def get_queryset(self):
+        qs = (PlatformAccount.objects
+              .select_related("user", "user__school", "school")
+              .annotate(participations_total=Count("participations")))
+        user = self.request.user
+        if not user.is_super_admin:
+            qs = qs.filter(user__school_id=user.school_id)
+
+        qp = self.request.query_params
+        if qp.get("user"):
+            qs = qs.filter(user_id=qp["user"])
+        if qp.get("platform"):
+            qs = qs.filter(platform=qp["platform"])
+        if qp.get("keyword"):
+            kw = qp["keyword"]
+            qs = qs.filter(Q(handle__icontains=kw)
+                           | Q(user__username__icontains=kw)
+                           | Q(user__real_name__icontains=kw))
+        return qs.order_by("user_id", "platform")
+
+    # ---------- 共用工具 ----------
+    def _forbidden(self, target):
+        """校管跨校操作直接拒；超管放行。"""
+        actor = self.request.user
+        if actor.is_super_admin:
+            return None
+        if target.school_id is None or target.school_id != actor.school_id:
+            return Response({"detail": "只能操作本校用户的平台账号"},
+                            status=status.HTTP_403_FORBIDDEN)
+        return None
+
+    def _admin_context(self, request, *, owner=None, reason=""):
+        return {"request": request, "admin_bypass": True,
+                "owner": owner, "reason": reason}
+
+    @action(detail=False, methods=["get"], url_path="audits")
+    def audits(self, request):
+        """归属变动留痕：按 handle 或用户回查，争议时拿证据。"""
+        qs = HandleAudit.objects.select_related("user", "actor")
+        if not request.user.is_super_admin:
+            qs = qs.filter(Q(user__school_id=request.user.school_id)
+                           | Q(actor__school_id=request.user.school_id))
+        qp = request.query_params
+        if qp.get("handle"):
+            qs = qs.filter(handle_lower__contains=qp["handle"].strip().lower())
+        if qp.get("user"):
+            ids = [qp["user"]]
+            qs = qs.filter(Q(user_id__in=ids) | Q(actor_id__in=ids))
+        if qp.get("platform"):
+            qs = qs.filter(platform=qp["platform"])
+        page = self.paginate_queryset(qs.order_by("-created_at")[:500])
+        if page is not None:
+            return self.get_paginated_response(
+                HandleAuditSerializer(page, many=True).data)
+        return Response(HandleAuditSerializer(qs[:500], many=True).data)
+
+    # ---------- 危险动作：解绑 / 改绑 / 代绑 ----------
+    @action(detail=True, methods=["post"])
+    def unbind(self, request, pk=None):
+        """管理员强制解绑：删除该账号全部成绩，写留痕并通知本人。"""
+        instance = self.get_object()
+        deny = self._forbidden(instance.user)
+        if deny:
+            return deny
+        reason = (request.data.get("reason") or "").strip()[:255]
+        with transaction.atomic():
+            deleted, _ = instance.participations.all().delete()
+            HandleAudit.objects.create(
+                platform=instance.platform, handle=instance.handle,
+                handle_lower=instance.handle_lower, user=instance.user,
+                actor=request.user, action=HandleAuditAction.ADMIN_UNBIND,
+                reason=reason)
+            instance.delete()
+        notify(
+            instance.user, "平台账号已被解绑",
+            f"管理员已解绑你在「{spec(instance.platform).label}」的账号 ID "
+            f"{instance.handle}，其成绩随之移除{'（原因：' + reason + '）' if reason else ''}。"
+            f"如有异议请联系学校管理员。",
+            type=NotificationType.SYSTEM,
+        )
+        if deleted:
+            _dispatch_recompute()
+        return Response({"detail": f"已解绑，删除参赛记录 {deleted} 条",
+                         "deleted": deleted})
+
+    @action(detail=True, methods=["post"])
+    def rebind(self, request, pk=None):
+        """改绑（改名语义）：绕一周冷却与解绑冷却，旧成绩保留，随后补数。"""
+        instance = self.get_object()
+        deny = self._forbidden(instance.user)
+        if deny:
+            return deny
+        new_handle = (request.data.get("handle") or "").strip()
+        if not new_handle:
+            return Response({"detail": "请填写新的平台账号 ID"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        reason = (request.data.get("reason") or "").strip()[:255]
+        old_handle = instance.handle
+        serializer = PlatformAccountSerializer(
+            instance, data={"handle": new_handle}, partial=True,
+            context=self._admin_context(request, owner=instance.user,
+                                        reason=reason))
+        serializer.is_valid(raise_exception=True)
+        try:
+            with transaction.atomic():
+                pa = serializer.save()
+        except IntegrityError as exc:
+            return Response(
+                {"detail": PlatformAccountSerializer._duplicate_message(exc)},
+                status=status.HTTP_400_BAD_REQUEST)
+        rebound = 0
+        try:
+            from apps.crawler.ingest import rebind_unbound_participations
+            rebound = rebind_unbound_participations(pa)
+            from apps.crawler.tasks import dispatch_account_history_backfill
+            dispatch_account_history_backfill(pa.pk)
+        except Exception:  # 补数失败不阻断管理操作，每日巡检会兜住
+            pass
+        if rebound:
+            _dispatch_recompute()
+        notify(
+            pa.user, "平台账号 ID 已调整",
+            f"管理员已将你在「{spec(pa.platform).label}」的账号 ID 由 {old_handle} "
+            f"改为 {pa.handle}{'（原因：' + reason + '）' if reason else ''}。",
+            type=NotificationType.SYSTEM,
+        )
+        return Response(AdminPlatformAccountSerializer(
+            pa, context={"request": request}).data)
+
+    @action(detail=False, methods=["post"], url_path="bind")
+    def bind(self, request):
+        """代绑：把某个 handle 绑给指定用户（用来把被抢的空位收归本人）。"""
+        user_id = request.data.get("user")
+        platform = (request.data.get("platform") or "").strip()
+        handle = (request.data.get("handle") or "").strip()
+        reason = (request.data.get("reason") or "").strip()[:255]
+        if not (user_id and platform and handle):
+            return Response({"detail": "user / platform / handle 均为必填"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            target = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return Response({"detail": "用户不存在"},
+                            status=status.HTTP_404_NOT_FOUND)
+        deny = self._forbidden(target)
+        if deny:
+            return deny
+        serializer = PlatformAccountSerializer(
+            data={"platform": platform, "handle": handle},
+            context=self._admin_context(request, owner=target, reason=reason))
+        serializer.is_valid(raise_exception=True)
+        try:
+            with transaction.atomic():
+                pa = serializer.save()
+        except IntegrityError as exc:
+            return Response(
+                {"detail": PlatformAccountSerializer._duplicate_message(exc)},
+                status=status.HTTP_400_BAD_REQUEST)
+        notify(
+            target, "平台账号已绑定",
+            f"管理员已为你的账号绑定「{spec(platform).label}」ID {handle}"
+            f"{'（原因：' + reason + '）' if reason else ''}。",
+            type=NotificationType.SYSTEM,
+        )
+        return Response(AdminPlatformAccountSerializer(
+            pa, context={"request": request}).data,
+            status=status.HTTP_201_CREATED)
 
 
 class ChangePasswordView(APIView):

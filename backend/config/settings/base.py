@@ -275,6 +275,13 @@ CALENDAR_AHEAD_DAYS = env_int("CALENDAR_AHEAD_DAYS", 90)
 # 日历行结束满这么多天仍未被正常爬取转正，就当作站内不收录的场次清掉
 CALENDAR_PRUNE_AFTER_DAYS = env_int("CALENDAR_PRUNE_AFTER_DAYS", 7)
 
+# ---------- 平台账号 ID 归属防护 ----------
+# handle 被卸下（用户解绑/改绑、管理端解绑/换绑）后这么多天内，只允许**原持有者**
+# 重新绑定。竞赛平台的 ID 没有归属证明手段，「先到先得」等于任何人都能抢注别人
+# 尚未绑定的 handle，把别人的公开成绩算进自己学校，而本人之后被唯一约束挡在门外。
+# 设为 0 关闭该策略（管理端随时可绕，见 HandleAudit.cooldown_blocker 的 bypass 路径）。
+HANDLE_RELEASE_COOLDOWN_DAYS = env_int("HANDLE_RELEASE_COOLDOWN_DAYS", 7)
+
 # 初始超级管理员（首次 migrate 后由 bootstrap 命令创建）
 ROOT_ADMIN_USERNAME = env("ROOT_ADMIN_USERNAME", "root")
 ROOT_ADMIN_EMAIL = env("ROOT_ADMIN_EMAIL", "root@e-algo-rank.local")

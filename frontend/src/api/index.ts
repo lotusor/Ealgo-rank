@@ -1,8 +1,10 @@
 import client from './client'
 import { createPkcePair } from '../utils/pkce'
 import type {
+  AdminPlatformAccount,
   Paginated,
   PageQuery,
+  HandleAuditRow,
   UserMe,
   UserRoster,
   School,
@@ -312,6 +314,49 @@ export async function setUserRole(
   role: 'user' | 'school_admin',
 ): Promise<UserRoster> {
   const { data } = await client.post<UserRoster>(`/users/${id}/set_role/`, { role })
+  return data
+}
+
+// ---------- 管理后台：平台账号归属（随时解绑 / 换绑 / 代绑） ----------
+export async function listAdminPlatformAccounts(
+  params: PageQuery = {},
+): Promise<Paginated<AdminPlatformAccount>> {
+  const { data } = await client.get<Paginated<AdminPlatformAccount>>(
+    '/admin/platform-accounts/', { params })
+  return data
+}
+
+/** 管理员强制解绑：该账号成绩随之删除（与用户自助解绑同一口径）。 */
+export async function adminUnbindPlatformAccount(id: number, reason = '') {
+  const { data } = await client.post<{ detail: string; deleted: number }>(
+    `/admin/platform-accounts/${id}/unbind/`, { reason })
+  return data
+}
+
+/** 改绑（改名语义，旧成绩保留）：绕过一周冷却与解绑冷却，并写留痕。 */
+export async function adminRebindPlatformAccount(
+  id: number, handle: string, reason = '',
+): Promise<AdminPlatformAccount> {
+  const { data } = await client.post<AdminPlatformAccount>(
+    `/admin/platform-accounts/${id}/rebind/`, { handle, reason })
+  return data
+}
+
+/** 代绑：把某个平台 ID 绑给指定用户（把被别人占住的空位收归本人）。 */
+export async function adminBindPlatformAccount(
+  user: number, platform: string, handle: string, reason = '',
+): Promise<AdminPlatformAccount> {
+  const { data } = await client.post<AdminPlatformAccount>(
+    '/admin/platform-accounts/bind/', { user, platform, handle, reason })
+  return data
+}
+
+/** 归属变动留痕（争议回溯）。 */
+export async function listHandleAudits(
+  params: PageQuery = {},
+): Promise<Paginated<HandleAuditRow>> {
+  const { data } = await client.get<Paginated<HandleAuditRow>>(
+    '/admin/platform-accounts/audits/', { params })
   return data
 }
 
