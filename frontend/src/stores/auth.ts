@@ -69,6 +69,31 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
   }
 
+  // 管理动作「只能向下」：与后端 apps/common/permissions.py 的 ROLE_RANK 同序，
+  // 改一处必须同步另一处（权限矩阵见 HANDOVER §0.31）。
+  // 前端这份只用于隐藏按钮 —— 真正的拦截在后端，隐藏是不留必然 403 的死控件。
+  const ROLE_RANK: Record<string, number> = {
+    user: 1,
+    school_admin: 2,
+    super_admin: 3,
+  }
+  const myRank = computed(() =>
+    isSuperAdmin.value
+      ? ROLE_RANK.super_admin
+      : isSchoolAdmin.value
+        ? ROLE_RANK.school_admin
+        : ROLE_RANK.user,
+  )
+  /** 角色序是否严格低于自己（不含「本人」这条，调用方另判） */
+  function canManageRole(targetRole?: string | null): boolean {
+    return myRank.value > (ROLE_RANK[targetRole || 'user'] ?? 0)
+  }
+  function canManage(target: { role?: string | null; username?: string } | null): boolean {
+    if (!target) return false
+    if (user.value && target.username && target.username === user.value.username) return false
+    return canManageRole(target.role)
+  }
+
   return {
     token,
     authSource,
@@ -78,6 +103,8 @@ export const useAuthStore = defineStore('auth', () => {
     isSchoolAdmin,
     isAdmin,
     isProfileComplete,
+    canManageRole,
+    canManage,
     login,
     loadMe,
     setSession,

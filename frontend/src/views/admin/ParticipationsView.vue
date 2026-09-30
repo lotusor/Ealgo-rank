@@ -3,12 +3,19 @@ import { ref, onMounted } from 'vue'
 import { listParticipations, excludeParticipation, restoreParticipation } from '@/api'
 import type { Participation } from '@/api/types'
 import { useToast } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import DataPagination from '@/components/ui/DataPagination.vue'
 import { fmtDate, fmtScore } from '@/utils/format'
 import { SCORING_PLATFORMS, type PlatformKey } from '@/platforms/meta'
 
 const toast = useToast()
+const auth = useAuthStore()
+
+// 剔除/恢复是对他人成绩动手，按「只能向下管理」隐藏入口（后端同源拦截）
+function canAct(p: Participation): boolean {
+  return auth.canManage({ role: p.user_role, username: p.user_username })
+}
 
 function affiliationHint(p: Participation): string {
   const norm = p.extra?.affiliation_normalized
@@ -137,8 +144,11 @@ onMounted(load)
               </td>
               <td class="num-cell">{{ fmtDate(p.contest_start_time) }}</td>
               <td class="center">
-                <button v-if="p.is_excluded" class="btn btn-sm btn-primary" @click="onRestore(p)">恢复</button>
-                <button v-else class="btn btn-sm btn-danger" @click="onExclude(p)">剔除</button>
+                <template v-if="canAct(p)">
+                  <button v-if="p.is_excluded" class="btn btn-sm btn-primary" @click="onRestore(p)">恢复</button>
+                  <button v-else class="btn btn-sm btn-danger" @click="onExclude(p)">剔除</button>
+                </template>
+                <span v-else class="text-tertiary caption">无权限</span>
               </td>
             </tr>
             <tr v-if="!data.length"><td colspan="10" class="empty-cell">暂无记录</td></tr>

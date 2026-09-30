@@ -56,7 +56,8 @@ from apps.accounts.security import (
     record_logout,
 )
 from apps.accounts.validators import first_error_message, validate_username
-from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin
+from apps.common.permissions import (
+    IsSchoolAdmin, IsSuperAdmin, manage_denial, manageable_roles)
 from apps.common.platforms import spec
 from config.pagination import StandardPagination
 
@@ -387,7 +388,9 @@ class AdminPlatformAccountViewSet(viewsets.ReadOnlyModelViewSet):
       - 解绑 = 删掉该账号全部参赛记录并重算，不是「暂存」；
       - 改绑 = 改名语义，旧 handle 已入库的成绩仍留在这个账号名下；
         要把某人的成绩整体迁走，请「解绑错的一方 → 给正确的人代绑」。
-    权限：学校管理员只能操作本校用户（超管不限）。
+    权限：**只能向下管理** —— 校管限本校的普通用户，超管限除超管外的所有人；
+    同级（另一个校管）、上级（超管）与本人一律 403，判定唯一来源是
+    `apps.common.permissions.manage_denial()`（矩阵见 HANDOVER §0.31）。
     """
 
     serializer_class = AdminPlatformAccountSerializer
@@ -400,6 +403,9 @@ class AdminPlatformAccountViewSet(viewsets.ReadOnlyModelViewSet):
               .select_related("user", "user__school", "school")
               .annotate(participations_total=Count("participations")))
         user = self.request.user
+        # 列表与动作同源收口：看不到就点不到，避免留下必然 403 的行内按钮
+        qs = qs.filter(user__role__in=manageable_roles(user),
+                       user__is_superuser=False)
         if not user.is_super_admin:
             qs = qs.filter(user__school_id=user.school_id)
 
@@ -417,12 +423,14 @@ class AdminPlatformAccountViewSet(viewsets.ReadOnlyModelViewSet):
 
     # ---------- 共用工具 ----------
     def _forbidden(self, target):
-        """校管跨校操作直接拒；超管放行。"""
-        actor = self.request.user
-        if actor.is_super_admin:
-            return None
-        if target.school_id is None or target.school_id != actor.school_id:
-            return Response({"detail": "只能操作本校用户的平台账号"},
+        """越权拦截：角色序不向下（同级/上级/本人）或校管跨校，一律 403。
+
+        queryset 已经过滤过一轮，这里保留是给 `bind`（目标是 POST 里的
+        user_id，不走 queryset）用，同时防未来有人放宽列表却忘了动作侧。
+        """
+        denial = manage_denial(self.request.user, target)
+        if denial:
+            return Response({"detail": denial},
                             status=status.HTTP_403_FORBIDDEN)
         return None
 
@@ -660,8 +668,9 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         """超管直接调整成员角色。
 
         防护：超级管理员身份不通过本接口授予/撤销（下拉不含该档）；
-        不能修改自己（防唯一超管误操作锁死）；设为学校管理员要求用户已
-        归属学校；与现状相同的角色拒绝重复设置。变更后站内信告知本人。
+        不能修改自己（防唯一超管误操作锁死）；同级超管之间不可互改
+        （降权属 break-glass，走服务器侧 Django Admin）；设为学校管理员要求
+        用户已归属学校；与现状相同的角色拒绝重复设置。变更后站内信告知本人。
         """
         target = self.get_object()
         role = (request.data.get("role") or "").strip()
@@ -675,6 +684,10 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                 {"detail": "不能修改自己的角色"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        denial = manage_denial(request.user, target)
+        if denial:
+            return Response({"detail": denial},
+                            status=status.HTTP_403_FORBIDDEN)
         if role == target.role:
             return Response(
                 {"detail": f"该用户已经是「{target.get_role_display()}」"},

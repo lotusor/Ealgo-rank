@@ -326,7 +326,9 @@ onMounted(() => {
               </td>
               <td class="num-cell">{{ fmtDate(u.date_joined) }}</td>
               <td class="num-cell">
-                <button class="btn btn-ghost btn-sm" @click="openAccounts(u)">平台账号</button>
+                <!-- 只能向下管理：同级/上级与本人的行不给入口（后端同样拦，见 permissions.manage_denial） -->
+                <button v-if="auth.canManage(u)" class="btn btn-ghost btn-sm" @click="openAccounts(u)">平台账号</button>
+                <span v-else class="text-tertiary caption">—</span>
               </td>
             </tr>
             <tr v-if="!data.length"><td colspan="8" class="empty-cell">暂无成员</td></tr>

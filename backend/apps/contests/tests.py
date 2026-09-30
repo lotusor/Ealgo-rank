@@ -1,4 +1,5 @@
-"""#4 校管参赛记录隔离：仅可见/可操作本校记录，跨校请求 404。
+"""#4 校管参赛记录隔离：仅可见本校记录；写动作还要「只能向下」——
+同校的同级校管与超管的成绩行可见但不可排除/恢复（403），跨校记录不在 queryset 内为 404。
 
 另含阶段2（2026-09-18）新增的 Contest 只读接口测试：状态派生、系列、
 关键字、结束时间区间、排序白名单与 /contests/meta/ 元数据。
@@ -36,12 +37,15 @@ class ParticipationIsolationTests(APITestCase):
         self.admin_b = make_user("adminB", UserRole.SCHOOL_ADMIN,
                                  school=self.school_b)
 
+        # 学校归属的源是 User.school，PlatformAccount.school 只是
+        # sync_platform_accounts_school() 维护的镜像，所以 fixture 里两处都要给，
+        # 不能只填镜像（管理端的越权判定读的是源字段）。
         self.pa_a = PlatformAccount.objects.create(
-            user=make_user("uA"), platform=Platform.CODEFORCES,
-            handle="cf_a", school=self.school_a)
+            user=make_user("uA", school=self.school_a),
+            platform=Platform.CODEFORCES, handle="cf_a", school=self.school_a)
         self.pa_b = PlatformAccount.objects.create(
-            user=make_user("uB"), platform=Platform.CODEFORCES,
-            handle="cf_b", school=self.school_b)
+            user=make_user("uB", school=self.school_b),
+            platform=Platform.CODEFORCES, handle="cf_b", school=self.school_b)
 
         self.contest = Contest.objects.create(
             platform=Platform.CODEFORCES, external_id="c1",
@@ -80,6 +84,54 @@ class ParticipationIsolationTests(APITestCase):
         ids = {p["id"] for p in resp.data["results"]}
         self.assertIn(self.part_b.id, ids)
         self.assertNotIn(self.part_a.id, ids)
+
+    # ---------- 只能向下管理：排除/恢复是对他人成绩动手 ----------
+
+    def _pa_of(self, user, handle, school):
+        pa = PlatformAccount.objects.create(
+            user=user, platform=Platform.CODEFORCES, handle=handle,
+            school=school)
+        return Participation.objects.create(
+            contest=self.contest, platform_account=pa, handle=handle)
+
+    def test_school_admin_cannot_exclude_peer_admin_row(self):
+        """同校平级管理员的参赛行：记录在列表里可见，但写动作必须被挡。"""
+        peer = make_user("peerA", UserRole.SCHOOL_ADMIN, school=self.school_a)
+        target = self._pa_of(peer, "cf_peer", self.school_a)
+        self.client.force_authenticate(self.admin_a)
+        resp = self.client.post(PART_EXCLUDE(target.id), {}, format="json")
+        self.assertEqual(resp.status_code, 403, resp.content)
+        target.refresh_from_db()
+        self.assertFalse(target.is_excluded)
+
+    def test_school_admin_cannot_exclude_super_admin_row(self):
+        root = User.objects.create_superuser(
+            username="rootA", email="roota@x.com", password="Root12345!",
+            school=self.school_a)
+        target = self._pa_of(root, "cf_root", self.school_a)
+        self.client.force_authenticate(self.admin_a)
+        self.assertEqual(self.client.post(
+            PART_EXCLUDE(target.id), {}, format="json").status_code, 403)
+        target.refresh_from_db()
+        self.assertFalse(target.is_excluded)
+
+    def test_super_admin_can_exclude_school_admin_row(self):
+        root = User.objects.create_superuser(
+            username="rootB", email="rootb@x.com", password="Root12345!",
+            school=self.school_b)
+        peer = make_user("peerB", UserRole.SCHOOL_ADMIN, school=self.school_a)
+        target = self._pa_of(peer, "cf_peerB", self.school_a)
+        self.client.force_authenticate(root)
+        resp = self.client.post(PART_EXCLUDE(target.id), {}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        target.refresh_from_db()
+        self.assertTrue(target.is_excluded)
+
+    def test_list_exposes_owner_role_for_button_gating(self):
+        self.client.force_authenticate(self.admin_a)
+        resp = self.client.get(PART_LIST)
+        row = next(p for p in resp.data["results"] if p["id"] == self.part_a.id)
+        self.assertEqual(row["user_role"], UserRole.USER)
 
 
 class ContestApiTests(APITestCase):

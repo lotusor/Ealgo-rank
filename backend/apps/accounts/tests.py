@@ -715,3 +715,185 @@ class HandleReleaseCooldownTests(APITestCase):
         self.assertIn(HandleAuditAction.USER_BIND, acts)
         self.assertIn(HandleAuditAction.USER_UNBIND, acts)
 
+
+class DownwardManagementTests(APITestCase):
+    """管理动作「只能向下」：同级、上级、本人的平台账号绑定一律不可操作。
+
+    只校验同校是不够的 —— 校管之间平级，谁都能改谁的绑定就等于谁都能把别人的
+    成绩挪走；超管账号也不该被校管动。判定唯一来源是
+    `apps.common.permissions.manage_denial()`，权限矩阵见 HANDOVER §0.31。
+    """
+
+    ADMIN_LIST = "/api/v1/admin/platform-accounts/"
+
+    def setUp(self):
+        self.school_a = School.objects.create(name="甲大", code="jd", short_name="甲")
+        self.school_b = School.objects.create(name="乙大", code="yd", short_name="乙")
+
+        def mk(username, role=UserRole.USER, school=None):
+            return User.objects.create_user(username=username, password="Test1234!",
+                                            role=role, school=school)
+
+        self.student = mk("student", school=self.school_a)
+        self.actor = mk("actor", UserRole.SCHOOL_ADMIN, self.school_a)      # 操作者
+        self.peer = mk("peer", UserRole.SCHOOL_ADMIN, self.school_a)       # 同校同级
+        self.subd = mk("subd", UserRole.SCHOOL_ADMIN, self.school_b)       # 下级但外校
+        self.foreign_student = mk("fstu", UserRole.USER, self.school_b)    # 普通用户外校
+        self.super_role = mk("superrole", UserRole.SUPER_ADMIN, self.school_a)
+        self.super_flag = User.objects.create_superuser(
+            username="superflag", email="sf@x.com", password="Root12345!",
+            school=self.school_a)
+
+        for target in ("apps.crawler.tasks.dispatch_account_history_backfill",
+                       "apps.accounts.views._dispatch_recompute"):
+            patcher = patch(target)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _pa(self, user, handle):
+        return PlatformAccount.objects.create(
+            user=user, platform="codeforces", handle=handle,
+            handle_lower=handle.lower(), school=user.school)
+
+    def _as(self, user):
+        self.client.force_authenticate(user)
+
+    def _unbind(self, actor, pa):
+        self._as(actor)
+        return self.client.post(f"{self.ADMIN_LIST}{pa.pk}/unbind/",
+                               {"reason": "越权边界用例"}, format="json")
+
+    def _bind(self, actor, target_user, handle):
+        self._as(actor)
+        return self.client.post(f"{self.ADMIN_LIST}bind/",
+                               {"user": target_user.id, "platform": "codeforces",
+                                "handle": handle, "reason": "越权边界用例"},
+                               format="json")
+
+    # ---------- 校管：只能动本校普通用户 ----------
+
+    def test_school_admin_blocks_peer_admin_same_school(self):
+        pa = self._pa(self.peer, "cf_peer")
+        resp = self._unbind(self.actor, pa)
+        self.assertIn(resp.status_code, (403, 404), resp.content)
+        self.assertTrue(PlatformAccount.objects.filter(pk=pa.pk).exists())
+        self.assertFalse(HandleAudit.objects.filter(
+            action=HandleAuditAction.ADMIN_UNBIND).exists())
+
+    def test_school_admin_blocks_super_admin_targets(self):
+        for super_user in (self.super_role, self.super_flag):
+            with self.subTest(user=super_user.username):
+                pa = self._pa(super_user, f"cf_{super_user.username}")
+                self.assertIn(self._unbind(self.actor, pa).status_code, (403, 404))
+                self.assertTrue(PlatformAccount.objects.filter(pk=pa.pk).exists())
+
+    def test_school_admin_blocks_self_via_admin_channel(self):
+        """管理端绕冷却，放行「操作自己」等于给管理员开后门，自助端点才是正路。"""
+        pa = self._pa(self.actor, "cf_self")
+        self.assertIn(self._unbind(self.actor, pa).status_code, (403, 404))
+        self.assertEqual(self._bind(self.actor, self.actor, "cf_self2").status_code, 403)
+        self.assertTrue(PlatformAccount.objects.filter(pk=pa.pk).exists())
+        self.assertFalse(PlatformAccount.objects.filter(handle="cf_self2").exists())
+
+    def test_school_admin_still_manages_plain_user(self):
+        pa = self._pa(self.student, "cf_stu")
+        resp = self._unbind(self.actor, pa)
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertFalse(PlatformAccount.objects.filter(pk=pa.pk).exists())
+
+    def test_bind_denials_carry_actionable_message(self):
+        resp = self._bind(self.actor, self.peer, "cf_x")
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("权限低于自己", resp.json()["detail"])
+
+    # ---------- 超管：向下到校管，但仍不含平级与本人 ----------
+
+    def test_super_admin_manages_school_admin_and_user(self):
+        for target in (self.student, self.peer):
+            with self.subTest(user=target.username):
+                pa = self._pa(target, f"cf_{target.username}")
+                self.assertEqual(self._unbind(self.super_role, pa).status_code, 200)
+
+    def test_super_admin_blocks_peer_super_and_self(self):
+        for other in (self.super_role, self.super_flag):
+            with self.subTest(user=other.username):
+                self.assertEqual(
+                    self._bind(self.super_flag, other, f"cf_{other.username}").status_code,
+                    403)
+
+    def test_rebind_by_school_admin_on_peer_is_invisible(self):
+        pa = self._pa(self.peer, "cf_peer2")
+        self._as(self.actor)
+        resp = self.client.post(f"{self.ADMIN_LIST}{pa.pk}/rebind/",
+                               {"handle": "cf_stolen"}, format="json")
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(PlatformAccount.objects.get(pk=pa.pk).handle, "cf_peer2")
+
+    # ---------- 列表可见性与动作一致 ----------
+
+    def test_list_only_contains_manageable_rows(self):
+        self._pa(self.student, "cf_l1")
+        self._pa(self.peer, "cf_l2")
+        self._pa(self.super_role, "cf_l3")
+        self._pa(self.super_flag, "cf_l4")
+        self._pa(self.actor, "cf_l5")          # 本人
+
+        self._as(self.actor)
+        seen = {r["handle"] for r in
+                self.client.get(self.ADMIN_LIST).json()["results"]}
+        self.assertEqual(seen, {"cf_l1"})
+
+        self._as(self.super_role)
+        seen = {r["handle"] for r in
+                self.client.get(self.ADMIN_LIST).json()["results"]}
+        self.assertEqual(seen, {"cf_l1", "cf_l2", "cf_l5"})
+
+    # ---------- 角色变更同样向下 ----------
+
+    def test_set_role_blocks_peer_super(self):
+        self._as(self.super_role)
+        resp = self.client.post(f"/api/v1/users/{self.super_flag.id}/set_role/",
+                               {"role": "user"}, format="json")
+        self.assertEqual(resp.status_code, 403, resp.content)
+        self.super_flag.refresh_from_db()
+        self.assertTrue(self.super_flag.is_superuser)
+
+    def test_set_role_allows_downward(self):
+        self._as(self.super_role)
+        resp = self.client.post(f"/api/v1/users/{self.peer.id}/set_role/",
+                               {"role": "user"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+    # ---------- 判定函数本体的真值表（矩阵的机器可读版） ----------
+
+    def test_manage_denial_truth_table(self):
+        from apps.common.permissions import manage_denial, role_rank
+
+        self.assertEqual(
+            [role_rank(u) for u in (self.student, self.actor, self.super_role,
+                                    self.super_flag)],
+            [1, 2, 3, 3])
+
+        cases = [
+            (self.actor, self.student, None),          # 向下：放行
+            (self.actor, self.peer, "同级与更高"),
+            (self.actor, self.super_role, "同级与更高"),
+            (self.actor, self.actor, "自己的账号"),
+            # 角色序先于学校范围：外校校管既平级又跨校，报的是「同级与更高」
+            (self.actor, self.subd, "同级与更高"),
+            (self.actor, self.foreign_student, "本校"),
+            (self.super_role, self.peer, None),
+            (self.super_role, self.student, None),
+            (self.super_role, self.foreign_student, None),   # 超管不受学校范围限制
+            (self.super_role, self.super_flag, "同级与更高"),
+            (self.super_role, self.super_role, "自己的账号"),
+        ]
+        for actor, target, expect in cases:
+            with self.subTest(actor=actor.username, target=target.username):
+                denial = manage_denial(actor, target)
+                if expect is None:
+                    self.assertIsNone(denial)
+                else:
+                    self.assertIsNotNone(denial)
+                    self.assertIn(expect, denial)
+

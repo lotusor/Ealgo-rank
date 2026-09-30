@@ -244,6 +244,8 @@ export interface Participation {
   platform_account: number | null
   user_username: string
   user_real_name: string
+  /** 归属用户角色：管理动作「只能向下」，前端据此隐藏越权按钮 */
+  user_role: string
   handle: string
   display_name: string
   rank: number | null

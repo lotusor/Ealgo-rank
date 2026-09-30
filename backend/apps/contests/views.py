@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from rest_framework.response import Response
 
 from apps.common.models import ExcludeReason, Platform
-from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin
+from apps.common.permissions import IsSchoolAdmin, IsSuperAdmin, manage_denial
 from apps.common.platforms import spec
 from apps.contests.models import Contest, ContestDifficultyFactor, Participation
 from apps.contests.serializers import (
@@ -199,6 +199,10 @@ class ParticipationViewSet(viewsets.ReadOnlyModelViewSet):
             permission_classes=[IsSchoolAdmin])
     def exclude(self, request, pk=None):
         p = self.get_object()
+        denial = manage_denial(request.user, p.platform_account.user)
+        if denial:
+            return Response({"detail": denial},
+                            status=status.HTTP_403_FORBIDDEN)
         p.is_excluded = True
         p.exclude_reason = ExcludeReason.MANUAL
         p.save()
@@ -208,6 +212,10 @@ class ParticipationViewSet(viewsets.ReadOnlyModelViewSet):
             permission_classes=[IsSchoolAdmin])
     def restore(self, request, pk=None):
         p = self.get_object()
+        denial = manage_denial(request.user, p.platform_account.user)
+        if denial:
+            return Response({"detail": denial},
+                            status=status.HTTP_403_FORBIDDEN)
         p.is_excluded = False  # 模型 save() 会自动清空 exclude_reason
         p.save()
         return Response(ParticipationSerializer(p).data, status=status.HTTP_200_OK)

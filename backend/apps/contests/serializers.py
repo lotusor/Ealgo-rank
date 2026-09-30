@@ -72,6 +72,9 @@ class ParticipationSerializer(serializers.ModelSerializer):
         source="platform_account.user.username", read_only=True, default="")
     user_real_name = serializers.CharField(
         source="platform_account.user.real_name", read_only=True, default="")
+    # 归属用户角色：管理动作「只能向下」，前端据此隐藏必然 403 的排除/恢复按钮
+    user_role = serializers.CharField(
+        source="platform_account.user.role", read_only=True, default="")
     exclude_reason_display = serializers.CharField(
         source="get_exclude_reason_display", read_only=True)
 
@@ -80,7 +83,7 @@ class ParticipationSerializer(serializers.ModelSerializer):
         fields = [
             "id", "contest", "contest_name", "contest_platform",
             "contest_platform_display", "contest_start_time", "contest_is_rated",
-            "platform_account", "user_username", "user_real_name",
+            "platform_account", "user_username", "user_real_name", "user_role",
             "handle", "display_name", "rank", "total_score", "solved_count",
             "is_excluded", "exclude_reason", "exclude_reason_display",
             "extra", "created_at",
