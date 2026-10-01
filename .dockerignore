@@ -13,7 +13,9 @@ staticfiles/
 db.sqlite3
 .env
 .env.prod
- Shot/
+# 本地截图目录（原先写成 " Shot/"：前导空格 + 名字不符，等于没排除，
+# 结果整目录被烘进生产镜像）
+_shots/
 # 保留 .env.prod.example（模板，非密钥）进入镜像无关紧要，但排除避免混淆
 .env.prod.example
 # 部署产物目录（media 持久卷与前端 dist 由宿主机提供）

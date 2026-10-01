@@ -1,0 +1,167 @@
+# E-algo-rank — CI
+#
+# 三个 job：
+#   backend    Django 测试 + 迁移漂移 + 生产配置下的系统检查
+#   frontend   Vue3 + Vite：vue-tsc 零错误 + 构建产物
+#   images     生产镜像构建（只 build 不 push），能抓住 Dockerfile/vendor 断裂
+#
+# 与 lotus-passport 的 CI 保持同一套约定：有锁文件就按锁装、新 push 取消旧 run、
+# 全程只读权限、**workflow 里不出现任何生产主机地址或凭据**（仓库是 public）。
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+  NODE_VERSION: "22"
+
+jobs:
+  # ------------------------------------------------------------------ #
+  backend:
+    name: backend (Django)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install (locked runtime deps)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ../requirements.txt
+
+      # 统一认证中心 SDK 未发布到 PyPI（演示项目），生产镜像靠 vendored 源码装，
+      # CI 从公开仓库拉同一份源码装 —— 顺带验证两仓契约不脱节。
+      - name: Install Lotus Passport SDK
+        run: |
+          git clone --depth 1 https://github.com/lotusor/lotus-passport.git "$RUNNER_TEMP/passport"
+          pip install "$RUNNER_TEMP/passport/lotus-passport-sdk[drf]"
+
+      # 测试库是 SQLite，不需要 PG/Redis；也不需要 .env（各配置项都有安全默认值，
+      # 这条用例集在「无 .env」环境下验证过等价通过）。
+      - name: Test suite
+        run: python manage.py test
+
+      # 改了模型却忘了生成迁移 → 这里直接红，而不是等部署后炸。
+      - name: Migration drift
+        run: python manage.py makemigrations --check --dry-run
+
+      # 生产配置分支：prod settings 会强制要求 SECRET_KEY / ALLOWED_HOSTS，
+      # Redis/PG 只读配置不建连接。ERROR 一律失败；security.* 警告也当失败处理
+      # （这类警告在 prod 分支本就不该出现，出现说明有人改坏了安全配置）。
+      - name: Production system checks
+        env:
+          DJANGO_ENV: "prod"
+          # 一次性占位值：只为满足 prod settings 的「必须有 SECRET_KEY」硬检查，
+          # 不签任何令牌、跑完即随 runner 销毁。真实密钥永不进本仓库（public）。
+          DJANGO_SECRET_KEY: ci-9f3b7c21ae604d8fb5e0c7a29d14683bf07e5a1c2d938476ba0e5f31c8d27a94
+          DJANGO_ALLOWED_HOSTS: ci.example.com
+        run: |
+          python manage.py check --deploy --fail-level ERROR | tee "$RUNNER_TEMP/deploy-check.log"
+          if grep -qE "\(security\.W[0-9]+\)" "$RUNNER_TEMP/deploy-check.log"; then
+            echo "::error::生产配置下出现 security.* 系统检查警告"
+            grep -E "\(security\.W[0-9]+\)" "$RUNNER_TEMP/deploy-check.log"
+            exit 1
+          fi
+
+      # API 文档告警（drf_spectacular W002 等）目前不阻塞：数量大且属代码质量债，
+      # 先如实报数，避免「CI 红 → 大家学会忽略红」的更糟结局。
+      - name: API schema advisory count
+        if: always()
+        env:
+          DJANGO_ENV: "prod"
+          DJANGO_SECRET_KEY: ci-9f3b7c21ae604d8fb5e0c7a29d14683bf07e5a1c2d938476ba0e5f31c8d27a94
+          DJANGO_ALLOWED_HOSTS: ci.example.com
+        run: |
+          n=$(python manage.py check 2>&1 | grep -cE "drf_spectacular\.W" || true)
+          {
+            echo "## API schema 告警"
+            echo ""
+            echo "- `drf_spectacular.W` 计数：**$n**（advisory，不阻塞）"
+            echo "- 定位：给 APIView 补 `serializer_class`，属存量代码质量债"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ #
+  frontend:
+    name: frontend (Vue 3 + Vite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # npm ci 而非 npm install：严格按 lock，package.json 与 lock 脱节会当场失败。
+      - name: Install (locked)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish bundle size to summary
+        run: |
+          {
+            echo "## 前端产物"
+            echo ""
+            echo '```'
+            du -as dist/assets 2>/dev/null | tail -1
+            ls -1 dist/assets/*.js | wc -l | xargs echo "js chunks:"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ #
+  images:
+    name: docker image
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Dockerfile 硬性要求构建上下文里有 ./vendor/lotus-passport-sdk（SDK 不在
+      # PyPI）。生产机上由部署流程落地，CI 这里从公开仓库取同一份源码补齐 ——
+      # 缺了它镜像构建会失败，这条 job 就是用来发现这类断裂的。
+      - name: Stage vendored SDK
+        run: |
+          git clone --depth 1 https://github.com/lotusor/lotus-passport.git "$RUNNER_TEMP/passport"
+          mkdir -p vendor
+          rm -rf "$RUNNER_TEMP/passport/.git"
+          cp -a "$RUNNER_TEMP/passport/lotus-passport-sdk" vendor/lotus-passport-sdk
+
+      - uses: docker/setup-buildx-action@v3
+
+      # 只构建，不推送：本仓库不做 CD，也不往任何 registry 写东西。
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
