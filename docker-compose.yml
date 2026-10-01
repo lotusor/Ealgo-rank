@@ -17,6 +17,11 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      # 生产在国内构建，走清华源（Dockerfile 默认是上游源，CI 用默认值）。
+      # 这三个服务的 build 段必须保持一致，否则同一份代码会构建出不同镜像。
+      args:
+        APT_MIRROR: mirrors.tuna.tsinghua.edu.cn
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
     network_mode: "host"
     env_file:
       - .env.prod
@@ -32,6 +37,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        APT_MIRROR: mirrors.tuna.tsinghua.edu.cn
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
     network_mode: "host"
     command: celery -A config worker -Q crawl,crawl_slow -l info
     env_file:
@@ -53,6 +61,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        APT_MIRROR: mirrors.tuna.tsinghua.edu.cn
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
     network_mode: "host"
     command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     env_file:

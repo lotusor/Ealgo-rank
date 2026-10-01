@@ -154,14 +154,32 @@ jobs:
           rm -rf "$RUNNER_TEMP/passport/.git"
           cp -a "$RUNNER_TEMP/passport/lotus-passport-sdk" vendor/lotus-passport-sdk
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Probe build-time mirrors
+        run: |
+          {
+            echo "## 镜像构建环境"
+            echo ""
+            echo '```'
+            for u in https://deb.debian.org https://pypi.org https://mirrors.tuna.tsinghua.edu.cn; do
+              printf '%-42s %s\n' "$u" "$(curl -sS -o /dev/null -m 12 -w '%{http_code}' "$u/" 2>&1 | tail -1)"
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      # 只构建，不推送：本仓库不做 CD，也不往任何 registry 写东西。
+      # 用裸 docker build 而不是 build-push-action：失败时把日志尾部塞进
+      # ::error:: annotation —— Actions 日志要登录才能看，annotation 走公开 API
+      # 就能读到，CI 挂掉时不必人肉去翻页面。只构建，不推送。
       - name: Build backend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          load: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        shell: bash
+        run: |
+          set +e
+          docker build -f docker/Dockerfile -t rank-ci:"${GITHUB_SHA::7}" . 2>&1 \
+            | tee "$RUNNER_TEMP/build.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            tail=$(tail -n 20 "$RUNNER_TEMP/build.log" \
+                   | sed -e 's/%/%25/g' -e 's/#/%23/g' -e 's/\r/%0D/g' | tr '\n' '%0A')
+            echo "::error title=docker build failed (exit $rc)::${tail}"
+            exit "$rc"
+          fi
+          docker image inspect rank-ci:"${GITHUB_SHA::7}" --format 'image ok: {{.Size}} bytes'
