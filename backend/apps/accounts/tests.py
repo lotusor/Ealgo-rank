@@ -2,7 +2,7 @@ import json
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -896,4 +896,34 @@ class DownwardManagementTests(APITestCase):
                 else:
                     self.assertIsNotNone(denial)
                     self.assertIn(expect, denial)
+
+
+class ClientIpTrustBoundaryTests(SimpleTestCase):
+    """锁 get_client_ip() 的取值口径，配合 deploy/rank-proxy.conf 的「覆盖式」XFF。
+
+    边缘 nginx 用 $remote_addr *覆盖* X-Forwarded-For，XFF 首位才是可信的真实
+    客户端。若哪天改回 $proxy_add_x_forwarded_for（追加），访客自带的伪造值就排在
+    首位，按 IP 的限流、登录锁定与审计 IP 一起失效——这条用例就是那道闸。
+    """
+
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def _ip(self, **extra):
+        from apps.accounts.security import get_client_ip
+
+        return get_client_ip(self.factory.get("/", **extra))
+
+    def test_xff_first_entry_is_the_client(self):
+        self.assertEqual(
+            self._ip(HTTP_X_FORWARDED_FOR="203.0.113.7, 127.0.0.1"),
+            "203.0.113.7",
+        )
+
+    def test_falls_back_to_x_real_ip(self):
+        self.assertEqual(self._ip(HTTP_X_REAL_IP="203.0.113.8"), "203.0.113.8")
+
+    def test_without_proxy_headers_uses_peer_address(self):
+        self.assertEqual(self._ip(REMOTE_ADDR="203.0.113.9"), "203.0.113.9")
+
 

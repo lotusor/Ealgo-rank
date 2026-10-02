@@ -61,6 +61,10 @@ def get_client_ip(request) -> str:
 
     信任反向代理（nginx）注入的 X-Forwarded-For，取第一个（真实客户端）。
     校园网场景：这一项往往是整栋/整校共享的 NAT 出口 IP，故 IP 限流必须放宽。
+
+    前提：边缘 nginx 用 ``$remote_addr`` **覆盖** X-Forwarded-For（见
+    deploy/rank-proxy.conf）。若哪天改回 ``$proxy_add_x_forwarded_for``（追加），
+    首位就是访客自带的伪造值，按 IP 的限流、登录锁定与审计 IP 一起失效。
     """
     xff = request.META.get("HTTP_X_FORWARDED_FOR")
     if xff:

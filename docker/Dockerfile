@@ -45,8 +45,9 @@ WORKDIR /app/backend
 EXPOSE 8001
 
 # 默认命令（docker-compose 对 worker/beat 覆盖 command）
-# host 网络模式下绑定 127.0.0.1:8001，由 宝塔 nginx 反代
+# host 网络模式下只绑回环 127.0.0.1:8001，由 rank-nginx(:8003，同样只绑回环) 反代；
+# 绑 0.0.0.0 会让直连 IP:8001 的请求绕过 TLS 终结、444 兜底 vhost 与响应头注入。
 CMD ["gunicorn", "config.wsgi:application", \
      "-k", "gthread", "-w", "4", \
-     "-b", "0.0.0.0:8001", "--timeout", "120", \
+     "-b", "127.0.0.1:8001", "--timeout", "120", \
      "--env", "DJANGO_ENV=prod"]
