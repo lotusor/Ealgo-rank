@@ -1,0 +1,308 @@
+<script setup lang="ts">
+import { computed, ref, onMounted } from 'vue'
+import { getPublicStats, listRankings, listSchools } from '@/api'
+import type { PublicStats } from '@/api'
+import type { RankSnapshot, School } from '@/api/types'
+import { ALL_PLATFORMS, platformMeta } from '@/platforms/meta'
+import { fmtScore, fmtCount, medalRowClass, orgShort } from '@/utils/format'
+import RankBadge from '@/components/ui/RankBadge.vue'
+import OrgLogo from '@/components/ui/OrgLogo.vue'
+import SeasonBanner from '@/components/SeasonBanner.vue'
+
+const top5 = ref<RankSnapshot[]>([])
+const schoolsMap = ref<Record<number, School>>({})
+const stats = ref<PublicStats>({
+  schools: 0, contests: 0, users: 0, participations: 0, platforms: [],
+})
+const loading = ref(true)
+
+/** 平台清单只有一份来源（`@/platforms/meta`），这里派生文案 */
+const platformCount = ALL_PLATFORMS.length
+const platformNames = ALL_PLATFORMS.map((p) => p.label).join('、')
+
+/**
+ * 「支持的平台」卡片：文案来自 meta，数字来自 /stats/ 的真实计数。
+ * 原先这里是写死的 3 张卡 + `contests: 712 / users: 2103` 一组演示数字 ——
+ * 加一个平台就得再编一个数，页面也会永远停在「三大平台」。
+ */
+const platformCards = computed(() =>
+  stats.value.platforms.map((p) => {
+    const m = platformMeta(p.key)
+    return {
+      ...p,
+      icon: m?.icon ?? '',
+      site: m?.site ?? p.key,
+      desc: m?.desc ?? '',
+    }
+  }),
+)
+
+const features = [
+  { icon: 'M3 3v18h18M7 14l4-4 4 4 5-5', cls: 'primary', title: '学校积分排名', desc: '按学校维度聚合选手成绩，科学积分模型，实时更新榜单。' },
+  { icon: 'M3 3v18h18M7 14l4-4 4 4 5-5', cls: 'cyan', title: '个人成绩追踪', desc: '跨平台 Rating 折线图、参赛历史、积分明细，一目了然。' },
+  { icon: 'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M12 12a3 3 0 1 0 0 0', cls: 'success', title: '自动数据采集', desc: '爬虫定时同步各已接入平台的比赛成绩与赛程排期，零人工录入。' },
+  { icon: 'M13 2L3 14h9l-1 8 10-12h-9l1-8z', cls: 'warning', title: '智能积分引擎', desc: '融合难度系数、参赛规模、排名表现，公平量化实力。' },
+]
+
+function schoolMeta(id: number | null) {
+  if (id == null) return null
+  return schoolsMap.value[id] || null
+}
+
+onMounted(async () => {
+  // 统计数字来自公开端点（/stats/，AllowAny）：对所有用户口径一致
+  getPublicStats()
+    .then((s) => {
+      stats.value = s
+    })
+    .catch(() => {})
+  // 榜单与学校数据仍分别加载（列表渲染需要明细）
+  listSchools({ page_size: 100 })
+    .then((schools) => {
+      schools.results.forEach((s) => (schoolsMap.value[s.id] = s))
+    })
+    .catch(() => {})
+  listRankings({ scope: 'school', period: 'all', page: 1, page_size: 5 })
+    .then((rankings) => {
+      top5.value = rankings.results
+    })
+    .catch(() => {})
+  loading.value = false
+})
+</script>
+
+<template>
+  <div class="container-wide">
+    <!-- Hero -->
+    <div class="hero">
+      <div class="hero-glow" />
+      <div class="hero-orb" />
+      <div class="hero-inner">
+        <span class="badge badge-primary"><span class="dot dot-pulse" />已覆盖 {{ fmtCount(stats.schools) }} 所高校 · 实时同步 {{ platformCount }} 大赛事平台</span>
+        <h1 class="display">高校算法竞赛，<span class="gradient-text">谁与争锋</span></h1>
+        <p class="body text-secondary hero-sub">
+          自动汇聚 {{ platformNames }} 的比赛成绩与赛程排期，按学校维度智能积分排名。让每一行代码的实力，被看见、被衡量、被铭记。
+        </p>
+        <div class="hero-actions">
+          <router-link to="/u/rankings" class="btn btn-primary btn-lg">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18" /><path d="M7 14l4-4 4 4 5-5" /></svg>
+            查看排名
+          </router-link>
+          <router-link to="/u/contests" class="btn btn-secondary btn-lg">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><path d="M10 17l5-5-5-5M15 12H3" /></svg>
+            比赛列表
+          </router-link>
+        </div>
+      </div>
+    </div>
+
+    <!-- Season banner -->
+    <SeasonBanner />
+
+    <!-- Stats -->
+    <div class="grid grid-4 stats-row">
+      <div class="stat-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start">
+          <div>
+            <div class="stat-label">覆盖学校</div>
+            <div class="stat-value num">{{ fmtCount(stats.schools) }}</div>
+            <div class="stat-sub">所高校</div>
+          </div>
+          <div class="stat-icon primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z" /></svg></div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start">
+          <div>
+            <div class="stat-label">收录比赛</div>
+            <div class="stat-value num">{{ fmtCount(stats.contests) }}</div>
+            <div class="stat-sub">场赛事</div>
+          </div>
+          <div class="stat-icon cyan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2z" /></svg></div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start">
+          <div>
+            <div class="stat-label">在册学生</div>
+            <div class="stat-value num">{{ fmtCount(stats.users) }}</div>
+            <div class="stat-sub">名选手</div>
+          </div>
+          <div class="stat-icon success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></svg></div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start">
+          <div>
+            <div class="stat-label">参赛记录</div>
+            <div class="stat-value num">{{ fmtCount(stats.participations) }}</div>
+            <div class="stat-sub">条记录</div>
+          </div>
+          <div class="stat-icon warning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5" /></svg></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Platforms -->
+    <div class="section-block">
+      <div class="section-title"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z" /></svg>支持的平台</div>
+      <div class="grid grid-auto">
+        <div v-for="p in platformCards" :key="p.key" class="card card-hover card-pad">
+          <div style="display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4)">
+            <div class="platform-logo" :class="p.key">
+              <img
+                :src="p.icon"
+                :alt="p.label"
+                width="26"
+                height="26"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                @error="(e) => ((e.target as HTMLImageElement).style.display = 'none')"
+              />
+            </div>
+            <div>
+              <div class="h4">{{ p.label }}</div>
+              <div class="caption text-tertiary">{{ p.site }}</div>
+            </div>
+          </div>
+          <p class="body-sm text-secondary" style="margin-bottom: var(--space-4)">{{ p.desc }}</p>
+          <div v-if="p.scoring" style="display: flex; gap: var(--space-4)">
+            <div><div class="caption text-tertiary">收录比赛</div><div class="num" style="font-weight: 600; font-size: 15px">{{ fmtCount(p.contests) }}</div></div>
+            <div><div class="caption text-tertiary">活跃选手</div><div class="num" style="font-weight: 600; font-size: 15px">{{ fmtCount(p.accounts) }}</div></div>
+          </div>
+          <div v-else class="caption text-tertiary">赛程已接入，成绩待同步</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Features -->
+    <div class="section-block">
+      <div class="section-title"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>核心功能</div>
+      <div class="grid grid-4">
+        <div v-for="f in features" :key="f.title" class="card card-hover card-pad">
+          <div class="stat-icon" :class="f.cls" style="margin-bottom: var(--space-4)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path :d="f.icon" /></svg></div>
+          <div class="h4" style="margin-bottom: var(--space-2)">{{ f.title }}</div>
+          <p class="body-sm text-secondary">{{ f.desc }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top 5 -->
+    <div class="section-block">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-5)">
+        <div class="section-title" style="margin-bottom: 0"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2z" /></svg>学校榜 Top 5</div>
+        <router-link to="/u/rankings" class="btn btn-ghost btn-sm">查看完整榜单 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7" /></svg></router-link>
+      </div>
+      <div class="card" style="overflow: hidden">
+        <div class="table-wrap" style="border: none; border-radius: 0">
+          <table class="data-table">
+            <colgroup>
+              <col style="width: 80px" />
+              <col />
+              <col style="width: 120px" />
+              <col style="width: 130px" />
+            </colgroup>
+            <thead>
+              <tr><th class="center">排名</th><th>学校</th><th class="num-cell">积分</th><th class="center hide-mobile">参赛人数</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in top5" :key="r.id" :class="medalRowClass(r.rank)">
+                <td class="center"><RankBadge :rank="r.rank" /></td>
+                <td>
+                  <div class="cell-org">
+                    <OrgLogo :name="schoolMeta(r.school)?.name || r.school_name" :short-name="schoolMeta(r.school)?.short_name || null" />
+                    <span class="cell-ellipsis">{{ r.school_name }}</span>
+                  </div>
+                </td>
+                <td class="score num-cell">{{ fmtScore(r.total_score) }}</td>
+                <td class="num center hide-mobile">{{ fmtCount(r.member_count) }}</td>
+              </tr>
+              <tr v-if="!loading && top5.length === 0"><td colspan="4" class="empty-cell">暂无榜单数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.hero {
+  position: relative;
+  border-radius: var(--radius-2xl);
+  overflow: hidden;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  margin-bottom: var(--space-12);
+}
+.hero-glow {
+  position: absolute;
+  inset: 0;
+  background: var(--gradient-hero-glow);
+  pointer-events: none;
+}
+.hero-orb {
+  position: absolute;
+  top: -40%;
+  right: -10%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.12), transparent 70%);
+  pointer-events: none;
+}
+.hero-inner {
+  position: relative;
+  padding: var(--space-20) var(--space-12) var(--space-16);
+  text-align: center;
+}
+.hero-sub {
+  max-width: 640px;
+  margin: 0 auto var(--space-8);
+  font-size: 18px;
+}
+.hero-actions {
+  display: flex;
+  gap: var(--space-4);
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.section-block {
+  margin-bottom: var(--space-12);
+}
+.platform-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.platform-logo img {
+  object-fit: contain;
+  border-radius: 6px;
+}
+/* 底色吃平台令牌，不再在模板里写 hex + 拼 '1f' 透明度 */
+.platform-logo.codeforces { background: color-mix(in srgb, var(--platform-codeforces) 12%, transparent); }
+.platform-logo.atcoder { background: color-mix(in srgb, var(--platform-atcoder) 12%, transparent); }
+.platform-logo.nowcoder { background: color-mix(in srgb, var(--platform-nowcoder) 12%, transparent); }
+.platform-logo.luogu { background: color-mix(in srgb, var(--platform-luogu) 12%, transparent); }
+.data-table td.score {
+  color: var(--color-primary);
+  font-weight: 700;
+  font-size: 15px;
+}
+.empty-cell {
+  text-align: center;
+  color: var(--color-text-tertiary);
+  padding: var(--space-6);
+}
+.hero-inner { padding: var(--space-12) var(--space-5) var(--space-10); }
+.hero-sub { font-size: 16px; }
+@media (min-width: 768px) {
+  /* --bp-md */
+  .hero-inner { padding: var(--space-20) var(--space-12) var(--space-16); }
+  .hero-sub { font-size: 18px; }
+}
+</style>

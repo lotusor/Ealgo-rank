@@ -1,0 +1,775 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+牛客网比赛信息与用户排名爬虫
+- 从移动端首页建立会话，绕过 PC 端滑块验证
+- 抓取比赛日历、比赛题目、实时排名（含每题提交详情）
+- 支持多月份、多场比赛批量抓取
+
+【只收录 rated 比赛；付费 rated 同样收录（2026-08-24 ef027b7 设计变更，
+  is_paid 仅作展示标记不再排除）】
+  牛客日历接口不含 rated / 收费字段，需逐场请求
+  acm-heavy/acm/contest/contest-info?id=X，用两个字段判定：
+
+    是否 rated：uid（主办方）+ category（赛事系列）
+      category=19 uid=919247    牛客周赛
+      category=9  uid=999991351 牛客小白月赛
+      category=6  uid=999991351 牛客练习赛
+      category=2  uid=999991351 牛客挑战赛
+      category=20 uid=999991351 牛客暑期多校训练营
+      category=21 uid=999991351 牛客寒假算法基础集训营
+      category=8  各校 uid       校赛/自主命题赛 -> 不计 rating
+    是否收费：needCharge（布尔，仅记录展示，不作为排除依据）
+      注意同一系列不同年份收费状态会变：2021 多校 needCharge=false，
+      2026 多校 needCharge=true，2022 寒假营 needCharge=true。
+      所以必须逐场读取，不能按系列推断。
+
+  上述规则由用户 rating-history 反查 62 场 rated 比赛后归纳得到。
+
+【打星参赛（2026-10-11 实测适配）】
+  牛客自 2026-10-04 的周赛 Round 164 起把一场 rated 赛拆成两个榜
+  （Round 163=2026-09-27 及以前没有；小白月赛138=2026-10-09 已有）。
+  逐场标志是 contest-info 的 participationEnabled（拆榜后=True）：
+    正式榜 participationType=OFFICIAL —— 计入平台 rating
+    打星榜 participationType=STAR     —— 选手自行选择「本场不计分」，官方
+                                        rating 不变、rating-history 不收录该场
+  三个必须知道的细节：
+    1. real-time-rank-data 的 ranking 是**两榜混排的连续编号**，打星者整排插在前
+       面（Round 165 前 14 名全是 STAR）。榜内名次要自己按榜重编（并列共享号、
+       其后跳号），或直接请求 rankScope=OFFICIAL / rankScope=STAR —— 两种视图
+       已实测可用，且与本地重编在 1136 人上逐位一致。
+    2. 判定打星**只认 participationType**。主页行的 ratingStatus=NO 另有一整类
+       成因是「超出计分上限」（settingInfo.ratingUpperLimit，Round 163 及以前
+       这类人 participationType 仍是 OFFICIAL），拿它当打星会把超上限大佬全误判。
+    3. 开关与上限都逐场/逐系列变：allowStarParticipation 要逐场读，
+       ratingUpperLimit 周赛 1599 而小白月赛 1999，都不能按系列推断。
+"""
+
+import json
+import random
+import re
+import time
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+import requests
+
+from cache_util import load_cached_detail, save_cached_detail
+
+# {(uid, rated_only): {"at": 时间戳, "result": dict}} —— 进程级，见
+# NowCoderScraper.contest_joined_history 的说明（避免一次任务内重复打同一路由）。
+_JOINED_CACHE = {}
+
+
+class NowCoderScraper:
+    """牛客比赛信息爬虫"""
+
+    def __init__(self, delay=(1.5, 3.5), timeout=20):
+        self.delay = delay
+        self.timeout = timeout
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 "
+                "Mobile/15E148 Safari/604.1"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "zh-CN,zh-Hans;q=0.9",
+            "Referer": "https://m.nowcoder.com/",
+            "Connection": "keep-alive",
+        })
+        self.base = "https://ac.nowcoder.com"
+        self.rank_page_size = 50  # 实测每页固定 50 条
+        self._info_cache = {}
+
+    # 计入 rating 的官方赛事：category -> 系列名
+    RATED_CATEGORIES = {
+        19: "牛客周赛",
+        9: "牛客小白月赛",
+        6: "牛客练习赛",
+        2: "牛客挑战赛",
+        20: "牛客暑期多校训练营",
+        21: "牛客寒假算法基础集训营",
+    }
+    # 官方主办账号，用于排除第三方仿冒同名比赛
+    OFFICIAL_UIDS = {919247, 999991351}
+
+    # 牛客对判定作弊的账号会在榜单 userName 前拼接标记文案。
+    # 这类记录必须排除出积分统计，否则会污染学校排名。
+    # 中英文方括号、标记文案的历史变体都要覆盖，宁可多匹配也不能漏。
+    CHEATER_PATTERN = re.compile(
+        r"^\s*[\[\【\(\（]\s*(?:该用户)?已?被?(?:平台)?标记为作弊[^\]\】\)\）]*[\]\】\)\）]\s*"
+    )
+
+    # 榜单行的参赛类型（牛客 2026-10-04 周赛 Round 164 起拆榜）：
+    #   OFFICIAL —— 正式榜，计入平台 rating
+    #   STAR     —— 打星榜：选手自行选择「本场不计分」，官方不给 rating 变化，
+    #               rating-history 也不收录该场；超计分上限(ratingUpperLimit)的大佬
+    #               会自然落在这里
+    #   缺失/None —— 赛后补交、未报名等无排名行
+    # ⚠️ 判定打星**只认这个字段**：主页行的 ratingStatus=NO 还有「超出计分上限」
+    #    这一整类历史成因（Round 163 及以前 participationType 仍是 OFFICIAL），
+    #    拿 ratingStatus 当打星会把所有超上限选手误判。
+    PARTICIPATION_STAR = "STAR"
+    PARTICIPATION_OFFICIAL = "OFFICIAL"
+
+    #: 解析结构版本。v2 起 `rank` 改为「所属榜单内名次」并新增 participation_type。
+    #: 落盘缓存靠它拦旧产物：已结束满 CRAWLER_IMMUTABLE_AFTER_DAYS 天的场次
+    #: TTL=None（缓存永不过期），不拦就会把「没有打星」静默当成事实入库。
+    DETAIL_SCHEMA = 2
+
+    # ---------- 底层请求 ----------
+    def _sleep(self):
+        time.sleep(random.uniform(*self.delay))
+
+    def _get(self, url, **kwargs):
+        self._sleep()
+        resp = self.session.get(url, timeout=self.timeout, **kwargs)
+        resp.raise_for_status()
+        return resp
+
+    def init_session(self):
+        """访问移动端首页，建立会话并获取基础 Cookie"""
+        resp = self._get("https://m.nowcoder.com/")
+        print(f"[init_session] 首页 OK, cookies={self.session.cookies.get_dict()}")
+        return resp
+
+    # ---------- 比赛列表 ----------
+    def fetch_contests(self, year_month=None):
+        """抓取指定月份的比赛日历"""
+        if year_month is None:
+            year_month = datetime.now().strftime("%Y-%m")
+        ts = int(time.time() * 1000)
+        url = f"{self.base}/acm/calendar/contest?token=&month={year_month}&_={ts}"
+        resp = self._get(url)
+        data = resp.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"比赛日历接口返回错误: {data}")
+        contests = data.get("data", [])
+        print(f"[fetch_contests] {year_month} 共 {len(contests)} 条比赛记录")
+        return contests
+
+    def parse_contests(self, contests, only_nowcoder=True):
+        """解析比赛列表，提取标准化字段"""
+        results = []
+        for c in contests:
+            if only_nowcoder and c.get("ojName") != "NowCoder":
+                continue
+            link = c.get("link", "")
+            real_id = self._extract_real_contest_id(link)
+            results.append({
+                "contest_id": c.get("contestId"),
+                "real_contest_id": real_id,
+                "name": c.get("contestName"),
+                "oj": c.get("ojName"),
+                "link": link,
+                "start_time": self._ts2str(c.get("startTime")),
+                "end_time": self._ts2str(c.get("endTime")),
+                "duration_minutes": (c.get("endTime", 0) - c.get("startTime", 0)) // 60000,
+            })
+        return results
+
+    @staticmethod
+    def _extract_real_contest_id(link):
+        """比赛日历返回的 contestId 与详情页 URL 中的 id 不同，需从 link 解析"""
+        m = re.search(r"/acm/contest/(\d+)", link)
+        return int(m.group(1)) if m else None
+
+    @staticmethod
+    def _ts2str(ts_ms):
+        if not ts_ms:
+            return None
+        return datetime.fromtimestamp(ts_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+
+    # ---------- rated / 收费判定 ----------
+    def user_rating_history(self, uid):
+        """取某 uid 的完整 rating 历史（官方个人历史接口）。
+
+        返回 [{"contestId": int, "contestName": str, "time": 毫秒时间戳, ...}, ...]，
+        与 Codeforces user.rating / AtCoder users/{handle}/history 对齐。
+        该接口返回的 contestId 即 real_contest_id（可直接用于 contest-info 与榜单）。
+        失败返回 []。
+        """
+        ts = int(time.time() * 1000)
+        url = f"{self.base}/acm/contest/rating-history?uid={uid}&_={ts}"
+        try:
+            data = self._get(url).json()
+        except Exception as e:
+            print(f"[user_rating_history] {uid} 失败: {e}")
+            return []
+        if data.get("code") != 0:
+            print(f"[user_rating_history] {uid} 返回错误: {data.get('msg')}")
+            return []
+        return data.get("data") or []
+
+    def user_rating_history_contest_ids(self, uid):
+        """取某 uid 参加过的所有 rated 比赛 real_contest_id 列表。"""
+        return [str(x.get("contestId")) for x in self.user_rating_history(uid)
+                if x.get("contestId") not in (None, "")]
+
+    # ---------- 按账号取全量参赛记录（个人主页「参赛记录」同源接口） ----------
+    # rating-history 只列「真的计入了 rating」的场次，个人主页列表列全部已结束
+    # 场次，且每行自带 rank / userCount / acceptedCount / changeValue / ratingStatus。
+    JOINED_HISTORY_PATH = "/acm-heavy/acm/contest/profile/contest-joined-history"
+    joined_page_size = 50      # 页面自身只发 10；服务端 200 以内可用，取 50 保守
+    joined_max_pages = 20      # 单账号上限 1000 行，防御异常 totalCount
+    joined_retry_base = 5.0    # 风控退避基数（秒），指数增长 + 抖动
+    joined_retry_times = 3
+    # 同一账号在 TTL 内只打一次：索引刷新与定向补数会各自建 scraper 实例，
+    # 进程级缓存才能避免一次任务里、一天里对同一路由重复请求。
+    joined_cache_ttl = 6 * 3600
+
+    def _get_json(self, url, params=None, referer=None):
+        """带风控退避的 JSON GET，返回 dict | None（None = 没拿到，不等于「没数据」）。
+
+        牛客识别到异常流量时倾向回 200 + HTML 而非 4xx，只看 HTTP 状态会漏判，
+        所以「拿不到合法 JSON 信封」一律按被拦处理：指数退避后重试，最终放弃。
+        """
+        headers = {"Referer": referer} if referer else None
+        for attempt in range(1, self.joined_retry_times + 1):
+            try:
+                payload = self._get(url, params=params, headers=headers).json()
+            except Exception as exc:  # noqa: BLE001 - 非 JSON/超时/HTTP 错误同待处置
+                detail = f"{type(exc).__name__}: {exc}"
+            else:
+                if isinstance(payload, dict) and "code" in payload:
+                    return payload
+                detail = "响应不是接口 JSON 信封（疑似被拦或返回 HTML）"
+            if attempt < self.joined_retry_times:
+                wait = self.joined_retry_base * (2 ** (attempt - 1)) + random.uniform(0, 3)
+                print(f"[_get_json] 第 {attempt}/{self.joined_retry_times} 次失败 "
+                      f"({detail})，退避 {wait:.1f}s 后重试")
+                time.sleep(wait)
+            else:
+                print(f"[_get_json] {self.joined_retry_times} 次均失败 ({detail})，放弃本次取数")
+        return None
+
+    def contest_joined_history(self, uid, rated_only=False, use_cache=True):
+        """某 uid 的全部「已结束」参赛场次（含不计 Rating 的场次）。
+
+        返回 {"rows": [...], "total": int|None, "complete": bool} | None（取不到）。
+        rows 字段：contestId contestName rank userCount signUpCnt acceptedCount
+        problemCount totalScore fullScore rating changeValue ratingStatus
+        originRatingStatus startTime endTime settingInfo，以及拆榜后的
+        participationType（STAR/OFFICIAL）、rankScopeLabel（'正式榜'/'打星榜'）、
+        ratingStr（'不计'/'计算中'）。
+        ⚠️ 这里的 rank 是**本人所在榜内的名次**，不是总榜混排名次 —— 与榜单接口
+        rankScope=ALL 的 ranking 不同口径，对账时别拿它去比混排值。
+        """
+        key = (str(uid), bool(rated_only))
+        now = time.time()
+        hit = _JOINED_CACHE.get(key)
+        if use_cache and hit and now - hit["at"] < self.joined_cache_ttl:
+            return hit["result"]
+
+        rows, total, complete = [], None, False
+        page = 1
+        while page <= self.joined_max_pages:
+            payload = self._get_json(
+                f"{self.base}{self.JOINED_HISTORY_PATH}",
+                params={
+                    "uid": uid,
+                    "page": page,
+                    "pageSize": self.joined_page_size,
+                    "onlyJoinedFilter": "true",
+                    "searchContestName": "",
+                    "onlyRatingFilter": "true" if rated_only else "false",
+                    # contestEndFilter 缺省时服务端对所有账号都返回空 dataList，
+                    # 与风控静默置空同形 —— 这一项不是可选过滤，是必需参数。
+                    "contestEndFilter": "true",
+                    "_": int(now * 1000),
+                },
+                referer=f"{self.base}/acm/contest/profile/{uid}")
+            if payload is None:
+                print(f"[contest_joined_history] uid={uid} 取数失败（第 {page} 页）")
+                return None
+            if payload.get("code") != 0:
+                print(f"[contest_joined_history] uid={uid} 返回错误码 "
+                      f"{payload.get('code')}: {str(payload.get('msg'))[:80]}")
+                return None
+            data = payload.get("data") or {}
+            chunk = data.get("dataList") or []
+            info = data.get("pageInfo") or {}
+            rows.extend(chunk)
+            total = info.get("totalCount")
+            page_count = int(info.get("pageCount") or 1)
+            reached_end = (not chunk) or page >= page_count
+            complete = total is None or len(rows) >= int(total)
+            if reached_end or complete:
+                break
+            page += 1
+        else:
+            print(f"[contest_joined_history] uid={uid} 达翻页上限 "
+                  f"{self.joined_max_pages}，total={total} 仅取到 {len(rows)}")
+
+        result = {"rows": rows, "total": total, "complete": bool(complete)}
+        _JOINED_CACHE[key] = {"at": now, "result": result}
+        return result
+
+    def fetch_contest_info(self, real_contest_id, use_cache=True):
+        """抓取比赛详情（含 category / uid / needCharge），失败返回 None"""
+        if use_cache and real_contest_id in self._info_cache:
+            return self._info_cache[real_contest_id]
+        ts = int(time.time() * 1000)
+        url = (f"{self.base}/acm-heavy/acm/contest/contest-info"
+               f"?id={real_contest_id}&_={ts}")
+        try:
+            data = self._get(url).json()
+        except Exception as e:
+            print(f"[fetch_contest_info] {real_contest_id} 失败: {e}")
+            return None
+        if data.get("code") != 0:
+            print(f"[fetch_contest_info] {real_contest_id} 返回错误: {data.get('msg')}")
+            return None
+        info = data.get("data") or {}
+        if use_cache:
+            self._info_cache[real_contest_id] = info
+        return info
+
+    def check_rated(self, contest_meta):
+        """
+        统一契约方法：判定一场比赛是否 rated / 是否付费。
+        需要额外一次 contest-info 请求。
+        """
+        rid = contest_meta.get("real_contest_id") or contest_meta.get("contest_id")
+        info = self.fetch_contest_info(rid)
+        if info is None:
+            return {"is_rated": None, "is_paid": None,
+                    "rated_source": "contest-info",
+                    "rated_comment": "详情接口不可用，无法判定"}
+        category = info.get("category")
+        uid = info.get("uid")
+        need_charge = bool(info.get("needCharge"))
+        series = self.RATED_CATEGORIES.get(category)
+        is_rated = bool(series) and uid in self.OFFICIAL_UIDS
+        # 打星参赛元数据（只进 raw_meta，不加实体列）：allowStarParticipation 是
+        # 该场是否开放「自行选择不计分参赛」的开关，ratingUpperLimit 是计分上限。
+        # 两者都要逐场读——同一系列不同年份会变（needCharge 已踩过这个坑）。
+        setting = info.get("settingInfo") or {}
+        allow_star = setting.get("allowStarParticipation")
+        upper_limit = None
+        if setting.get("needRatingUpperLimit"):
+            upper_limit = setting.get("ratingUpperLimit")
+        return {
+            "is_rated": is_rated,
+            "is_paid": need_charge,
+            "allow_star_participation": bool(allow_star) if allow_star is not None else None,
+            "rating_upper_limit": upper_limit,
+            # 本场是否已拆榜（正式榜/打星榜）。2026-10-04 Round 164 起为 True，
+            # 比按日期猜可靠；老场次的 contest-info 里根本没这个键 → None
+            "participation_enabled": info.get("participationEnabled"),
+            "rated_source": "contest-info:category+uid+needCharge",
+            "rated_comment": (f"category={category}({series or '非官方rated系列'}) "
+                              f"uid={uid} needCharge={need_charge}"
+                              + (f" 打星={allow_star}" if allow_star is not None else "")
+                              + (f" 上限={upper_limit}" if upper_limit else "")),
+            "series": series,
+            "category": category,
+            "organizer_uid": uid,
+        }
+
+    def filter_contests(self, contests, rated_only=True, exclude_paid=True):
+        """按 rated / 付费规则筛选比赛，并把判定结果写回比赛字段"""
+        kept = []
+        for c in contests:
+            c.update(self.check_rated(c))
+            if rated_only and not c.get("is_rated"):
+                print(f"[filter] 排除非 rated: {c['name']} ({c.get('rated_comment')})")
+                continue
+            if exclude_paid and c.get("is_paid"):
+                print(f"[filter] 排除付费赛: {c['name']} ({c.get('rated_comment')})")
+                continue
+            kept.append(c)
+        print(f"[filter] rated 且免费的比赛 {len(kept)}/{len(contests)} 场")
+        return kept
+
+    # ---------- 题目列表 ----------
+    def fetch_problem_list(self, real_contest_id):
+        """抓取某场比赛的题目列表"""
+        ts = int(time.time() * 1000)
+        url = f"{self.base}/acm/contest/problem-list?token=&id={real_contest_id}&_={ts}"
+        resp = self._get(url)
+        data = resp.json()
+        if data.get("code") != 0:
+            print(f"[fetch_problem_list] {real_contest_id} 获取失败: {data.get('msg')}")
+            return []
+        problems = data.get("data", {}).get("data", [])
+        print(f"[fetch_problem_list] {real_contest_id} 共 {len(problems)} 题")
+        return problems
+
+    @staticmethod
+    def parse_problems(problems):
+        return [{
+            "index": p.get("index"),
+            "title": p.get("title"),
+            "problem_id": p.get("problemId"),
+            "score": p.get("score"),
+            "total_score": p.get("totalScore"),
+            "submit_count": p.get("submitCount"),
+            "accepted_count": p.get("acceptedCount"),
+            "submit_person_count": p.get("submitPersonCount"),
+        } for p in problems]
+
+    # ---------- 排名数据 ----------
+    def fetch_rank_page(self, real_contest_id, page=1):
+        """抓取单页排名（page 从 1 开始，每页 50 条）"""
+        ts = int(time.time() * 1000)
+        url = (
+            f"{self.base}/acm-heavy/acm/contest/real-time-rank-data"
+            f"?token=&id={real_contest_id}&limit=0&page={page}&_={ts}"
+        )
+        resp = self._get(url)
+        data = resp.json()
+        if data.get("code") != 0:
+            print(f"[fetch_rank_page] {real_contest_id} page={page} 失败: {data.get('msg')}")
+            return None
+        return data.get("data", {})
+
+    def fetch_all_ranks(self, real_contest_id, max_pages=None):
+        """
+        分页抓取排名，直到读完总页数、返回空页或触及安全上限。
+        牛客每页固定 50 条，赛后补交记录 ranking=0，会排在正常排名之后。
+        首页 basicInfo.pageCount 是权威总页数，据此精确翻页；
+        max_pages=None 表示抓完整场（大型比赛可达数百页），传数值则作为安全上限。
+        """
+        all_ranks = []
+        problem_data = []
+        basic_info = {}
+        total_pages = None
+        page = 1
+        while True:
+            chunk = self.fetch_rank_page(real_contest_id, page)
+            if chunk is None:
+                break
+            ranks = chunk.get("rankData", [])
+            if not ranks:
+                break
+            if page == 1:
+                problem_data = chunk.get("problemData", [])
+                basic_info = chunk.get("basicInfo") or {}
+                total_pages = basic_info.get("pageCount")
+                if max_pages and total_pages and total_pages > max_pages:
+                    print(f"[fetch_all_ranks] {real_contest_id} 共 {total_pages} 页 "
+                          f"({basic_info.get('rankCount')} 人)，受 max_pages={max_pages} 限制将被截断")
+            all_ranks.extend(ranks)
+            print(f"[fetch_all_ranks] {real_contest_id} page={page}/{total_pages or '?'} "
+                  f"获取 {len(ranks)} 条，累计 {len(all_ranks)}")
+            # 当前页不足 50 条说明已到末尾
+            if len(ranks) < self.rank_page_size:
+                break
+            limits = [x for x in (total_pages, max_pages) if x]
+            if limits and page >= min(limits):
+                break
+            page += 1
+        return {
+            "basic_info": basic_info,
+            "problem_data": problem_data,
+            "rank_data": all_ranks,
+        }
+
+    @classmethod
+    def detect_cheater(cls, user_name):
+        """
+        识别牛客平台标记的作弊账号。
+        返回 (is_cheater, clean_name, raw_name)。
+        clean_name 已剥离标记前缀，便于展示与匹配；raw_name 保留原文供审计。
+        """
+        raw = user_name or ""
+        m = cls.CHEATER_PATTERN.match(raw)
+        if m:
+            return True, raw[m.end():].strip(), raw
+        return False, raw.strip(), raw
+
+    @classmethod
+    def parse_ranks(cls, rank_info, filter_post_contest=False, exclude_cheaters=False):
+        """
+        解析并简化排名数据。
+        filter_post_contest=True 时过滤掉赛后补交记录（postContestAppend 或无有效名次）。
+        exclude_cheaters=True 时直接丢弃平台标记的作弊账号；
+          默认 False —— 爬虫层只打 is_cheater 标记、保留原始数据可追溯，
+          由入库层决定是否计入积分（避免静默丢数据导致对不上账）。
+
+        `rank` 是**该选手所属榜单内的名次**（正式榜 / 打星榜），不是接口 `ranking`：
+        牛客自 Round 164 起把一场拆成两个榜，但 `real-time-rank-data` 默认视图
+        （rankScope=ALL）给出的 `ranking` 是**两榜混排的连续编号**，打星大佬整排
+        插在前面（2026-10-11 实测 Round 165：前 14 名全是 STAR，正式榜第 1 名的
+        ranking=15）。接口另有 rankScope=OFFICIAL / STAR 两个视图，其编号与这里
+        的「榜内名次」逐位吻合，而官方个人主页行给本人的 rank 同样是榜内名次
+        （rankScopeLabel='正式榜'/'打星榜'）—— 存榜内名次才与官方对得上。
+        混排原值留在 extra.mixed_rank 供审计。
+
+        注意：榜单里的 school 是用户在牛客个人资料里自填的，缺失率高且写法混乱，
+        不作为学校归属依据，仅放进 extra 供人工核对。
+        学校归属一律由注册时绑定的牛客 uid 决定。
+        """
+        # problemId -> 题号（A/B/C...），反向索引避免逐条线性查找
+        pid2name = {
+            p.get("problemId"): p.get("name")
+            for p in rank_info.get("problem_data", [])
+        }
+        # ICPC 赛制的 scoreList 无 reachTime，只有绝对时间戳 acceptedTime，
+        # 用开赛时间换算成相对赛程的毫秒数，与 OI 赛制的 reachTime 语义对齐
+        begin_time = (rank_info.get("basic_info") or {}).get("contestBeginTime")
+
+        entries = []
+        for r in rank_info.get("rank_data", []):
+            ranking = r.get("ranking")
+            # 新版数据里无排名行的 ranking 是 null（不是 0），必须先判类型再比较，
+            # 否则 None <= 0 直接 TypeError 把整场抓取打断。
+            mixed = ranking if isinstance(ranking, int) else None
+            is_post = bool(r.get("postContestAppend")) or mixed is None or mixed <= 0
+            ptype = str(r.get("participationType") or "").upper() or None
+            board = (cls.PARTICIPATION_STAR if ptype == cls.PARTICIPATION_STAR
+                     else cls.PARTICIPATION_OFFICIAL)
+            entries.append({"row": r, "is_post": is_post, "board": board,
+                            "mixed": mixed, "ptype": ptype, "board_rank": None})
+
+        # 榜内名次：按混排名次升序在各自榜内重编，无排名行不占号
+        #（官方 rankCount 同样不含它们：Round 165 全量 921 正式 / 223 打星，
+        #  去掉 6+2 条赛后补交后正好 915 / 221，与两个 rankScope 视图一致）。
+        # 并列要共享名次并跳号（competition ranking）：混排 ranking 相等就是官方
+        # 认定的并列（同总分、同首次达到时间），2026-10-11 实测 Round 165 正式榜
+        # 有 10 组并列 —— 末组 4 人共享 912，即「915 人、最后一档 912」。稠密地
+        # 一人一号会把并列对拆成 160/161，与官方差 1~3 且同分两人拿到不同百分位。
+        ordered = [e for e in sorted(entries, key=lambda x: (x["board"], x["mixed"] or 0))
+                   if not e["is_post"]]
+        numbered = {}      # board -> 已编号人数
+        i = 0
+        while i < len(ordered):
+            board = ordered[i]["board"]
+            j = i
+            while (j + 1 < len(ordered) and ordered[j + 1]["board"] == board
+                   and ordered[j + 1]["mixed"] == ordered[i]["mixed"]):
+                j += 1
+            rank = numbered.get(board, 0) + 1
+            for e in ordered[i:j + 1]:
+                e["board_rank"] = rank
+                numbered[board] = numbered.get(board, 0) + 1
+            i = j + 1
+
+        ranks = []
+        cheater_count = 0
+        for e in entries:
+            r = e["row"]
+            is_post = e["is_post"]
+            if filter_post_contest and is_post:
+                continue
+
+            is_cheater, clean_name, raw_name = cls.detect_cheater(r.get("userName"))
+            if is_cheater:
+                cheater_count += 1
+                if exclude_cheaters:
+                    continue
+
+            score_detail = []
+            for s in r.get("scoreList", []):
+                reach = s.get("reachTime")
+                if reach is None:
+                    acc_time = s.get("acceptedTime")
+                    if acc_time and begin_time:
+                        reach = acc_time - begin_time
+                score_detail.append({
+                    "problem": pid2name.get(s.get("problemId")),
+                    "problem_id": s.get("problemId"),
+                    "accepted": s.get("accepted"),
+                    "score": s.get("score"),
+                    "failed_count": s.get("failedCount"),
+                    "reach_time_ms": reach,
+                    "first_blood": s.get("firstBlood"),
+                    "post_contest_score": s.get("postContestScore"),
+                })
+            ranks.append({
+                # 榜内名次；无排名行沿用接口原值（null/0），这些行本就不计分
+                "rank": e["board_rank"] if e["board_rank"] is not None else r.get("ranking"),
+                "uid": r.get("uid"),
+                "user_name": clean_name,
+                "school": None,   # 不从比赛数据推断学校，见上方说明
+                "team": r.get("team"),
+                "accepted_count": r.get("acceptedCount"),
+                "total_score": r.get("totalScore"),
+                "full_score": r.get("fullScore"),
+                "penalty_time_ms": r.get("penaltyTime"),
+                "color_level": r.get("colorLevel"),
+                "post_contest_append": is_post,
+                "is_cheater": is_cheater,   # 平台标记作弊，入库时不计积分
+                # 打星参赛标记：'STAR' / 'OFFICIAL' / None（无排名行）
+                "participation_type": e["ptype"],
+                "score_detail": score_detail,
+                "extra": {
+                    "rank_type": (rank_info.get("basic_info") or {}).get("rankType"),
+                    "team_member_uids": r.get("teamMemberUids"),
+                    "profile_school": r.get("school"),  # 用户自填，仅供参考
+                    "raw_user_name": raw_name if is_cheater else None,
+                    "mixed_rank": e["mixed"],
+                    "rank_scope": e["board"] if not is_post else None,
+                    "post_contest_unsigned": r.get("postContestUnsigned"),
+                },
+            })
+        if cheater_count:
+            action = "已剔除" if exclude_cheaters else "已标记"
+            print(f"[parse_ranks] 检出作弊账号 {cheater_count} 个（{action}）")
+        return ranks
+
+    @staticmethod
+    def board_counts(ranks):
+        """按榜分组统计有排名的人数：{"official": n, "star": n}。
+
+        单独成函数而不是只藏在 parse 里算：入库层要拿 official 当表现分的分母，
+        而它必须能在「已过滤赛后补交」与「未过滤」两种 ranks 上都得出同一个数。
+        """
+        official = star = 0
+        for r in ranks:
+            if r.get("post_contest_append"):
+                continue
+            if r.get("participation_type") == NowCoderScraper.PARTICIPATION_STAR:
+                star += 1
+            else:
+                official += 1
+        return {"official": official, "star": star}
+
+    # ---------- 批量抓取 ----------
+    def scrape_contest_detail(self, real_contest_id, max_rank_pages=None,
+                              filter_post_contest=False, exclude_cheaters=False,
+                              handles=None, cache_dir=None, cache_ttl_hours=168):
+        """抓取单场比赛的题目与全部有效排名。
+
+        handles       预留参数（牛客整场 standings 已含每题明细，忽略）。
+        cache_dir     落盘缓存目录；命中则跳过下载。None 关闭缓存。
+        cache_ttl_hours 缓存有效期（小时），过期重新下载。
+        """
+        cached = load_cached_detail(cache_dir, real_contest_id, cache_ttl_hours,
+                                    require_schema=self.DETAIL_SCHEMA)
+        if cached is not None:
+            return cached
+        problems = self.parse_problems(self.fetch_problem_list(real_contest_id))
+        rank_info = self.fetch_all_ranks(real_contest_id, max_pages=max_rank_pages)
+        ranks = self.parse_ranks(rank_info, filter_post_contest=filter_post_contest,
+                                 exclude_cheaters=exclude_cheaters)
+        cheater_count = sum(1 for r in ranks if r.get("is_cheater"))
+        # 可计入积分的记录：非赛后补交 且 非作弊 且 非打星
+        boards = self.board_counts(ranks)
+        valid_count = sum(1 for r in ranks
+                          if not r.get("post_contest_append") and not r.get("is_cheater")
+                          and r.get("participation_type") != self.PARTICIPATION_STAR)
+        detail = {
+            "schema": self.DETAIL_SCHEMA,
+            "problems": problems,
+            "ranks": ranks,
+            "rank_count": len(ranks),
+            "valid_rank_count": valid_count,
+            "cheater_count": cheater_count,
+            # 拆榜人数：正式榜是表现分的分母，打星榜只作展示与对账
+            "official_participant_count": boards["official"],
+            "star_participant_count": boards["star"],
+            "crawled_at": datetime.now().isoformat(),
+        }
+        save_cached_detail(cache_dir, real_contest_id, detail)
+        return detail
+
+    def run(self, months=None, output_dir=None, max_rank_pages=None,
+            skip_future=True, filter_post_contest=True,
+            rated_only=True, exclude_paid=False, exclude_cheaters=False):
+        """
+        入口：抓取多月份比赛列表，并抓取每场比赛的全部有效排名。
+        rated_only=True      只收录官方 rated 系列（周赛/小白月赛/练习赛/挑战赛/多校/寒假营）
+        exclude_paid=False   不排除付费比赛——付费 rated 同样收录（2026-08-24 设计变更，
+                             与 Celery 任务侧 filter_contests 调用参数保持一致）
+        exclude_cheaters=False 默认保留作弊账号但打 is_cheater 标记，入库层负责排除
+        """
+        if months is None:
+            months = [datetime.now().strftime("%Y-%m")]
+
+        out = (Path(output_dir) if output_dir
+               else Path(__file__).resolve().parent / "data" / "nowcoder")
+        out.mkdir(parents=True, exist_ok=True)
+
+        self.init_session()
+
+        # 1. 比赛列表
+        all_contests = []
+        for ym in months:
+            raw = self.fetch_contests(ym)
+            all_contests.extend(self.parse_contests(raw, only_nowcoder=True))
+
+        # 2. 剔除未开始的比赛，再做 rated / 付费过滤
+        #    先剔未开始的可以少发很多次 contest-info 请求
+        now_ts = int(time.time() * 1000)
+        if skip_future:
+            pending = []
+            for c in all_contests:
+                start_ts = self._str2ts(c.get("start_time"))
+                if start_ts and start_ts > now_ts:
+                    print(f"[run] 跳过未开始比赛: {c['name']} ({c['start_time']})")
+                    continue
+                pending.append(c)
+            all_contests = pending
+
+        if rated_only or exclude_paid:
+            all_contests = self.filter_contests(
+                all_contests, rated_only=rated_only, exclude_paid=exclude_paid)
+
+        list_path = out / "contest_list.json"
+        with open(list_path, "w", encoding="utf-8") as f:
+            json.dump(all_contests, f, ensure_ascii=False, indent=2)
+        print(f"[run] 已保存 {len(all_contests)} 条比赛列表 -> {list_path}")
+
+        # 3. 每场比赛详情
+        details = {}
+        for c in all_contests:
+            rid = c.get("real_contest_id")
+            if not rid:
+                continue
+
+            print(f"\n[run] 正在抓取比赛: {c['name']} (id={rid})")
+            try:
+                detail = self.scrape_contest_detail(
+                    rid,
+                    max_rank_pages=max_rank_pages,
+                    filter_post_contest=filter_post_contest,
+                    exclude_cheaters=exclude_cheaters,
+                )
+                detail["contest_meta"] = c
+                # 如果题目列表为空，说明比赛尚未就绪，不保存空详情
+                if not detail.get("problems"):
+                    print(f"[run] 比赛 {rid} 暂无题目/排名数据，跳过保存")
+                    continue
+                details[rid] = detail
+                detail_path = out / f"contest_{rid}.json"
+                with open(detail_path, "w", encoding="utf-8") as f:
+                    json.dump(detail, f, ensure_ascii=False, indent=2)
+                print(f"[run] 比赛 {rid} 有效排名: {detail['valid_rank_count']} 条"
+                      f"（作弊 {detail.get('cheater_count', 0)} 条已排除）")
+            except Exception as e:
+                print(f"[run] 抓取比赛 {rid} 失败: {e}")
+
+        summary_path = out / "summary.json"
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "months": months,
+                "rated_only": rated_only,
+                "exclude_paid": exclude_paid,
+                "contest_count": len(all_contests),
+                "detail_count": len(details),
+                "contests": all_contests,
+            }, f, ensure_ascii=False, indent=2)
+        print(f"\n[run] 完成，共抓取 {len(details)}/{len(all_contests)} 场比赛详情 -> {out}")
+        return details
+
+    @staticmethod
+    def _str2ts(s):
+        if not s:
+            return None
+        try:
+            return int(datetime.strptime(s, "%Y-%m-%d %H:%M:%S").timestamp() * 1000)
+        except Exception:
+            return None
+
+
+if __name__ == "__main__":
+    scraper = NowCoderScraper()
+    # 默认输出到脚本同级 data/nowcoder/，抓取当月比赛，
+    # 按 basicInfo.pageCount 自动翻页直到读完所有有效排名
+    # 需要多月份时传入 months=["2026-07", "2026-08", "2026-09"]
+    scraper.run()

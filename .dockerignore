@@ -1,0 +1,24 @@
+# 构建上下文 = 仓库根目录；以下路径相对于仓库根
+frontend/
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+node_modules/
+media/
+staticfiles/
+db.sqlite3
+.env
+.env.prod
+# 本地截图目录
+_shots/
+# 保留 .env.prod.example（模板，非密钥）进入镜像无关紧要，但排除避免混淆
+.env.prod.example
+# 开发/演示专用管理命令：只在源码树本地使用，禁止进入生产镜像
+backend/apps/accounts/management/commands/create_test_users.py
+backend/apps/ranking/management/commands/seed_demo.py
+# 部署产物目录（media 持久卷与前端 dist 由宿主机提供）
+volumes/

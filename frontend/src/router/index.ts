@@ -1,0 +1,234 @@
+import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+      meta: { public: true },
+    },
+    {
+      // 注册 / 登录入口
+      path: '/register',
+      name: 'register',
+      component: () => import('@/views/auth/RegisterEntryView.vue'),
+      meta: { public: true },
+    },
+    {
+      // 信息填写（新建本地账号）
+      path: '/register/info',
+      name: 'register-info',
+      component: () => import('@/views/auth/RegisterInfoView.vue'),
+      meta: { public: true },
+    },
+    {
+      // 补全流程（passport 用户绑定学校 / 资料）
+      path: '/register/complete',
+      name: 'register-complete',
+      component: () => import('@/views/auth/RegisterCompleteView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // 第二步：是否申请学校管理员
+      path: '/register/admin-apply',
+      name: 'register-admin',
+      component: () => import('@/views/auth/RegisterAdminApplyView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // passport 认证回调（解析参数 / 存储登录态 / 路由分流）
+      path: '/auth/callback',
+      name: 'auth-callback',
+      component: () => import('@/views/auth/AuthCallbackView.vue'),
+      meta: { public: true },
+    },
+    {
+      // 竞赛日历：公开页，登录与否都能看（登录后导航栏另有入口）
+      path: '/calendar',
+      component: () => import('@/layouts/PublicLayout.vue'),
+      meta: { optionalAuth: true },
+      children: [
+        {
+          path: '',
+          name: 'calendar',
+          component: () => import('@/views/user/CalendarView.vue'),
+        },
+      ],
+    },
+    {
+      // 用户端（普通注册用户 + 管理员均可访问）
+      path: '/u',
+      component: () => import('@/layouts/PublicLayout.vue'),
+      meta: { requiresAuth: true },
+      children: [
+        { path: '', name: 'home', component: () => import('@/views/user/HomeView.vue') },
+        {
+          path: 'rankings',
+          name: 'rankings',
+          component: () => import('@/views/user/RankingsView.vue'),
+        },
+        {
+          path: 'my-scores',
+          name: 'my-scores',
+          component: () => import('@/views/user/MyScoresView.vue'),
+        },
+        {
+          path: 'profile',
+          name: 'profile',
+          component: () => import('@/views/user/ProfileEditView.vue'),
+        },
+        {
+          path: 'user/:id',
+          name: 'user-profile',
+          component: () => import('@/views/user/UserProfileView.vue'),
+        },
+        {
+          path: 'score-rules',
+          name: 'score-rules',
+          component: () => import('@/views/user/ScoreRulesView.vue'),
+        },
+        {
+          path: 'my-application',
+          name: 'my-application',
+          component: () => import('@/views/user/MyApplicationView.vue'),
+        },
+        {
+          path: 'contests',
+          name: 'contests',
+          component: () => import('@/views/user/ContestsView.vue'),
+        },
+        {
+          path: 'security',
+          name: 'security',
+          component: () => import('@/views/user/SecurityView.vue'),
+        },
+      ],
+    },
+    {
+      // 根路径默认进入注册/登录入口（普通用户起点）
+      path: '/',
+      redirect: { name: 'register' },
+    },
+    {
+      // 管理后台（仅管理员）— 整体挂在 /admin 下
+      path: '/admin',
+      component: () => import('@/layouts/AdminLayout.vue'),
+      meta: { requiresAdmin: true },
+      children: [
+        { path: '', redirect: { name: 'dashboard' } },
+        {
+          path: 'dashboard',
+          name: 'dashboard',
+          component: () => import('@/views/admin/DashboardView.vue'),
+        },
+        {
+          path: 'schools',
+          name: 'schools',
+          component: () => import('@/views/admin/SchoolsView.vue'),
+          meta: { superOnly: true },
+        },
+        {
+          path: 'applications',
+          name: 'applications',
+          component: () => import('@/views/admin/ApplicationsView.vue'),
+        },
+        {
+          path: 'crawl',
+          name: 'crawl',
+          component: () => import('@/views/admin/CrawlView.vue'),
+          meta: { superOnly: true },
+        },
+        {
+          path: 'participations',
+          name: 'participations',
+          component: () => import('@/views/admin/ParticipationsView.vue'),
+        },
+        {
+          path: 'members',
+          name: 'members',
+          component: () => import('@/views/admin/MembersView.vue'),
+        },
+        {
+          path: 'notifications',
+          name: 'notifications',
+          component: () => import('@/views/admin/NotificationsView.vue'),
+          meta: { superOnly: true },
+        },
+        {
+          path: 'score-config',
+          name: 'score-config',
+          component: () => import('@/views/admin/ScoreConfigView.vue'),
+          meta: { superOnly: true },
+        },
+      ],
+    },
+    { path: '/:pathMatch(.*)*', redirect: { name: 'rankings' } },
+  ],
+})
+
+router.beforeEach(async (to) => {
+  const auth = useAuthStore()
+
+  // 回调页自行处理登录态（写 token 后再 loadMe），守卫直接放行
+  if (to.name === 'auth-callback') return true
+
+  // 已登录（有 token）但还没拉取用户信息，先补一次（不区分目标路由，
+  // 否则管理员刷新登录页时 user 未加载、isAdmin 误判为 false 被降级为普通用户）
+  if (auth.token && !auth.user) {
+    try {
+      await auth.loadMe()
+    } catch {
+      await auth.logout()
+      // loadMe 失败说明凭证已失效：清状态后回登录页，避免卡在空白/报错页
+      if (to.name !== 'login') {
+        return { name: 'login', query: { redirect: to.fullPath } }
+      }
+    }
+  }
+
+  if (to.meta.public) {
+    if (auth.isAuthenticated && auth.isAdmin) return { name: 'dashboard' }
+    if (auth.isAuthenticated && !auth.isAdmin) return { name: 'rankings' }
+    return true
+  }
+
+  // 公开但登录后停留原页（如竞赛日历）：未登录直接放行；
+  // 已登录仍受「资料补全」约束，与全站其余页面保持一致。
+  if (to.meta.optionalAuth) {
+    if (
+      auth.isAuthenticated &&
+      !auth.isProfileComplete &&
+      to.name !== 'register-complete'
+    ) {
+      return { name: 'register-complete' }
+    }
+    return true
+  }
+
+  if (!auth.isAuthenticated) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  // 已登录但未补全资料（未绑定学校）→ 强制走补全流程；补全流程本身放行
+  if (!auth.isProfileComplete && to.name !== 'register-complete') {
+    return { name: 'register-complete' }
+  }
+  // 已补全却误入补全流程 → 按角色进入主页（申请管理员步骤对任意已登录用户开放）
+  if (auth.isProfileComplete && to.name === 'register-complete') {
+    return auth.isAdmin ? { name: 'dashboard' } : { name: 'rankings' }
+  }
+
+  // 普通用户访问管理后台 → 引导到用户端
+  if (to.meta.requiresAdmin && !auth.isAdmin) {
+    return { name: 'rankings' }
+  }
+  if (to.meta.superOnly && !auth.isSuperAdmin) {
+    return { name: 'dashboard' }
+  }
+  return true
+})
+
+export default router

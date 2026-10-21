@@ -1,0 +1,310 @@
+<script setup lang="ts">
+import { computed, ref, onMounted } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+import { listCrawlJobs, triggerCrawl, recomputeRanking, getCrawlConfig, saveCrawlConfig } from '@/api'
+import type { CrawlJob, CrawlConfig } from '@/api/types'
+import { useToast } from '@/composables/useToast'
+import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import { fmtDate } from '@/utils/format'
+import { CRAWLABLE_PLATFORMS, platformMeta } from '@/platforms/meta'
+
+const auth = useAuthStore()
+const toast = useToast()
+
+const jobs = ref<CrawlJob[]>([])
+const loading = ref(false)
+const platform = ref(CRAWLABLE_PLATFORMS[0].key)
+const count = ref(20)
+const monthsBack = ref(2)
+const triggering = ref(false)
+
+// 只做日历展示的平台（洛谷）没有榜单可爬，不该出现在触发清单里
+const platformOptions = CRAWLABLE_PLATFORMS.map((p) => ({ label: p.label, value: p.key }))
+/** 窗口参数形状跟着平台声明走，不再写死「是不是牛客」 */
+const crawlParam = computed(() => platformMeta(platform.value)?.crawlParam ?? 'count')
+
+async function load() {
+  loading.value = true
+  try {
+    const res = await listCrawlJobs({ page: 1, page_size: 20 })
+    jobs.value = res.results
+  } finally {
+    loading.value = false
+  }
+}
+
+async function onTrigger() {
+  triggering.value = true
+  try {
+    const payload: any = { platform: platform.value }
+    if (crawlParam.value === 'months_back') payload.months_back = monthsBack.value
+    else payload.count = count.value
+    await triggerCrawl(payload)
+    toast.success('已派发爬取任务（worker 启动后自动执行）')
+    await load()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail || '触发失败')
+  } finally {
+    triggering.value = false
+  }
+}
+
+async function onRecompute() {
+  try {
+    await recomputeRanking()
+    toast.success('已触发全量重算（worker 异步执行）')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail || '重算触发失败（需超级管理员）')
+  }
+}
+
+function statusCls(s: string) {
+  return s === 'success'
+    ? 'badge-success'
+    : s === 'failed' || s === 'partial'
+      ? 'badge-danger'
+      : s === 'running'
+        ? 'badge-primary'
+        : 'badge-warning'
+}
+
+const showLog = ref(false)
+const logText = ref('')
+function openLog(r: CrawlJob) {
+  logText.value = r.log || r.error_message || '（无日志）'
+  showLog.value = true
+}
+
+onMounted(() => {
+  load()
+  loadCrawlConfig()
+})
+
+// ---------- 自动爬取配置（CrawlConfig 单例） ----------
+const crawlConfig = ref<CrawlConfig | null>(null)
+const loadingCfg = ref(false)
+const savingCfg = ref(false)
+
+async function loadCrawlConfig() {
+  loadingCfg.value = true
+  try {
+    crawlConfig.value = await getCrawlConfig()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail || '加载自动爬取配置失败')
+  } finally {
+    loadingCfg.value = false
+  }
+}
+
+async function onSaveCrawlConfig() {
+  if (!crawlConfig.value) return
+  savingCfg.value = true
+  try {
+    const payload = {
+      enabled: crawlConfig.value.enabled,
+      cf_count: Number(crawlConfig.value.cf_count) || 20,
+      atcoder_count: Number(crawlConfig.value.atcoder_count) || 20,
+      nowcoder_months_back: Number(crawlConfig.value.nowcoder_months_back) || 2,
+      auto_crawl_interval_days: Number(crawlConfig.value.auto_crawl_interval_days) || 1,
+      auto_crawl_hour: Number(crawlConfig.value.auto_crawl_hour) || 2,
+    }
+    crawlConfig.value = await saveCrawlConfig(payload)
+    toast.success('自动爬取配置已保存（Beat 调度将自动同步）')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    savingCfg.value = false
+  }
+}
+</script>
+
+<template>
+  <div class="container">
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><span>管理后台</span><span>/</span><span>爬虫任务</span></div>
+        <h1 class="page-title">爬虫触发与重算</h1>
+        <p class="page-subtitle">手动触发数据采集任务，或重新计算积分</p>
+      </div>
+    </div>
+
+    <div class="grid" style="grid-template-columns: 1fr 1.5fr; gap: var(--space-6)">
+      <!-- Trigger panel -->
+      <div class="card card-pad">
+        <div class="section-title" style="font-size: 16px; margin-bottom: var(--space-4)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+          触发爬取任务
+        </div>
+        <div class="field">
+          <label class="field-label">选择平台</label>
+          <SegmentedControl v-model="platform" :options="platformOptions" />
+        </div>
+        <div class="field" v-if="crawlParam === 'count'">
+          <label class="field-label">抓取场数</label>
+          <input v-model.number="count" class="input" type="number" min="1" max="200" placeholder="抓取场数" />
+        </div>
+        <div class="field" v-else>
+          <label class="field-label">最近 N 个月</label>
+          <input v-model.number="monthsBack" class="input" type="number" min="1" max="12" placeholder="最近 N 个月" />
+        </div>
+        <button class="btn btn-primary btn-block" style="margin-top: var(--space-2)" :disabled="triggering" @click="onTrigger">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l14 9-14 9V3z" /></svg>
+          {{ triggering ? '派发中…' : '开始爬取' }}
+        </button>
+
+        <div class="divider"></div>
+
+        <div class="section-title" style="font-size: 16px; margin-bottom: var(--space-4)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></svg>
+          积分重算
+        </div>
+        <p class="body-sm text-tertiary" style="margin-bottom: var(--space-4)">重新计算所有学校与个人积分，适用于积分规则变更后。预计耗时 2-5 分钟。</p>
+        <button v-if="auth.isSuperAdmin" class="btn btn-secondary btn-block" @click="onRecompute">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></svg>
+          执行积分重算
+        </button>
+        <p v-else class="text-tertiary body-sm">积分重算仅超级管理员可操作。</p>
+      </div>
+
+      <!-- Task history -->
+      <div class="card" style="overflow: hidden">
+        <div class="card-header">
+          <div class="card-title">任务历史</div>
+          <span class="caption text-tertiary">最近 20 条</span>
+        </div>
+        <div class="table-wrap" style="border: none; border-radius: 0">
+          <table class="data-table">
+            <colgroup>
+              <col style="width: 12%" />
+              <col style="width: 16%" />
+              <col style="width: 14%" />
+              <col style="width: 18%" />
+              <col style="width: 18%" />
+              <col style="width: 14%" />
+              <col style="width: 8%" />
+            </colgroup>
+            <thead>
+              <tr><th>任务ID</th><th>平台</th><th>状态</th><th class="num-cell">开始时间</th><th class="num-cell">完成时间</th><th class="num-cell">采集记录</th><th class="center">日志</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="j in jobs" :key="j.id">
+                <td class="num">{{ j.id }}</td>
+                <td>{{ j.platform_display }}</td>
+                <td><span class="badge" :class="statusCls(j.status)">{{ j.status_display }}</span></td>
+                <td class="num-cell">{{ j.started_at ? fmtDate(j.started_at) : '—' }}</td>
+                <td class="num-cell">{{ j.finished_at ? fmtDate(j.finished_at) : '—' }}</td>
+                <td class="num-cell num">{{ j.participation_count }}</td>
+                <td class="center"><button class="btn btn-sm btn-ghost" @click="openLog(j)">查看</button></td>
+              </tr>
+              <tr v-if="!jobs.length"><td colspan="7" class="empty-cell">暂无任务</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 自动爬取设置（CrawlConfig 单例，仅超管可见/可改） -->
+    <div v-if="auth.isSuperAdmin" class="card card-pad" style="margin-top: var(--space-6); max-width: 980px">
+      <div class="section-title" style="font-size: 16px; margin-bottom: var(--space-3)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+        自动爬取设置
+      </div>
+      <p class="body-sm text-tertiary" style="margin-bottom: var(--space-4)">
+        开启后，系统每日按设定时间自动触发各平台爬取。各平台抓取范围与触发小时均可在此配置，保存后 Beat 调度自动同步。
+      </p>
+
+      <div v-if="loadingCfg" class="body-sm text-tertiary">加载中…</div>
+      <div v-else-if="crawlConfig">
+        <div class="field" style="max-width: 360px; margin-bottom: var(--space-4)">
+          <label class="field-label">启用定时自动爬取</label>
+          <label class="switch">
+            <input type="checkbox" v-model="crawlConfig.enabled" />
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-label">{{ crawlConfig.enabled ? '已启用' : '已停用' }}</span>
+          </label>
+        </div>
+
+        <div class="grid-3">
+          <div class="field">
+            <label class="field-label">Codeforces 场数</label>
+            <input v-model.number="crawlConfig.cf_count" class="input" type="number" min="1" max="200" />
+          </div>
+          <div class="field">
+            <label class="field-label">AtCoder 场数</label>
+            <input v-model.number="crawlConfig.atcoder_count" class="input" type="number" min="1" max="200" />
+          </div>
+          <div class="field">
+            <label class="field-label">牛客最近月数</label>
+            <input v-model.number="crawlConfig.nowcoder_months_back" class="input" type="number" min="1" max="12" />
+          </div>
+          <div class="field">
+            <label class="field-label">自动爬取间隔（天）</label>
+            <input v-model.number="crawlConfig.auto_crawl_interval_days" class="input" type="number" min="1" max="30" />
+          </div>
+          <div class="field">
+            <label class="field-label">触发小时 (0-23)</label>
+            <input v-model.number="crawlConfig.auto_crawl_hour" class="input" type="number" min="0" max="23" />
+          </div>
+        </div>
+
+        <button class="btn btn-primary" style="margin-top: var(--space-4)" :disabled="savingCfg" @click="onSaveCrawlConfig">
+          {{ savingCfg ? '保存中…' : '保存自动爬取配置' }}
+        </button>
+      </div>
+    </div>
+
+    <div v-if="showLog" class="modal-overlay" @click.self="showLog = false" v-esc="() => (showLog = false)">
+      <div class="modal" style="width: 640px">
+        <div class="modal-header">执行日志</div>
+        <div class="modal-body">
+          <pre class="log-block">{{ logText }}</pre>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" @click="showLog = false">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.empty-cell { text-align: center; color: var(--color-text-tertiary); padding: var(--space-5); }
+.log-block {
+  max-height: 50vh;
+  overflow: auto;
+  background: var(--color-bg-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--color-text-secondary);
+}
+.grid { grid-template-columns: 1fr; }
+.grid-3 { display: grid; grid-template-columns: 1fr; gap: var(--space-4); }
+@media (min-width: 768px) {
+  /* --bp-md */
+  .grid-3 { grid-template-columns: 1fr 1fr; }
+}
+@media (min-width: 1024px) {
+  /* --bp-lg：宽屏恢复多列（原 !important 强制单列的写法一并去掉） */
+  .grid { grid-template-columns: none; }
+  .grid-3 { grid-template-columns: repeat(4, 1fr); }
+}
+.switch { display: inline-flex; align-items: center; gap: var(--space-3); cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-track {
+  width: 42px; height: 24px; border-radius: 999px;
+  background: var(--color-border); position: relative; transition: background var(--duration-fast);
+  flex-shrink: 0;
+}
+.switch-thumb {
+  position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff; transition: transform var(--duration-fast);
+}
+.switch input:checked + .switch-track { background: var(--color-primary); }
+.switch input:checked + .switch-track .switch-thumb { transform: translateX(18px); }
+.switch-label { font-size: 14px; color: var(--color-text-secondary); }
+</style>

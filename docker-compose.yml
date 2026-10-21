@@ -1,0 +1,86 @@
+# E-algo-rank 后端编排
+# 设计要点：
+#   - Docker 容器化，但 PG / Redis 复用宿主实例（Redis 用 :6379 + 独立 db 索引，不动护照数据）
+#   - 容器用 host 网络模式：直接访问宿主 127.0.0.1 的 PG/Redis 与 gunicorn:8001
+#   - TLS 由外层 nginx 在 443 终结，薄转发到本编排的 rank-nginx(:8003)
+#   - rank-nginx 独立容器：承载前端 SPA(dist) + /api//static//media/ 反代到 backend:8001
+#   - 媒体文件用宿主机 bind mount 持久化（./volumes/media）
+#   - 爬虫落盘缓存持久化（./volumes/crawler-data -> /app/crawlers/data），容器重建不丢
+#
+# 时区（2026-09-18 加固）：三个 Python 服务均显式设置 TZ=Asia/Shanghai。
+# 爬虫用 datetime.fromtimestamp() 取"本机时区"墙钟，而 ingest._parse_dt 按
+# Django 默认时区 Asia/Shanghai 解析该串；若容器跑在 UTC，时间会整体偏 8 小时。
+# 竞赛日历对时间零容忍，故不再依赖宿主/镜像默认值。
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      # 生产在国内构建，走清华源（Dockerfile 默认是上游源，CI 用默认值）。
+      # 这三个服务的 build 段必须保持一致，否则同一份代码会构建出不同镜像。
+      args:
+        APT_MIRROR: mirrors.tuna.tsinghua.edu.cn
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+    network_mode: "host"
+    env_file:
+      - .env.prod
+    environment:
+      DJANGO_ENV: prod
+      TZ: Asia/Shanghai
+    volumes:
+      - ./volumes/media:/app/backend/media
+      - ./volumes/crawler-data:/app/crawlers/data
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        APT_MIRROR: mirrors.tuna.tsinghua.edu.cn
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+    network_mode: "host"
+    command: celery -A config worker -Q crawl,crawl_slow -l info
+    env_file:
+      - .env.prod
+    environment:
+      DJANGO_ENV: prod
+      TZ: Asia/Shanghai
+    volumes:
+      - ./volumes/media:/app/backend/media
+      - ./volumes/crawler-data:/app/crawlers/data
+    # 内存护栏：单机内存有限，牛客爬虫大榜单 JSON 解析存在内存放大。
+    # 超限由内核 OOM 杀掉 worker 进程，容器 restart: unless-stopped 自动拉起；
+    # 任务幂等 + 渐进补抓，宿主与其他服务得到保护。
+    mem_limit: 1g
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        APT_MIRROR: mirrors.tuna.tsinghua.edu.cn
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+    network_mode: "host"
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file:
+      - .env.prod
+    environment:
+      DJANGO_ENV: prod
+      TZ: Asia/Shanghai
+    restart: unless-stopped
+
+  # 独立 nginx 容器：前端 SPA + 反代到 backend(:8001)。纯 HTTP，TLS 由外层反代终结。
+  # host 网络 :8003，由外层反代 443 薄转发到此处。
+  rank-nginx:
+    image: nginx:1.27-alpine
+    network_mode: "host"
+    volumes:
+      - ./deploy/rank-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${RANK_DIST_DIR:-./frontend/dist}:/usr/share/nginx/html:ro
+      - ./volumes/media:/var/www/media:ro
+    depends_on:
+      - backend
+    restart: unless-stopped

@@ -1,0 +1,312 @@
+/**
+ * 设计令牌 · Dark Tech Indigo
+ * 来源：prototype design for rank/DESIGN.md + prototype.html :root
+ * 原则：这里只放变量，不放任何选择器规则，方便被任意页面引用。
+ *
+ * 注意：本设计系统为「纯深色」，原型未定义浅色模式。
+ */
+:root {
+  /* ===== Color · 背景层级 ===== */
+  --color-bg-base: #0a0a0f;
+  --color-bg-surface: #13131a;
+  --color-bg-elevated: #1a1a24;
+  --color-bg-overlay: #20202c;
+  --color-bg-inset: #08080d;
+
+  /* ===== Color · 主色（靛蓝单色系） =====
+     2026-10-07 重定。原 `#6366f1 → #8b5cf6` 双色渐变有两个问题：
+       ① 蓝紫双色渐变是审美疲劳重灾区（规范附录 A 点名的「渐变紫蓝」近似）；
+       ② 实测白字对比度仅 4.47:1 / 4.23:1，双双低于 AA 4.5:1。
+     改为**同色相深浅**的单色系渐变：填充 #5b61e8（白字 4.86:1）、深端 #4338ca（白字 7.90:1）。
+     紫 #8b5cf6 退出强调色序列，降级为图表系列色。 */
+  --color-primary: #5b61e8;
+  --color-primary-hover: #4f54d4;
+  --color-primary-active: #4338ca;
+  --color-primary-subtle: rgba(91, 97, 232, 0.12);
+  --color-primary-border: rgba(91, 97, 232, 0.4);
+  /* 已降级：只作图表系列色，不再充当主色的渐变搭档 */
+  --color-secondary: #8b5cf6;
+  --chart-series-2: #8b5cf6;
+  --gradient-primary: linear-gradient(135deg, #5b61e8 0%, #4338ca 100%);
+  --gradient-primary-soft: linear-gradient(
+    135deg,
+    rgba(91, 97, 232, 0.15),
+    rgba(67, 56, 202, 0.15)
+  );
+  /* hero 微光是全站唯一允许的环境光渐变，必须弱到「看不出是渐变」 */
+  --gradient-hero-glow: radial-gradient(
+    ellipse at top,
+    rgba(91, 97, 232, 0.14),
+    transparent 60%
+  );
+
+  /* ===== Color · 强调 / 语义 ===== */
+  --color-accent-cyan: #06b6d4;
+  --color-accent-cyan-subtle: rgba(6, 182, 212, 0.12);
+  --color-accent-cyan-text: #22d3ee;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+  /* 「文本安全色」档：语义色本身（info/warning/success/primary）只做填充与图标，
+     用作文字时对比度不够（如 #3b82f6 on 18% tint 仅 4.04:1）。凡色块上叠文字
+     一律用本组令牌，实测均 ≥ 4.5:1（深色主题按 surface 底、浅色按 white 底）。 */
+  --color-primary-text: #a5b4fc;
+  --color-info-text: #60a5fa;
+  --color-warning-text: #fbbf24;
+  --color-success-text: #34d399;
+  --color-success-subtle: rgba(16, 185, 129, 0.12);
+  --color-warning-subtle: rgba(245, 158, 11, 0.12);
+  --color-danger-subtle: rgba(239, 68, 68, 0.12);
+  --color-info-subtle: rgba(59, 130, 246, 0.12);
+
+  /* ===== Color · 平台识别 ===== */
+  /* 一组令牌喂给「列表标签 + 日历色块 + 月历小点」。
+     原先 .platform-tag 自己写死三组十六进制、.cal-event 另用一组语义色，
+     结果同一场比赛在月历格里是蓝、在下面的行里是红 —— 平台身份应当只有一个色。
+     类名后缀用站内平台值（codeforces/atcoder/nowcoder/luogu），加平台只需在这里
+     补一对令牌 + `src/platforms/meta.ts` 补一条声明。 */
+  --platform-codeforces: var(--color-info);
+  --platform-codeforces-text: var(--color-info-text);
+  --platform-atcoder: var(--color-warning);
+  --platform-atcoder-text: var(--color-warning-text);
+  --platform-nowcoder: var(--color-success);
+  --platform-nowcoder-text: var(--color-success-text);
+  --platform-luogu: var(--color-accent-cyan);
+  --platform-luogu-text: var(--color-accent-cyan-text);
+
+  /* ===== Color · 图表段位（rating 分段，2026-10-07 收编） =====
+     原先这 11 个色以字面量散落在 RatingLineChart.vue 的 TIER_SETS 里（三套共 23 处）。
+     它们是**数据可视化**配色，属「单强调色」的正当例外（规范 A9 只要求颜色不能是
+     唯一信息通道，段位同时给出了分界线与文字）。
+     ⚠️ 深浅两套都要保证线段 ≥3:1，浅色档在 [data-theme='light'] 里另外加深。 */
+  --chart-tier-none: #9aa0a6;
+  --chart-tier-brown: #8d6e63;
+  --chart-tier-green: #43a047;
+  --chart-tier-cyan: #26c6da;
+  --chart-tier-teal: #26a69a;
+  --chart-tier-indigo: #5c6bc0;
+  --chart-tier-purple: #ab47bc;
+  --chart-tier-amber: #fbc02d;
+  --chart-tier-orange: #ffa726;
+  --chart-tier-red: #ef5350;
+  --chart-tier-crimson: #c62828;
+  /* 密码强度：直接复用语义色，不要再抄一份红/黄/绿字面量 */
+  --strength-weak: var(--color-danger);
+  --strength-medium: var(--color-warning);
+  --strength-strong: var(--color-success);
+
+  /* ===== Color · 文字 ===== */
+  --color-text-primary: #f4f4f5;
+  --color-text-secondary: #a1a1aa;
+  --color-text-tertiary: #9b9ba3;
+  --color-text-disabled: #52525b;
+  --color-text-inverse: #0a0a0f;
+
+  /* ===== Color · 描边 ===== */
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-border-focus: rgba(91, 97, 232, 0.5);
+  --color-divider: rgba(255, 255, 255, 0.06);
+
+  /* ===== Color · 奖牌 ===== */
+  --color-medal-gold: #fbbf24;
+  --color-medal-silver: #cbd5e1;
+  --color-medal-bronze: #d97706;
+  --gradient-gold: linear-gradient(135deg, #fbbf24, #f59e0b);
+
+  /* ===== Typography ===== */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Microsoft YaHei', 'Source Han Sans CN', 'Noto Sans SC',
+    sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'SF Mono', Menlo,
+    Consolas, monospace;
+
+  /* ===== Font size（UI 文字刻度，禁止在组件里裸写 px） ===== */
+  --text-2xs: 11px; /* 月历格内条目、计数徽标等密集文本 */
+  --text-xs: 12px; /* caption / 辅助说明 */
+  --text-sm: 13px; /* 次要正文、chip、链接 */
+  --text-base: 14px; /* 正文默认 */
+  --text-md: 15px; /* 面板小标题 */
+  --text-lg: 16px; /* 区块标题 */
+  --text-xl: 18px; /* 焦点区数值 */
+  --text-2xl: 22px; /* 倒计时数字 */
+
+  /* ===== Spacing（4px 阶梯，12 级） ===== */
+  /* --space-05 是密集网格专用半档（月历格内行距等），不用于常规块间距 */
+  --space-05: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ===== Radius（设计锁①：全站 3 档） =====
+     2026-10-07 收敛：原 6 档（4/8/12/16/20/full）压成 4 控件 / 8 容器 / full 圆形。
+     lg/xl/2xl 保留变量名但指向 md —— 引用点一个都不用改、视觉立刻统一，
+     将来要回退只需把这三行改回数值。 */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: var(--radius-md);
+  --radius-xl: var(--radius-md);
+  --radius-2xl: var(--radius-md);
+  --radius-full: 9999px;
+
+  /* ===== Shadow（设计锁②：2 档 + 1 个 glow） =====
+     1 档给常驻容器（卡片 / 输入 / 徽章），2 档给浮层（弹窗 / 抽屉 / 下拉）。
+     glow 是主色微光，只允许 hero 与极少数焦点元素使用。
+     md→1 档、xl→2 档，同样是「改名不改引用」的收敛方式。 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: var(--shadow-sm);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-xl: var(--shadow-lg);
+  --shadow-glow: 0 8px 32px rgba(91, 97, 232, 0.15);
+  --shadow-glow-strong: var(--shadow-glow);
+
+  /* ===== Glass ===== */
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-bg-strong: rgba(255, 255, 255, 0.05);
+  --glass-border-color: rgba(255, 255, 255, 0.08);
+  --glass-blur: blur(12px);
+  --glass-blur-strong: blur(20px);
+  /* 导航栏玻璃层底色兜底（backdrop-filter 不支持时的回退） */
+  --navbar-bg: rgba(10, 10, 15, 0.72);
+
+  /* ===== Motion ===== */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.6, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+  --duration-slower: 400ms;
+  /* 入场错峰步进：只给「板块级」用，不给每行铺动画 */
+  --stagger-1: 40ms;
+  --stagger-2: 60ms;
+  --stagger-3: 80ms;
+
+  /* ===== Layout ===== */
+  /* 断点唯一事实源。@media 无法消费 var()，所以媒体查询里必须就地加一条
+     `--bp-*` 同名注释回指本表，禁止再散写新的字面量断点。 */
+  --bp-sm: 560px;
+  --bp-md: 768px;
+  --bp-lg: 1024px;
+  --container-max: 1280px;
+  --container-wide: 1440px;
+  --container-narrow: 720px;
+  --grid-gutter: 24px;
+  --page-padding-x: 32px;
+  --nav-height: 64px;
+  --sidebar-width: 240px;
+  --sidebar-collapsed: 64px;
+  --control-height: 36px;
+  --control-height-sm: 30px;
+  --control-height-lg: 44px;
+  --table-row-h: 44px;
+  --avatar-size: 32px;
+
+  /* ===== Z-index ===== */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-sidebar: 300;
+  --z-nav: 400;
+  --z-modal: 1000;
+  --z-drawer: 1050;
+  --z-toast: 1100;
+  --z-tooltip: 1200;
+}
+
+/**
+ * ===== Legacy bridge =====
+ * 尚未迁移到本设计系统的页面仍在用旧令牌（--bg / --brand / --text-dim ...）。
+ * 这里把旧名映射到新值，保证迁移期间它们不会出现浅底 + 深色混排的撕裂感。
+ * 全部页面迁移完成后可整块删除。
+ */
+:root {
+  --bg: var(--color-bg-base);
+  --bg-elev: var(--color-bg-surface);
+  --bg-soft: var(--color-bg-elevated);
+  --text: var(--color-text-primary);
+  --text-dim: var(--color-text-secondary);
+  --border: var(--color-border);
+  --brand: var(--color-primary);
+  --brand-2: var(--color-secondary);
+  --brand-soft: var(--color-primary-subtle);
+  --good: var(--color-success);
+  --bad: var(--color-danger);
+  --shadow: var(--shadow-lg);
+}
+
+/**
+ * ===== Light theme =====
+ * 纯深色设计系统之上的浅色覆盖集。只重映射「颜色 + 阴影 + 玻璃」类令牌，
+ * 间距 / 圆角 / 字号 / 布局令牌保持不动。语义色（success/danger…）保持原值，
+ * 仅把 subtle 底色调淡以适配浅底。
+ */
+:root[data-theme='light'] {
+  --color-bg-base: #f5f6f8;
+  --color-bg-surface: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-overlay: #eceef3;
+  --color-bg-inset: #f1f2f6;
+
+  --color-text-primary: #18191c;
+  --color-text-secondary: #4b5563;
+  --color-text-tertiary: #6b7280;
+  --color-text-disabled: #b0b5bd;
+  --color-text-inverse: #ffffff;
+
+  --color-border: rgba(15, 23, 42, 0.1);
+  --color-border-strong: rgba(15, 23, 42, 0.16);
+  --color-border-focus: rgba(91, 97, 232, 0.5);
+  --color-divider: rgba(15, 23, 42, 0.07);
+
+  --chart-tier-none: #6b7280;
+  --chart-tier-brown: #6d4c41;
+  --chart-tier-green: #2e7d32;
+  --chart-tier-cyan: #00838f;
+  --chart-tier-teal: #00695c;
+  --chart-tier-indigo: #3949ab;
+  --chart-tier-purple: #7b1fa2;
+  --chart-tier-amber: #a88005;
+  --chart-tier-orange: #e65100;
+  --chart-tier-red: #c62828;
+  --chart-tier-crimson: #8e0000;
+
+  --color-primary-subtle: rgba(91, 97, 232, 0.1);
+  /* 浅底要换成深一档的文本安全色，沿用深色的亮档会掉到 2~3:1 */
+  --color-primary-text: #4f46e5;
+  --color-info-text: #1d4ed8;
+  --color-warning-text: #92400e;
+  --color-success-text: #047857;
+  --color-accent-cyan-text: #0e7490;
+  --color-success-subtle: rgba(16, 185, 129, 0.12);
+  --color-warning-subtle: rgba(245, 158, 11, 0.14);
+  --color-danger-subtle: rgba(239, 68, 68, 0.1);
+  --color-info-subtle: rgba(59, 130, 246, 0.12);
+
+  --gradient-hero-glow: radial-gradient(ellipse at top, rgba(91, 97, 232, 0.1), transparent 60%);
+
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-bg-strong: rgba(255, 255, 255, 0.78);
+  --glass-border-color: rgba(15, 23, 42, 0.08);
+  --glass-blur: blur(12px);
+  --glass-blur-strong: blur(20px);
+  --navbar-bg: rgba(255, 255, 255, 0.78);
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: var(--shadow-sm);
+  --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --shadow-xl: var(--shadow-lg);
+  --shadow-glow: 0 8px 32px rgba(91, 97, 232, 0.16);
+  --shadow-glow-strong: var(--shadow-glow);
+}
