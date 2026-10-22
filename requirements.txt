@@ -1,14 +1,14 @@
 # 直接依赖。传递依赖由 pip 自行解析，不锁死以便安全更新。
 Django==5.2.17
-djangorestframework==3.17.2
+djangorestframework==3.18.3
 djangorestframework-simplejwt==5.5.1
 django-cors-headers==4.9.0
-django-filter==26.1
+django-filter==26.2
 drf-spectacular==0.30.0
 celery==5.6.3
 django-celery-beat==2.9.0
 redis==8.1.0
-python-dotenv==1.2.2
+python-dotenv==1.2.4
 requests==2.34.2
 Pillow==13.0.0
 
@@ -16,7 +16,7 @@ Pillow==13.0.0
 psycopg[binary]==3.2.*
 gunicorn==23.*
 # 生产静态资源（admin / drf-spectacular 等）由后端经 /static/ 提供，避免额外挂共享卷
-whitenoise==6.9.0
+whitenoise==6.12.0
 
 # 统一认证中心 JWT 验签 SDK（RS256 + JWKS，离线验签）
 # 注意：该 SDK 未发布到 PyPI（演示项目）。Docker 构建时由 docker/Dockerfile
