@@ -13,7 +13,7 @@ requests==2.34.2
 Pillow==13.0.0
 
 # 生产环境额外需要（Docker 部署已启用）
-psycopg[binary]==3.2.*
+psycopg[binary]==3.3.*
 gunicorn==23.*
 # 生产静态资源（admin / drf-spectacular 等）由后端经 /static/ 提供，避免额外挂共享卷
 whitenoise==6.9.0
