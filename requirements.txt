@@ -1,5 +1,5 @@
 # 直接依赖。传递依赖由 pip 自行解析，不锁死以便安全更新。
-Django==5.2.17
+Django==6.1.2
 djangorestframework==3.17.2
 djangorestframework-simplejwt==5.5.1
 django-cors-headers==4.9.0
