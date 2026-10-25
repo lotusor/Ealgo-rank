@@ -206,18 +206,18 @@ watch(schoolSearch, () => {
       <div class="table-wrap" style="border: none; border-radius: 0">
         <table class="data-table">
           <colgroup v-if="isSchoolScope">
-            <col style="width: 80px" />
+            <col style="width: 64px" />
             <col />
-            <col style="width: 120px" />
             <col style="width: 110px" />
-            <col style="width: 110px" />
+            <col style="width: 100px" />
+            <col style="width: 100px" />
           </colgroup>
           <colgroup v-else>
-            <col style="width: 80px" />
+            <col style="width: 64px" />
             <col />
-            <col style="width: 180px" />
-            <col style="width: 120px" />
+            <col style="width: 160px" />
             <col style="width: 110px" />
+            <col style="width: 100px" />
           </colgroup>
           <thead>
             <tr v-if="isSchoolScope">
@@ -275,7 +275,7 @@ watch(schoolSearch, () => {
                     :disabled="r.user == null"
                     @click="router.push(`/u/user/${r.user}`)"
                   >
-                    <UserAvatar :name="r.user_name" :avatar="r.user_avatar" :size="30" />
+                    <UserAvatar :name="r.user_name" :avatar="r.user_avatar" :size="26" />
                     <span class="cell-ellipsis">{{ r.user_name }}</span>
                   </button>
                 </td>
@@ -316,7 +316,7 @@ watch(schoolSearch, () => {
 .data-table td.score {
   color: var(--color-primary);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 13.5px;
 }
 .alert {
   display: flex;
@@ -326,9 +326,9 @@ watch(schoolSearch, () => {
   background: var(--color-danger-subtle);
   border: 1px solid rgba(239, 68, 68, 0.25);
   color: var(--color-danger);
-  border-radius: var(--radius-md);
+  border-radius: 0;
   padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-5);
-  font-size: 14px;
+  margin-bottom: var(--space-4);
+  font-size: 13px;
 }
 </style>

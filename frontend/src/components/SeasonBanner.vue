@@ -179,11 +179,11 @@ onMounted(load)
 <style scoped>
 .season-banner {
   position: relative;
-  margin-bottom: var(--space-8);
-  padding: var(--space-6) var(--space-8);
-  background:
-    radial-gradient(circle at 100% 0%, rgba(139, 92, 246, 0.10), transparent 45%),
-    var(--color-bg-surface);
+  margin-bottom: var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-md);
   overflow: hidden;
 }
 .season-loading {
@@ -199,7 +199,7 @@ onMounted(load)
   color: var(--color-danger);
 }
 .season-head {
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-4);
 }
 .season-title-row {
   display: flex;
@@ -210,18 +210,20 @@ onMounted(load)
 .season-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: var(--gradient-primary);
-  color: #fff;
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 0.02em;
+  padding: 2px 8px;
+  border-radius: 0;
+  background: var(--accent);
+  color: var(--paper-2);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.04em;
 }
 .season-name {
-  font-size: 20px;
-  font-weight: 700;
   margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
 }
 .season-past-btn {
   margin-left: auto;
@@ -234,20 +236,25 @@ onMounted(load)
 }
 .season-body {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: minmax(340px, 380px) 1fr;
   gap: var(--space-6);
   align-items: start;
 }
 .season-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-4);
+  gap: var(--space-2);
+}
+.season-stat .stat-label {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 .season-stat {
-  padding: var(--space-4);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  padding: 12px 10px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 0;
 }
 .season-progress {
   grid-column: 1 / -1;
@@ -258,15 +265,16 @@ onMounted(load)
   margin-bottom: var(--space-2);
 }
 .progress-track {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--color-bg-inset);
+  height: 6px;
+  border-radius: 0;
+  background: var(--paper-3);
+  border: 1px solid var(--rule);
   overflow: hidden;
 }
 .progress-fill {
   height: 100%;
-  background: var(--gradient-primary);
-  border-radius: 999px;
+  background: var(--accent);
+  border-radius: 0;
   transition: width var(--duration-slower) var(--ease-out);
 }
 .progress-sub {
@@ -332,8 +340,9 @@ onMounted(load)
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-3) var(--space-4);
-  background: var(--color-bg-elevated);
-  border-radius: var(--radius-md);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 0;
   font-size: 14px;
 }
 .past-name {
@@ -355,8 +364,8 @@ onMounted(load)
 }
 @media (min-width: 768px) {
   /* --bp-md：恢复桌面默认 */
-  .season-banner { padding: var(--space-6) var(--space-8); }
-  .season-body { grid-template-columns: 260px 1fr; }
+  .season-banner { padding: var(--space-5) var(--space-6); }
+  .season-body { grid-template-columns: minmax(340px, 380px) 1fr; }
   .season-past-btn { margin-left: auto; }
   .settle-countdown {
     align-items: flex-end;

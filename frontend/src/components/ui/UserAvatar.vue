@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { initial } from '@/utils/format'
 
 const props = withDefaults(
@@ -13,6 +13,11 @@ const props = withDefaults(
 )
 
 const char = computed(() => initial(props.name))
+const failed = ref(false)
+watch(
+  () => props.avatar,
+  () => (failed.value = false),
+)
 const style = computed(() => ({
   width: `${props.size}px`,
   height: `${props.size}px`,
@@ -21,6 +26,13 @@ const style = computed(() => ({
 </script>
 
 <template>
-  <img v-if="avatar" class="avatar avatar-img" :style="style" :src="avatar" alt="" />
+  <img
+    v-if="avatar && !failed"
+    class="avatar avatar-img"
+    :style="style"
+    :src="avatar"
+    alt=""
+    @error="failed = true"
+  />
   <span v-else class="avatar" :style="style">{{ char }}</span>
 </template>

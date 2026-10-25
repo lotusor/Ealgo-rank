@@ -179,8 +179,8 @@ function go(name: string) {
   height: 46px;
   border: none;
   border-radius: var(--radius-full);
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--accent);
+  color: var(--paper-2);
   box-shadow: var(--shadow-lg);
   /* 高于侧栏与遮罩，展开时仍可点击收起 */
   z-index: calc(var(--z-sidebar) + 1);

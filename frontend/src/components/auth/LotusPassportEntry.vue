@@ -65,12 +65,10 @@ async function onLogin() {
   width: 100%;
   min-height: 72px;
   padding: 14px 18px;
-  border: 1px solid var(--color-border);
-  border-radius: 18px;
-  background:
-    linear-gradient(135deg, rgba(91, 97, 232, 0.10), rgba(6, 182, 212, 0.06)),
-    var(--color-bg-elevated);
-  color: var(--color-text-primary);
+  border: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
   cursor: pointer;
   text-align: left;
   overflow: hidden;
@@ -84,15 +82,15 @@ async function onLogin() {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.08) 45%, transparent 60%);
+  background: linear-gradient(115deg, transparent 30%, rgba(178, 58, 38, 0.08) 45%, transparent 60%);
   transform: translateX(-120%);
   transition: transform 0.6s ease;
   pointer-events: none;
 }
 .lotus-entry:hover:not(:disabled) {
-  transform: translateY(-2px);
-  border-color: var(--color-primary);
-  box-shadow: 0 10px 30px rgba(91, 97, 232, 0.25), var(--shadow-glow);
+  transform: translateY(-1px);
+  border-color: var(--accent);
+  box-shadow: 0 10px 30px -24px rgba(178, 58, 38, 0.55);
 }
 .lotus-entry:hover:not(:disabled)::after {
   transform: translateX(120%);
@@ -105,25 +103,22 @@ async function onLogin() {
   cursor: progress;
 }
 .lotus-entry:focus-visible {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(91, 97, 232, 0.3);
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .lotus-icon-ring {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
+  border-radius: 0;
   padding: 3px;
   flex-shrink: 0;
-  /* 原为多色相 conic 彩虹渐变（#6366f1/#06b6d4/#d9543f），属规范附录 A 黑名单。
-     改为复用主色的单色系渐变令牌：图标环仍是唯一的「品牌感」落点，但不抢注意力。 */
-  background: var(--gradient-primary);
+  background: var(--accent);
 }
 .lotus-icon {
   width: 100%;
   height: 100%;
-  border-radius: 9px;
+  border-radius: 0;
   object-fit: cover;
   display: block;
   transition: transform 0.25s ease;
@@ -140,13 +135,14 @@ async function onLogin() {
   flex: 1;
 }
 .lotus-title {
-  font-size: 15px;
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
 }
 .lotus-sub {
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-  line-height: 1.4;
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.5;
 }
 
 .lotus-arrow {
@@ -175,6 +171,23 @@ async function onLogin() {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+@media (max-width: 559px) {
+  .lotus-entry {
+    gap: 12px;
+    padding: 12px 13px;
+  }
+  .lotus-icon-ring {
+    width: 38px;
+    height: 38px;
+  }
+  .lotus-title {
+    font-size: 14.5px;
+    line-height: 1.35;
+  }
+  .lotus-sub {
+    font-size: 10.5px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

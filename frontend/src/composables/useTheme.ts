@@ -1,6 +1,6 @@
 /**
- * 主题切换（深色 / 浅色），偏好持久化到 localStorage。
- * 通过 <html data-theme="light"> 触发 tokens.css 里的浅色令牌覆盖集。
+ * 主题切换（纸本浅色 / 夜读深色），偏好持久化到 localStorage。
+ * 新访客默认落纸本；已表达过偏好的用户保持原选择。
  */
 import { ref } from 'vue'
 
@@ -9,7 +9,7 @@ export type Theme = 'dark' | 'light'
 
 function initial(): Theme {
   const saved = localStorage.getItem(STORAGE_KEY)
-  return saved === 'light' || saved === 'dark' ? saved : 'dark'
+  return saved === 'light' || saved === 'dark' ? saved : 'light'
 }
 
 const theme = ref<Theme>(initial())
@@ -17,6 +17,9 @@ const theme = ref<Theme>(initial())
 function apply(t: Theme) {
   theme.value = t
   document.documentElement.dataset.theme = t
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', t === 'dark' ? '#12100D' : '#F3EFE6')
   localStorage.setItem(STORAGE_KEY, t)
 }
 

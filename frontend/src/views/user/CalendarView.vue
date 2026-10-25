@@ -790,7 +790,7 @@ function fmtSyncTime(iso: string | null) {
 .cal-rel {
   font-size: var(--text-xs);
   font-weight: 600;
-  color: var(--color-accent-cyan);
+  color: var(--accent);
   white-space: nowrap;
 }
 
@@ -817,13 +817,16 @@ function fmtSyncTime(iso: string | null) {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
+  min-height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  border-radius: 0;
+  border: 1px solid var(--rule-strong);
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
   font-weight: 500;
+  letter-spacing: 0.03em;
   cursor: pointer;
   /* P5：只补间 paint 属性；`all` 会把 box-shadow 与尺寸一起拉进逐帧动画 */
   transition:
@@ -837,9 +840,9 @@ function fmtSyncTime(iso: string | null) {
   outline-offset: 2px;
 }
 .cal-chip.active {
-  background: var(--color-primary-subtle);
-  border-color: var(--color-primary);
-  color: var(--color-primary-text);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
 }
 .cal-chip-count {
   font-family: var(--font-mono);
@@ -869,10 +872,11 @@ function fmtSyncTime(iso: string | null) {
   margin-bottom: var(--space-4);
 }
 .cal-month-label {
-  margin: 0; /* <h2> 化之后去掉 UA 默认外边距，保持面板头部行高不变 */
-  font-size: var(--text-lg);
-  font-weight: 700;
-  color: var(--color-text-primary);
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ink);
   min-width: 118px;
   text-align: center;
 }
@@ -911,9 +915,9 @@ function fmtSyncTime(iso: string | null) {
   gap: var(--space-1);
   padding: var(--space-1);
   text-align: left;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-surface);
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background: var(--paper-2);
   cursor: pointer;
   /* P5：显式列属性，`all` 会把 box-shadow 拉成逐帧动画 */
   transition:
@@ -936,12 +940,11 @@ function fmtSyncTime(iso: string | null) {
   color: var(--color-text-tertiary);
 }
 .cal-cell.is-today {
-  border-color: var(--color-primary);
-  /* 今日环标：42 格里第一眼要落在它上面，靠外发光而不是靠加粗 */
-  box-shadow: var(--shadow-glow);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .cal-cell.is-selected {
-  border-color: var(--color-primary);
+  border-color: var(--accent);
   background: var(--color-primary-subtle);
 }
 .cal-cell-day {
@@ -965,7 +968,7 @@ function fmtSyncTime(iso: string | null) {
   font-size: var(--text-2xs);
   line-height: 1.5;
   padding: var(--space-05) var(--space-1);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1043,10 +1046,11 @@ function fmtSyncTime(iso: string | null) {
   margin-bottom: var(--space-4);
 }
 .cal-day-title {
-  margin: 0; /* 现在它是 <h2>，去掉 UA 默认外边距，交给 flex 的 gap */
-  font-size: var(--text-md);
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 18px;
   font-weight: 600;
-  color: var(--color-text-primary);
+  color: var(--ink);
 }
 .cal-day-list {
   list-style: none;

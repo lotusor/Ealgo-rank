@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { listApplications, listCrawlJobs, listParticipations, listUsers } from '@/api'
 import type { Application, CrawlJob, Participation } from '@/api/types'
 import { fmtCount, fmtDate, fmtScore } from '@/utils/format'
+import CountUp from '@/components/ui/CountUp.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -73,10 +74,10 @@ function fmtDateTime(s: string | null) {
     </div>
 
     <div class="grid grid-4 stats-row">
-      <div class="stat-card"><div class="stat-label">待审批申请</div><div class="stat-value num text-warning">{{ fmtCount(pendingApps) }}</div><div class="stat-sub">需尽快处理</div></div>
-      <div v-if="auth.isSuperAdmin" class="stat-card"><div class="stat-label">今日爬取任务</div><div class="stat-value num">{{ fmtCount(crawlToday) }}</div><div class="stat-sub">新触发</div></div>
-      <div class="stat-card"><div class="stat-label">参赛记录总数</div><div class="stat-value num">{{ fmtCount(partsTotal) }}</div><div class="stat-sub">累计</div></div>
-      <div class="stat-card"><div class="stat-label">本校学生数</div><div class="stat-value num">{{ fmtCount(schoolUsers) }}</div><div class="stat-sub">已注册</div></div>
+      <div class="stat-card"><div class="stat-label">待审批申请</div><div class="stat-value num text-warning"><CountUp :value="pendingApps" /></div><div class="stat-sub">需尽快处理</div></div>
+      <div v-if="auth.isSuperAdmin" class="stat-card"><div class="stat-label">今日爬取任务</div><div class="stat-value num"><CountUp :value="crawlToday" /></div><div class="stat-sub">新触发</div></div>
+      <div class="stat-card"><div class="stat-label">参赛记录总数</div><div class="stat-value num"><CountUp :value="partsTotal" /></div><div class="stat-sub">累计</div></div>
+      <div class="stat-card"><div class="stat-label">本校学生数</div><div class="stat-value num"><CountUp :value="schoolUsers" /></div><div class="stat-sub">已注册</div></div>
     </div>
 
     <div class="dash-grid">

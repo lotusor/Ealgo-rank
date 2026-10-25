@@ -6,10 +6,297 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#F3EFE6" />
+    <meta
+      name="description"
+      content="E-algo Rank 汇总各平台算法竞赛的赛程与成绩，以统一站内积分呈现高校算法竞赛排名。"
+    />
+    <script>
+      ;(() => {
+        try {
+          const saved = localStorage.getItem('theme_pref')
+          const theme = saved === 'dark' || saved === 'light' ? saved : 'light'
+          document.documentElement.dataset.theme = theme
+          document
+            .querySelector('meta[name="theme-color"]')
+            ?.setAttribute('content', theme === 'dark' ? '#12100D' : '#F3EFE6')
+        } catch {
+          document.documentElement.dataset.theme = 'light'
+        }
+      })()
+    </script>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23B23A26'/%3E%3Ctext x='32' y='46' font-family='Georgia,serif' font-size='40' text-anchor='middle' fill='%23F3EFE6'%3EE%3C/text%3E%3C/svg%3E"
+    />
+    <noscript>
+      <style>
+        .boot-splash {
+          display: none !important;
+        }
+      </style>
+    </noscript>
+    <style>
+      html.boot-loading,
+      html.boot-loading body {
+        overflow: hidden;
+      }
+      .boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99990;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: clamp(24px, 5vh, 48px);
+        padding: clamp(18px, 3vw, 28px) clamp(20px, 4vw, 64px);
+        background: #12100d;
+        color: #f3efe6;
+        transition: transform 680ms cubic-bezier(0.16, 1, 0.3, 1);
+        will-change: transform;
+      }
+      .boot-splash.is-done {
+        transform: translateY(-100%);
+      }
+      .boot-splash__top,
+      .boot-splash__foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.16em;
+        line-height: 1.4;
+        text-transform: uppercase;
+        color: #a79e8d;
+      }
+      .boot-splash__body {
+        align-self: center;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: clamp(14px, 2.5vh, 22px);
+        min-width: 0;
+      }
+      .boot-splash__mark {
+        margin: 0;
+        font-family: 'Instrument Serif', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+        font-size: clamp(3.4rem, 13vw, 10rem);
+        font-weight: 400;
+        line-height: 0.86;
+        letter-spacing: -0.045em;
+        color: #f3efe6;
+      }
+      .boot-splash__status {
+        min-height: 1.5em;
+        margin: 0;
+        font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        color: #a79e8d;
+      }
+      .boot-splash__bottom {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .boot-splash__progress {
+        width: 100%;
+        height: 2px;
+        background: #3a332a;
+        overflow: hidden;
+      }
+      .boot-splash__bar {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: #d96445;
+        transform: scaleX(0);
+        transform-origin: left center;
+        will-change: transform;
+      }
+      .boot-splash__foot {
+        margin-top: 2px;
+      }
+      .boot-splash__skip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 40px;
+        margin-left: 12px;
+        padding: 0 12px;
+        border: 0;
+        border-bottom: 1px solid #3a332a;
+        background: none;
+        color: #f3efe6;
+        font-family: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        cursor: pointer;
+      }
+      .boot-splash__skip:hover,
+      .boot-splash__skip:focus-visible {
+        border-bottom-color: #d96445;
+        color: #d96445;
+      }
+      .boot-splash__skip:focus-visible {
+        outline: 2px solid #f3efe6;
+        outline-offset: 2px;
+      }
+      @media (max-width: 559px) {
+        .boot-splash {
+          gap: 18px;
+          padding: 16px 20px;
+        }
+        .boot-splash__top,
+        .boot-splash__foot {
+          font-size: 8.5px;
+          letter-spacing: 0.1em;
+        }
+        .boot-splash__mark {
+          font-size: clamp(3.4rem, 17vw, 5.4rem);
+        }
+        .boot-splash__skip {
+          min-height: 36px;
+          padding: 0 8px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash {
+          display: none;
+        }
+      }
+    </style>
+    <script>
+      ;(() => {
+        try {
+          if (
+            !window.matchMedia ||
+            !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+          ) {
+            document.documentElement.classList.add('boot-loading')
+          }
+        } catch {
+          /* 静默降级：splash 脚本会负责收尾 */
+        }
+      })()
+    </script>
     <title>E-algo Rank</title>
   </head>
   <body>
     <div id="app"></div>
+    <div class="boot-splash" id="boot-splash" aria-label="页面加载中">
+      <div class="boot-splash__top">
+        <span>E-ALGO / RANK</span>
+        <span>SEASON 2026</span>
+      </div>
+      <div class="boot-splash__body">
+        <p class="boot-splash__mark">E-ALGO</p>
+        <p class="boot-splash__status" id="boot-splash-status" role="status" aria-live="polite">
+          正在读取赛季数据
+        </p>
+      </div>
+      <div class="boot-splash__bottom">
+        <div class="boot-splash__progress" aria-hidden="true">
+          <span class="boot-splash__bar" id="boot-splash-bar"></span>
+        </div>
+        <div class="boot-splash__foot">
+          <span>LOADING THE LEDGER</span>
+          <span>
+            <span id="boot-splash-pct" aria-hidden="true">00 / 100</span>
+            <button class="boot-splash__skip" id="boot-splash-skip" type="button">跳过</button>
+          </span>
+        </div>
+      </div>
+    </div>
+    <script>
+      ;(() => {
+        const splash = document.getElementById('boot-splash')
+        if (!splash) return
+        const root = document.documentElement
+        const reduce =
+          window.matchMedia &&
+          window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        const bar = document.getElementById('boot-splash-bar')
+        const pct = document.getElementById('boot-splash-pct')
+        const status = document.getElementById('boot-splash-status')
+        const skip = document.getElementById('boot-splash-skip')
+        const MIN_SHOW = 1050
+        const HARD_STOP = 3600
+        const start = performance.now()
+        let raf = 0
+        let hardTimer = 0
+        let finishing = false
+        let finished = false
+        let lastStatus = status ? status.textContent?.trim() || '' : ''
+        let lastPct = ''
+
+        const pad = (value) => String(value).padStart(2, '0')
+        const cleanup = () => {
+          root.classList.remove('boot-loading')
+          splash.remove()
+        }
+        const finish = () => {
+          if (finished) return
+          finished = true
+          cancelAnimationFrame(raf)
+          clearTimeout(hardTimer)
+          splash.classList.add('is-done')
+          splash.setAttribute('aria-hidden', 'true')
+          if (skip) skip.disabled = true
+          window.setTimeout(cleanup, 720)
+        }
+        const finishReady = () => {
+          if (finished || finishing) return
+          finishing = true
+          cancelAnimationFrame(raf)
+          clearTimeout(hardTimer)
+          if (bar) bar.style.transform = 'scaleX(1)'
+          if (pct) pct.textContent = '100 / 100'
+          if (status) status.textContent = '准备就绪'
+          window.setTimeout(finish, 160)
+        }
+        const tick = (time) => {
+          const progress = Math.min(0.92, ((time - start) / 1150) * 0.92)
+          if (bar) bar.style.transform = `scaleX(${progress.toFixed(4)})`
+          if (pct) {
+            const nextPct = `${pad(Math.round(progress * 100))} / 100`
+            if (nextPct !== lastPct) {
+              pct.textContent = nextPct
+              lastPct = nextPct
+            }
+          }
+          if (status) {
+            const nextStatus =
+              progress < 0.42
+                ? '正在读取赛季数据'
+                : progress < 0.8
+                  ? '校验排名快照'
+                  : '准备就绪'
+            if (nextStatus !== lastStatus) {
+              status.textContent = nextStatus
+              lastStatus = nextStatus
+            }
+          }
+          if (progress < 0.92) raf = requestAnimationFrame(tick)
+        }
+
+        if (reduce) {
+          cleanup()
+          return
+        }
+
+        raf = requestAnimationFrame(tick)
+        const onLoad = () => {
+          const wait = Math.max(0, MIN_SHOW - (performance.now() - start))
+          window.setTimeout(finishReady, wait)
+        }
+        if (document.readyState === 'complete') onLoad()
+        else window.addEventListener('load', onLoad, { once: true })
+        hardTimer = window.setTimeout(finishReady, HARD_STOP)
+        skip?.addEventListener('click', finish)
+      })()
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

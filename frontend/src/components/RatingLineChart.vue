@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { platformLabel } from '@/platforms/meta'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { platformClass, platformLabel } from '@/platforms/meta'
+import CountUp from '@/components/ui/CountUp.vue'
+
+interface Point {
+  label: string
+  value: number
+  meta?: Record<string, any>
+}
 
 interface Tier {
   min: number
@@ -11,9 +18,8 @@ interface TierSet {
   lines: number[]
 }
 
-// 各平台官方段位配置：tiers 的 min 为该档起点，lines 为参考线阈值（= 档位边界）。
-// ⚠️ 只服务「有平台 rating 的计分平台」；注册表里新增可计分平台时必须在这里补一份
-// 段位表，否则折线图会静默退化成站点品牌色、右侧段位标尺一起消失。
+// 注册表新增「可计分且有平台 rating」的平台时，必须在这里补段位表；
+// 缺表不会报错，但线段会退回强调色，段位参考线也会消失。
 const TIER_SETS: Record<string, TierSet> = {
   codeforces: {
     tiers: [
@@ -55,571 +61,934 @@ const TIER_SETS: Record<string, TierSet> = {
   },
 }
 
-interface Point {
-  label: string
-  value: number
-  meta?: Record<string, any>
-}
-
 const props = withDefaults(
   defineProps<{
     points: Point[]
     height?: number
-    color?: string
-    /** 单平台时启用该平台段位着色与参考线；空串为聚合口径（品牌色） */
+    /** 空串 = 站内总积分；平台键 = 该平台官方 rating */
     platform?: string
   }>(),
-  { height: 220, color: 'var(--brand)', platform: '' },
+  { height: 260, platform: '' },
 )
 
-const W = 720
-const H = computed(() => props.height)
+const isAggregate = computed(() => !props.platform)
 const tierSet = computed(() =>
   props.platform ? TIER_SETS[props.platform] ?? null : null,
 )
+const metricLabel = computed(() =>
+  isAggregate.value ? '站内总积分' : '官方 Rating',
+)
+const modeLabel = computed(() =>
+  isAggregate.value ? 'SITE TOTAL' : 'PLATFORM RATING',
+)
+
+const plotEl = ref<HTMLElement | null>(null)
+const chartPlotEl = ref<HTMLElement | null>(null)
+const width = ref(720)
+const ready = ref(false)
+const animKey = ref(0)
+
+let resizeObserver: ResizeObserver | null = null
+function measure() {
+  const next = Math.max(280, Math.round(plotEl.value?.clientWidth || 720))
+  if (next !== width.value) width.value = next
+  ready.value = true
+}
+
+const H = computed(() =>
+  width.value < 480 ? Math.max(210, props.height - 34) : props.height,
+)
 const PAD = computed(() => ({
-  top: 18,
-  right: tierSet.value ? 46 : 16,
-  bottom: 40,
-  left: 44,
+  top: 24,
+  right: tierSet.value ? (width.value < 400 ? 36 : 44) : 16,
+  bottom: 32,
+  left: width.value < 400 ? 36 : 46,
 }))
 
-function tierColor(v: number): string {
+function tierColor(value: number): string {
   const ts = tierSet.value
-  if (!ts) return props.color
-  let c = ts.tiers[0].color
-  for (const t of ts.tiers) if (v >= t.min) c = t.color
-  return c
+  if (!ts) return 'var(--accent)'
+  let color = ts.tiers[0].color
+  for (const tier of ts.tiers) if (value >= tier.min) color = tier.color
+  return color
+}
+
+function niceStep(range: number) {
+  const target = Math.max(25, range / 4)
+  const steps = [10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000]
+  return steps.find((step) => step >= target) ?? 2000
+}
+
+interface ChartPoint extends Point {
+  time: number
+  cx: number
+  cy: number
+  index: number
 }
 
 const geom = computed(() => {
-  const pts = [...props.points].sort(
-    (a, b) => new Date(a.label).getTime() - new Date(b.label).getTime(),
-  )
-  if (pts.length === 0) return null
-  const vals = pts.map((p) => p.value)
-  let min = Math.min(...vals)
-  let max = Math.max(...vals)
-  if (min === max) {
-    min -= 10
-    max += 10
-  }
-  const pad = (max - min) * 0.12
-  min -= pad
-  max += pad
+  if (!ready.value) return null
+  const sorted = props.points
+    .map((point) => ({ ...point, time: new Date(point.label).getTime() }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value))
+    .sort((a, b) => a.time - b.time)
+  if (!sorted.length) return null
+
   const p = PAD.value
-  const innerW = W - p.left - p.right
+  const innerW = width.value - p.left - p.right
   const innerH = H.value - p.top - p.bottom
-  const x = (i: number) =>
-    p.left + (pts.length === 1 ? innerW / 2 : (i / (pts.length - 1)) * innerW)
-  const y = (v: number) => p.top + innerH - ((v - min) / (max - min)) * innerH
-  const coords = pts.map((pt, i) => ({ ...pt, cx: x(i), cy: y(pt.value) }))
-  // path（M/L 折线），便于 getTotalLength 做描线动画
-  const path = coords
-    .map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.cx} ${c.cy}`)
-    .join(' ')
-  const area = `${p.left},${p.top + innerH} ${coords
-    .map((c) => `${c.cx},${c.cy}`)
-    .join(' ')} ${coords[coords.length - 1].cx},${p.top + innerH}`
-  const ticks = Array.from({ length: 5 }, (_, i) => {
-    const v = min + ((max - min) * i) / 4
-    return { v: Math.round(v), y: y(v) }
-  })
-  const xTicks = pickXTicks(coords)
-  return { coords, path, area, ticks, xTicks, min, max, y, bottom: p.top + innerH }
-})
+  const times = sorted.map((point) => point.time)
+  const minTime = Math.min(...times)
+  const maxTime = Math.max(...times)
+  const timeSpan = Math.max(1, maxTime - minTime)
 
-function pickXTicks(coords: { label: string; cx: number }[]) {
-  if (coords.length === 0) return []
-  if (coords.length === 1) return [{ ...coords[0], i: 0 }]
-  const idxs = new Set<number>([0, coords.length - 1])
-  const step = Math.max(1, Math.floor((coords.length - 1) / 5))
-  for (let i = step; i < coords.length - 1; i += step) idxs.add(i)
-  return [...idxs]
-    .sort((a, b) => a - b)
-    .map((i) => ({ ...coords[i], i }))
-}
+  const values = sorted.map((point) => point.value)
+  const minValue = Math.min(...values)
+  const maxValue = Math.max(...values)
+  const rawRange = Math.max(50, maxValue - minValue)
+  const step = niceStep(rawRange)
+  let low = Math.floor((minValue - rawRange * 0.12) / step) * step
+  let high = Math.ceil((maxValue + rawRange * 0.12) / step) * step
+  if (low === high) high += step
 
-// 段位参考线：只画落在可见 Y 范围内的
-const tierLines = computed(() => {
-  const ts = tierSet.value
-  const g = geom.value
-  if (!ts || !g) return []
-  return ts.lines
-    .filter((v) => v > g.min && v < g.max)
-    .map((v) => ({ v, y: g.y(v), color: tierColor(v) }))
-})
+  const x = (time: number) =>
+    p.left +
+    (sorted.length === 1
+      ? innerW / 2
+      : ((time - minTime) / timeSpan) * innerW)
+  const y = (value: number) =>
+    p.top + innerH - ((value - low) / (high - low)) * innerH
 
-// 最新点小旗（当前 rating 锚点）
-const flag = computed(() => {
-  const g = geom.value
-  if (!g || g.coords.length === 0) return null
-  const last = g.coords[g.coords.length - 1]
-  return { x: last.cx, y: last.cy, color: tierColor(last.value) }
-})
+  const coords: ChartPoint[] = sorted.map((point, index) => ({
+    ...point,
+    cx: x(point.time),
+    cy: y(point.value),
+    index,
+  }))
+  const baseline = p.top + innerH
 
-// 面积渐变主色：段位模式用最新点段位色，聚合模式用品牌色
-const areaColor = computed(() => {
-  const g = geom.value
-  if (tierSet.value && g && g.coords.length > 0) {
-    return tierColor(g.coords[g.coords.length - 1].value)
+  const ticks: { value: number; y: number }[] = []
+  for (let value = low; value <= high + step * 0.01; value += step) {
+    ticks.push({ value, y: y(value) })
   }
-  return props.color
-})
 
-// ---- hover 交互 ----
-const hoverIndex = ref<number | null>(null)
-
-function onMove(e: MouseEvent) {
-  const svg = e.currentTarget as SVGSVGElement
-  const rect = svg.getBoundingClientRect()
-  if (rect.width === 0) return
-  const px = ((e.clientX - rect.left) / rect.width) * W
-  const g = geom.value
-  if (!g || g.coords.length === 0) return
-  let best = 0
-  let bestDist = Infinity
-  g.coords.forEach((c, i) => {
-    const d = Math.abs(c.cx - px)
-    if (d < bestDist) {
-      bestDist = d
-      best = i
+  const labelCount = width.value < 480 ? 3 : 5
+  const xLabels = Array.from({ length: labelCount }, (_, index) => {
+    const ratio = index / (labelCount - 1)
+    const time = minTime + timeSpan * ratio
+    return {
+      x: p.left + innerW * ratio,
+      text: formatAxisDate(time),
+      anchor:
+        index === 0 ? 'start' : index === labelCount - 1 ? 'end' : 'middle',
     }
   })
-  hoverIndex.value = best
-}
-function onLeave() {
-  hoverIndex.value = null
+
+  const tierLines =
+    tierSet.value && tierSet.value.lines.some((value) => value > low && value < high)
+      ? tierSet.value.lines
+          .filter((value) => value > low && value < high)
+          .map((value) => ({ value, y: y(value), color: tierColor(value) }))
+      : []
+
+  return {
+    coords,
+    innerW,
+    innerH,
+    baseline,
+    ticks,
+    xLabels,
+    tierLines,
+    latest: coords[coords.length - 1],
+  }
+})
+
+function smoothPath(points: ChartPoint[]) {
+  if (!points.length) return ''
+  if (points.length === 1) return `M${points[0].cx.toFixed(1)},${points[0].cy.toFixed(1)}`
+  let d = `M${points[0].cx.toFixed(1)},${points[0].cy.toFixed(1)} `
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const p0 = points[i - 1] || points[i]
+    const p1 = points[i]
+    const p2 = points[i + 1]
+    const p3 = points[i + 2] || p2
+    const c1x = p1.cx + (p2.cx - p0.cx) / 6
+    const c1y = p1.cy + (p2.cy - p0.cy) / 6
+    const c2x = p2.cx - (p3.cx - p1.cx) / 6
+    const c2y = p2.cy - (p3.cy - p1.cy) / 6
+    d += `C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.cx.toFixed(1)},${p2.cy.toFixed(1)} `
+  }
+  return d
 }
 
-const hoverPoint = computed(() => {
+function segmentPath(points: ChartPoint[], index: number) {
+  const p0 = points[index - 1] || points[index]
+  const p1 = points[index]
+  const p2 = points[index + 1]
+  const p3 = points[index + 2] || p2
+  const c1x = p1.cx + (p2.cx - p0.cx) / 6
+  const c1y = p1.cy + (p2.cy - p0.cy) / 6
+  const c2x = p2.cx - (p3.cx - p1.cx) / 6
+  const c2y = p2.cy - (p3.cy - p1.cy) / 6
+  return `M${p1.cx.toFixed(1)},${p1.cy.toFixed(1)} C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.cx.toFixed(1)},${p2.cy.toFixed(1)}`
+}
+
+const areaPath = computed(() => {
   const g = geom.value
-  if (g === null || hoverIndex.value == null) return null
-  return g.coords[hoverIndex.value]
+  if (!g || g.coords.length < 2) return ''
+  const path = smoothPath(g.coords)
+  const first = g.coords[0]
+  const last = g.coords[g.coords.length - 1]
+  return `M${first.cx.toFixed(1)},${g.baseline.toFixed(1)} L${first.cx.toFixed(1)},${first.cy.toFixed(1)} ${path.replace(/^M[^C]+/, '')} L${last.cx.toFixed(1)},${g.baseline.toFixed(1)} Z`
 })
 
-function hexToRgb(hex: string): [number, number, number] | null {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex)
-  if (!m) return null
-  const n = parseInt(m[1], 16)
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-}
-function darken(hex: string, f = 0.72): string {
-  const rgb = hexToRgb(hex)
-  if (!rgb) return hex
-  const [r, g, b] = rgb.map((v) => Math.round(v * f))
-  return `rgb(${r}, ${g}, ${b})`
-}
-
-// tooltip 头部段位色渐变（非段位模式用品牌色平面色）
-const tipHeadBg = computed(() => {
-  const p = hoverPoint.value
-  if (!p) return ''
-  const c = tierColor(p.value)
-  if (c.startsWith('#')) return `linear-gradient(135deg, ${c}, ${darken(c)})`
-  return c
+const segments = computed(() => {
+  const g = geom.value
+  if (!g || g.coords.length < 2) return []
+  return g.coords.slice(0, -1).map((point, index) => ({
+    d: segmentPath(g.coords, index),
+    color: tierColor(g.coords[index + 1].value),
+    delay: Math.min(460, index * 26),
+    target: g.coords[index + 1],
+  }))
 })
 
-// tooltip 定位：默认在点下方，靠近底部翻到上方；靠近右缘水平翻转。带过渡实现平滑跟随。
-const tipStyle = computed(() => {
-  const p = hoverPoint.value
-  if (!p) return {} as Record<string, string>
-  const xr = p.cx / W
-  const yr = p.cy / H.value
-  const s: Record<string, string> = {}
-  if (xr > 0.62) {
-    s.left = 'auto'
-    s.right = `${(1 - xr) * 100}%`
-  } else {
-    s.left = `${xr * 100}%`
-    s.right = 'auto'
+const latestValue = computed(() => geom.value?.latest.value ?? null)
+const latestPrecision = computed(() => {
+  const value = latestValue.value
+  return value != null && !Number.isInteger(value) ? 1 : 0
+})
+const areaColor = computed(() => {
+  const g = geom.value
+  if (!g) return 'var(--accent)'
+  return tierColor(g.latest.value)
+})
+const gradientId = `rating-area-${Math.random().toString(36).slice(2, 8)}`
+const maskId = `rating-mask-${Math.random().toString(36).slice(2, 8)}`
+const numberFormat = new Intl.NumberFormat('en-US')
+function fmtNumber(value: number | string | null | undefined) {
+  if (value == null) return '—'
+  const n = Number(value)
+  return Number.isFinite(n) ? numberFormat.format(n) : String(value)
+}
+
+const labelPos = computed(() => {
+  const g = geom.value
+  if (!g) return null
+  const last = g.latest
+  return {
+    x: last.cx - 9,
+    y: Math.max(12, last.cy - 11),
+    anchor: 'end',
+    color: tierColor(last.value),
   }
-  const tx = xr > 0.62 ? '50%' : '-50%'
-  if (yr > 0.6) {
-    // 点靠下 → tooltip 放上方
-    s.top = `calc(${yr * 100}% - 14px)`
-    s.transform = `translate(${tx}, -100%)`
-  } else {
-    s.top = `calc(${yr * 100}% + 16px)`
-    s.transform = `translate(${tx}, 0)`
+})
+
+/* ===== interactions ===== */
+const tipIndex = ref<number | null>(null)
+const tipVisible = ref(false)
+const tipLeft = ref(0)
+const tipTop = ref(0)
+const tipEl = ref<HTMLElement | null>(null)
+const tipPoint = computed(() =>
+  tipIndex.value == null ? null : geom.value?.coords[tipIndex.value] ?? null,
+)
+const marker = computed(() => {
+  const point = tipPoint.value
+  if (!point) return null
+  return { x: point.cx, y: point.cy, color: tierColor(point.value) }
+})
+
+function placeTip() {
+  const point = tipPoint.value
+  const tip = tipEl.value
+  if (!point || !tip) return
+  const tipWidth = tip.offsetWidth || 220
+  const tipHeight = tip.offsetHeight || 140
+  const p = PAD.value
+  let left = point.cx + 14
+  if (left + tipWidth > width.value - 8) left = point.cx - tipWidth - 14
+  left = Math.max(8, Math.min(left, width.value - tipWidth - 8))
+  let top = point.cy - tipHeight - 14
+  if (top < 8) top = point.cy + 14
+  if (top + tipHeight > H.value - 8) top = Math.max(8, H.value - tipHeight - 8)
+  tipLeft.value = left
+  tipTop.value = top
+}
+
+function show(index: number) {
+  if (!geom.value) return
+  tipIndex.value = index
+  tipVisible.value = true
+  nextTick(placeTip)
+}
+function hide() {
+  tipVisible.value = false
+  tipIndex.value = null
+}
+
+function pointFromEvent(event: PointerEvent | MouseEvent) {
+  const g = geom.value
+  const target = chartPlotEl.value
+  if (!g || !target) return
+  const box = target.getBoundingClientRect()
+  const px = event.clientX - box.left
+  const py = event.clientY - box.top
+  if (px < 0 || py < 0 || px > box.width || py > box.height) {
+    hide()
+    return
   }
-  return s
-})
-
-function fmtDateLabel(s: string) {
-  const d = new Date(s)
-  if (isNaN(d.getTime())) return s
-  return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
-}
-function fmtDateTime(s: string) {
-  const d = new Date(s)
-  if (isNaN(d.getTime())) return s
-  const p2 = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(
-    d.getHours(),
-  )}:${p2(d.getMinutes())}`
-}
-function fmtNum(v: number) {
-  return v.toLocaleString('en-US')
+  let best = -1
+  let bestScore = Infinity
+  g.coords.forEach((point, index) => {
+    const dx = Math.abs(px - point.cx)
+    if (dx > 42) return
+    const score = dx + Math.abs(py - point.cy) * 0.32
+    if (score < bestScore) {
+      bestScore = score
+      best = index
+    }
+  })
+  if (best >= 0) show(best)
+  else hide()
 }
 
-// ---- 进场动画 ----
-const lineRef = ref<SVGPathElement | null>(null)
-const animKey = ref(0)
-
-function runLineAnim() {
-  const el = lineRef.value
-  if (!el) return
-  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const L = el.getTotalLength()
-  el.style.transition = 'none'
-  el.style.strokeDasharray = reduce ? 'none' : `${L}`
-  el.style.strokeDashoffset = reduce ? '0' : `${L}`
-  if (reduce) return
-  void el.getBoundingClientRect() // 强制回流后启动过渡
-  el.style.transition = 'stroke-dashoffset 0.9s cubic-bezier(0.4, 0, 0.2, 1)'
-  el.style.strokeDashoffset = '0'
+function onPointerMove(event: PointerEvent) {
+  if (event.pointerType === 'touch') return
+  pointFromEvent(event)
+}
+function onPointerDown(event: PointerEvent) {
+  pointFromEvent(event)
+}
+function onPointerLeave(event: PointerEvent) {
+  if (event.pointerType !== 'touch') hide()
+}
+function onFocus(index: number) {
+  show(index)
+}
+function onKeydown(event: KeyboardEvent, index: number) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const total = geom.value?.coords.length || 0
+  if (!total) return
+  let next = index
+  if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = total - 1
+  else next = (index + (event.key === 'ArrowRight' ? 1 : -1) + total) % total
+  const hits = chartPlotEl.value?.querySelectorAll<SVGCircleElement>('[data-point]')
+  hits?.[next]?.focus()
 }
 
-onMounted(() => {
-  runLineAnim()
-})
+function onDocPointerDown(event: PointerEvent) {
+  if (!chartPlotEl.value?.contains(event.target as Node)) hide()
+}
+
+function pointAria(point: ChartPoint) {
+  const meta = point.meta || {}
+  const rank = meta.rank != null ? `第 ${meta.rank} 名` : '名次未知'
+  const delta =
+    meta.delta != null
+      ? `变化 ${meta.delta > 0 ? '+' : ''}${meta.delta}`
+      : ''
+  return `${formatFullDate(point.time)}，${platformLabel(meta.platform) || ''} ${meta.contest || ''}，${metricLabel.value} ${point.value}，${rank}${delta ? `，${delta}` : ''}`
+}
+
+function chartSummary() {
+  const n = geom.value?.coords.length || 0
+  return isAggregate.value
+    ? `站内总积分曲线，共 ${n} 场计入排名的比赛。悬停、聚焦或轻触数据点查看比赛详情。`
+    : `${platformLabel(props.platform)} 官方 Rating 曲线，共 ${n} 场 rated 比赛。线条颜色随该平台段位变化。悬停、聚焦或轻触查看比赛详情。`
+}
+
+function platformName() {
+  return props.platform ? platformLabel(props.platform) : ''
+}
+function formatAxisDate(time: number) {
+  const date = new Date(time)
+  return `${String(date.getFullYear()).slice(2)}.${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+function formatFullDate(time: number) {
+  const date = new Date(time)
+  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`
+}
+function formatTime(s: string) {
+  const date = new Date(s)
+  if (Number.isNaN(date.getTime())) return s
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+function signed(value: number | null | undefined) {
+  if (value == null) return '—'
+  return `${value > 0 ? '+' : ''}${value}`
+}
+
 watch(
   [() => props.points, () => props.platform],
   () => {
-    animKey.value++
-    hoverIndex.value = null
-    runLineAnim()
+    hide()
+    animKey.value += 1
   },
   { flush: 'post' },
 )
-
-const stagger = computed(() => {
-  const g = geom.value
-  const n = g ? g.coords.length : 1
-  return Math.min(60, Math.floor(900 / Math.max(n, 1)))
+watch(width, () => {
+  if (tipVisible.value) nextTick(placeTip)
 })
 
-const gradId = `rg-${Math.random().toString(36).slice(2, 8)}`
+onMounted(() => {
+  measure()
+  resizeObserver = new ResizeObserver(measure)
+  if (plotEl.value) resizeObserver.observe(plotEl.value)
+  document.addEventListener('pointerdown', onDocPointerDown)
+})
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  document.removeEventListener('pointerdown', onDocPointerDown)
+})
 </script>
 
 <template>
-  <div class="chart-wrap">
-    <div v-if="geom" class="chart-area">
+  <div ref="plotEl" class="rating-chart">
+    <div class="chart-top">
+      <div class="chart-legend">
+        <span
+          class="chart-legend__swatch"
+          :style="{ background: isAggregate ? 'var(--accent)' : tierColor(latestValue ?? 0) }"
+          aria-hidden="true"
+        />
+        <span class="chart-legend__label">
+          {{ isAggregate ? '站内总积分' : platformName() }}
+          <small>{{ isAggregate ? 'SITE TOTAL · 近一年' : 'OFFICIAL RATING · 平台口径' }}</small>
+        </span>
+        <span class="chart-legend__value">
+          <CountUp :value="latestValue" :precision="latestPrecision" />
+        </span>
+      </div>
+      <span class="chart-mode">
+        {{ isAggregate ? '单线 · 后端评分口径' : tierSet ? '线条颜色 = 官方段位' : '平台 Rating · 官方口径' }}
+      </span>
+    </div>
+
+    <div
+      v-if="geom"
+      ref="chartPlotEl"
+      :key="animKey"
+      class="chart-plot"
+      @pointermove="onPointerMove"
+      @pointerdown="onPointerDown"
+      @pointerleave="onPointerLeave"
+    >
       <svg
-        :viewBox="`0 0 ${W} ${H}`"
-        width="100%"
+        class="chart-svg"
+        :viewBox="`0 0 ${width} ${H}`"
+        :width="width"
         :height="H"
-        preserveAspectRatio="xMidYMid meet"
-        @mousemove="onMove"
-        @mouseleave="onLeave"
+        role="group"
+        :aria-label="chartSummary()"
       >
         <defs>
-          <linearGradient :id="gradId" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" :stop-color="areaColor" :stop-opacity="tierSet ? 0.14 : 0.2" />
-            <stop offset="100%" :stop-color="areaColor" stop-opacity="0.02" />
+          <linearGradient :id="gradientId" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" :stop-color="areaColor" stop-opacity="0.22" />
+            <stop offset="100%" :stop-color="areaColor" stop-opacity="0" />
           </linearGradient>
+          <linearGradient :id="`${maskId}-alpha`" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="white" stop-opacity="0" />
+            <stop offset="0.08" stop-color="white" stop-opacity="1" />
+            <stop offset="0.9" stop-color="white" stop-opacity="1" />
+            <stop offset="1" stop-color="white" stop-opacity="0" />
+          </linearGradient>
+          <mask :id="maskId" maskUnits="userSpaceOnUse">
+            <rect
+              :x="PAD.left"
+              :y="PAD.top"
+              :width="width - PAD.left - PAD.right"
+              :height="H - PAD.top - PAD.bottom + 20"
+              :fill="`url(#${maskId}-alpha)`"
+            />
+          </mask>
         </defs>
 
-        <!-- Y 轴网格与刻度 -->
-        <g>
+        <g aria-hidden="true">
           <line
-            v-for="t in geom.ticks"
-            :key="t.v"
+            v-for="tick in geom.ticks"
+            :key="`grid-${tick.value}`"
+            class="chart-grid"
             :x1="PAD.left"
-            :x2="W - PAD.right"
-            :y1="t.y"
-            :y2="t.y"
-            stroke="var(--color-divider)"
-            stroke-width="1"
-            stroke-dasharray="3 4"
+            :x2="width - PAD.right"
+            :y1="tick.y"
+            :y2="tick.y"
           />
           <text
-            v-for="t in geom.ticks"
-            :key="'l' + t.v"
-            :x="PAD.left - 8"
-            :y="t.y + 4"
+            v-for="tick in geom.ticks"
+            :key="`axis-${tick.value}`"
+            class="chart-axis"
+            :x="PAD.left - 7"
+            :y="tick.y + 3"
             text-anchor="end"
-            font-size="11"
-            fill="var(--color-text-tertiary)"
           >
-            {{ fmtNum(t.v) }}
+            {{ fmtNumber(tick.value) }}
           </text>
-        </g>
 
-        <!-- 段位参考线（仅单平台模式，画在可见范围内的档位边界） -->
-        <g v-if="tierSet" :key="'tiers-' + animKey" class="tier-g">
-          <line
-            v-for="t in tierLines"
-            :key="'t' + t.v"
-            :x1="PAD.left"
-            :x2="W - PAD.right"
-            :y1="t.y"
-            :y2="t.y"
-            :stroke="t.color"
-            stroke-opacity="0.45"
-            stroke-width="1"
-            stroke-dasharray="4 5"
-          />
+          <template v-if="tierSet">
+            <g v-for="line in geom.tierLines" :key="`tier-${line.value}`">
+              <line
+                class="chart-tier-line"
+                :x1="PAD.left"
+                :x2="width - PAD.right"
+                :y1="line.y"
+                :y2="line.y"
+                :stroke="line.color"
+              />
+              <text
+                class="chart-tier-label"
+                :x="width - PAD.right + 5"
+                :y="line.y + 3"
+                :fill="line.color"
+              >
+                {{ fmtNumber(line.value) }}
+              </text>
+            </g>
+          </template>
+
           <text
-            v-for="t in tierLines"
-            :key="'tl' + t.v"
-            :x="W - PAD.right + 6"
-            :y="t.y + 3.5"
-            text-anchor="start"
-            font-size="10"
-            font-weight="600"
-            :fill="t.color"
+            v-for="(label, index) in geom.xLabels"
+            :key="`x-${index}`"
+            class="chart-axis"
+            :x="label.x"
+            :y="H - 9"
+            :text-anchor="label.anchor"
           >
-            {{ t.v }}
+            {{ label.text }}
           </text>
         </g>
 
-        <!-- X 轴时间刻度 -->
-        <g>
-          <text
-            v-for="t in geom.xTicks"
-            :key="'x' + t.i"
-            :x="t.cx"
-            :y="H - 14"
-            text-anchor="middle"
-            font-size="10"
-            fill="var(--color-text-tertiary)"
-          >
-            {{ fmtDateLabel(t.label) }}
-          </text>
-        </g>
-
-        <!-- 面积 + 折线 -->
-        <polygon :key="'area-' + animKey" :points="geom.area" :fill="`url(#${gradId})`" class="area-in" />
         <path
-          ref="lineRef"
-          :d="geom.path"
-          fill="none"
-          :stroke="tierSet ? 'var(--color-text-tertiary)' : color"
-          :stroke-opacity="tierSet ? 0.6 : 1"
-          :stroke-width="tierSet ? 1.5 : 2.5"
-          stroke-linejoin="round"
-          stroke-linecap="round"
+          v-if="areaPath"
+          class="chart-area"
+          :d="areaPath"
+          :fill="`url(#${gradientId})`"
+          :mask="`url(#${maskId})`"
+          aria-hidden="true"
         />
 
-        <!-- hover 垂直参考线 -->
-        <line
-          v-if="hoverPoint"
-          :x1="hoverPoint.cx"
-          :x2="hoverPoint.cx"
-          :y1="PAD.top"
-          :y2="geom.bottom"
-          stroke="var(--color-text-tertiary)"
-          stroke-width="1"
-          stroke-dasharray="2 3"
-        />
-
-        <!-- 数据点（段位模式按档位着色） -->
-        <g :key="'pts-' + animKey">
-          <g v-for="(c, i) in geom.coords" :key="i">
-            <circle
-              v-if="hoverIndex === i"
-              class="halo"
-              :cx="c.cx"
-              :cy="c.cy"
-              r="10"
-              :fill="tierColor(c.value)"
-            />
-            <circle
-              class="pt"
-              :style="{ animationDelay: `${i * stagger}ms` }"
-              :cx="c.cx"
-              :cy="c.cy"
-              :r="hoverIndex === i ? 5.5 : 3.5"
-              :fill="tierColor(c.value)"
-              :stroke="hoverIndex === i ? 'var(--color-bg-surface)' : 'none'"
-              :stroke-width="hoverIndex === i ? 1.5 : 0"
-            />
-          </g>
-        </g>
-
-        <!-- 最新点小旗（当前 rating 锚点） -->
-        <g v-if="flag" :key="'flag-' + animKey" class="flag-in">
-          <line
-            :x1="flag.x"
-            :x2="flag.x"
-            :y1="flag.y - 4"
-            :y2="flag.y - 22"
-            :stroke="flag.color"
-            stroke-width="1.6"
-            stroke-linecap="round"
-          />
+        <g v-if="segments.length" aria-hidden="true">
           <path
-            :d="`M ${flag.x} ${flag.y - 22} L ${flag.x + 12} ${flag.y - 18} L ${flag.x} ${flag.y - 14} Z`"
-            :fill="flag.color"
+            v-for="(segment, index) in segments"
+            :key="`segment-${index}`"
+            class="chart-series-segment"
+            :d="segment.d"
+            pathLength="1"
+            :stroke="segment.color"
+            :style="{ animationDelay: `${segment.delay}ms` }"
           />
         </g>
+        <path
+          v-else-if="geom.coords.length === 1"
+          class="chart-single-dot-halo"
+          :cx="geom.coords[0].cx"
+          :cy="geom.coords[0].cy"
+          r="10"
+          :stroke="tierColor(geom.coords[0].value)"
+          aria-hidden="true"
+        />
+
+        <g aria-hidden="true">
+          <circle
+            v-for="point in geom.coords"
+            :key="`dot-${point.index}`"
+            class="chart-dot"
+            :cx="point.cx"
+            :cy="point.cy"
+            r="3.1"
+            :stroke="tierColor(point.value)"
+          />
+        </g>
+
+        <g v-if="tipPoint" aria-hidden="true">
+          <line
+            class="chart-crosshair"
+            :x1="tipPoint.cx"
+            :x2="tipPoint.cx"
+            :y1="PAD.top"
+            :y2="geom.baseline"
+          />
+          <circle
+            class="chart-marker"
+            :cx="tipPoint.cx"
+            :cy="tipPoint.cy"
+            r="6"
+            :stroke="tierColor(tipPoint.value)"
+          />
+        </g>
+
+        <g v-if="labelPos" aria-hidden="true">
+          <text
+            class="chart-last-label"
+            :x="labelPos.x"
+            :y="labelPos.y"
+            :text-anchor="labelPos.anchor"
+            :fill="labelPos.color"
+          >
+            {{ fmtNumber(latestValue) }}
+          </text>
+        </g>
+
+        <circle
+          v-for="point in geom.coords"
+          :key="`hit-${point.index}`"
+          class="chart-hit"
+          data-point
+          :cx="point.cx"
+          :cy="point.cy"
+          r="12"
+          tabindex="0"
+          role="img"
+          :aria-label="pointAria(point)"
+          @focus="onFocus(point.index)"
+          @blur="hide"
+          @keydown="onKeydown($event, point.index)"
+        />
       </svg>
 
-      <!-- 悬浮提示卡片 -->
-      <Transition name="tip">
-        <div v-if="hoverPoint" class="chart-tip" :style="tipStyle">
-          <div class="tip-head" :style="{ background: tipHeadBg }">
-            <b class="num">{{ hoverPoint.value }}</b>
-            <span v-if="hoverPoint.meta?.delta != null" class="tip-delta">
-              ({{ hoverPoint.meta.delta > 0 ? '+' : '' }}{{ hoverPoint.meta.delta }})
-            </span>
-            <span v-if="hoverPoint.meta?.rank != null" class="tip-rank">
-              (第 {{ hoverPoint.meta.rank }} 名)
+      <div
+        v-show="tipVisible && tipPoint"
+        ref="tipEl"
+        class="chart-tooltip"
+        :class="{ 'is-visible': tipVisible && tipPoint }"
+        :style="{ left: `${tipLeft}px`, top: `${tipTop}px` }"
+        aria-hidden="true"
+      >
+        <template v-if="tipPoint">
+          <p class="chart-tooltip__eyebrow">
+            {{ formatFullDate(tipPoint.time) }}
+            <span>·</span>
+            <span
+              v-if="tipPoint.meta?.platform"
+              class="platform-tag"
+              :class="platformClass(tipPoint.meta.platform)"
+            >{{ platformLabel(tipPoint.meta.platform) }}</span>
+          </p>
+          <strong class="chart-tooltip__title">{{ tipPoint.meta?.contest || '—' }}</strong>
+          <div class="chart-tooltip__grid">
+            <span><small>名次</small><b>{{ tipPoint.meta?.rank != null ? `#${tipPoint.meta.rank}` : '—' }}</b></span>
+            <span><small>{{ metricLabel }}</small><b>{{ fmtNumber(tipPoint.value) }}</b></span>
+            <span>
+              <small>变化</small>
+              <b :class="(tipPoint.meta?.delta ?? 0) >= 0 ? 'delta-up' : 'delta-down'">{{ signed(tipPoint.meta?.delta) }}</b>
             </span>
           </div>
-          <div class="tip-body">
-            <div v-if="hoverPoint.meta?.contest" class="tip-contest">
-              <span
-                v-if="!tierSet && hoverPoint.meta?.platform"
-                class="platform-tag"
-              >{{ platformLabel(hoverPoint.meta.platform) }}</span>
-              {{ hoverPoint.meta.contest }}
-            </div>
-            <div class="tip-time">{{ fmtDateTime(hoverPoint.label) }}</div>
-          </div>
-        </div>
-      </Transition>
+          <span class="chart-tooltip__foot">
+            {{ isAggregate ? '站内总积分 · 与榜单同口径' : '官方 Rating · 平台口径' }}
+            <template v-if="tipPoint.meta?.platform"> · {{ platformLabel(tipPoint.meta.platform) }}</template>
+          </span>
+        </template>
+      </div>
     </div>
-    <div v-else class="empty">暂无评分变化数据</div>
+
+    <div v-else class="chart-empty">还没有可展示的评分记录。</div>
+    <p v-if="geom" class="chart-time">最近一场 · {{ formatTime(geom.latest.label) }} · 悬停 / 轻触查看比赛</p>
   </div>
 </template>
 
 <style scoped>
-.chart-wrap {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: 8px 8px 0;
+.rating-chart {
   width: 100%;
-  background: var(--color-bg-surface);
+  min-width: 0;
+}
+.chart-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  padding: 2px 2px 4px;
+}
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.chart-legend__swatch {
+  position: relative;
+  width: 24px;
+  height: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.chart-legend__swatch::after {
+  content: '';
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: inherit;
+}
+.chart-legend__label {
+  display: grid;
+  gap: 1px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.chart-legend__label small {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+.chart-legend__value {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+.chart-mode {
+  padding: 4px 7px;
+  border: 1px solid var(--rule);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.chart-plot {
+  position: relative;
+  margin-top: 6px;
+  touch-action: pan-y;
+}
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.chart-grid {
+  stroke: var(--rule);
+  stroke-width: 1;
+  stroke-dasharray: 1 5;
+  opacity: 0.85;
+  vector-effect: non-scaling-stroke;
+}
+.chart-tier-line {
+  stroke-width: 1;
+  stroke-dasharray: 4 5;
+  opacity: 0.5;
+  vector-effect: non-scaling-stroke;
+}
+.chart-axis,
+.chart-tier-label {
+  fill: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+}
+.chart-tier-label {
+  font-size: 8.5px;
+  font-weight: 500;
+}
+.chart-series-segment {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  vector-effect: non-scaling-stroke;
+  animation: chart-draw 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 .chart-area {
-  position: relative;
+  opacity: 0;
+  animation: chart-area-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.22s forwards;
 }
-.chart-area svg {
+.chart-dot {
+  fill: var(--paper-2);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: chart-dot-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.44s forwards;
+}
+.chart-single-dot-halo {
+  fill: none;
+  stroke-width: 1.4;
+  opacity: 0.35;
+}
+.chart-crosshair {
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  vector-effect: non-scaling-stroke;
+}
+.chart-marker {
+  fill: var(--paper-2);
+  stroke-width: 2.4;
+  vector-effect: non-scaling-stroke;
+}
+.chart-last-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  paint-order: stroke;
+  stroke: var(--paper-2);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.chart-hit {
+  fill: transparent;
+  stroke: transparent;
+  cursor: crosshair;
+}
+.chart-hit:focus-visible {
+  outline: none;
+  fill: color-mix(in srgb, var(--accent) 8%, transparent);
+  stroke: var(--accent);
+  stroke-width: 1.4;
+}
+.chart-tooltip {
+  position: absolute;
+  z-index: 4;
+  width: max-content;
+  max-width: 236px;
+  padding: 10px 12px;
+  border: 1px solid var(--glass-border-top);
+  border-radius: 12px;
+  background: var(--tip-bg);
+  box-shadow:
+    0 20px 42px -26px rgba(30, 20, 10, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  -webkit-backdrop-filter: blur(18px) saturate(1.45);
+  backdrop-filter: blur(18px) saturate(1.45);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition:
+    opacity 0.16s var(--ease-standard),
+    transform 0.16s var(--ease-standard),
+    visibility 0.16s;
+  pointer-events: none;
+}
+.chart-tooltip.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.chart-tooltip__eyebrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+.chart-tooltip__eyebrow .platform-tag {
+  font-size: 8px;
+  padding: 1px 5px;
+}
+.chart-tooltip__title {
   display: block;
+  margin-top: 4px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
 }
-.empty {
-  padding: 40px;
+.chart-tooltip__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+.chart-tooltip__grid span {
+  display: grid;
+  gap: 2px;
+}
+.chart-tooltip__grid small {
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  color: var(--ink-3);
+}
+.chart-tooltip__grid b {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.chart-tooltip__foot {
+  display: block;
+  margin-top: 7px;
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  color: var(--ink-3);
+}
+.delta-up {
+  color: var(--color-success);
+}
+.delta-down {
+  color: var(--color-danger);
+}
+.chart-time {
+  margin: 4px 2px 0;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.03em;
+}
+.chart-empty {
+  padding: 42px 20px;
   text-align: center;
-  color: var(--color-text-tertiary);
   font-size: 13px;
+  color: var(--ink-3);
 }
-
-/* ---- 进场动画 ---- */
-.pt {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: pt-in 0.35s ease-out backwards;
-  transition: r 0.15s ease;
+@keyframes chart-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
 }
-.halo {
-  opacity: 0.18;
-  animation: pt-in 0.18s ease-out backwards;
-  transform-box: fill-box;
-  transform-origin: center;
+@keyframes chart-area-in {
+  to {
+    opacity: 1;
+  }
 }
-.area-in {
-  animation: fade-in 0.8s ease-out 0.25s backwards;
-}
-.tier-g {
-  animation: fade-in 0.7s ease-out 0.1s backwards;
-}
-.flag-in {
-  animation: fade-in 0.5s ease-out 0.85s backwards;
-}
-@keyframes pt-in {
+@keyframes chart-dot-in {
   from {
     opacity: 0;
-    transform: scale(0);
+    transform: scale(0.55);
   }
   to {
     opacity: 1;
     transform: scale(1);
   }
 }
-@keyframes fade-in {
-  from {
-    opacity: 0;
+@media (max-width: 559px) {
+  .chart-mode {
+    display: none;
+  }
+  .chart-tooltip {
+    max-width: 210px;
+    padding: 9px 10px;
+  }
+  .chart-tooltip__title {
+    font-size: 13px;
   }
 }
-
-/* ---- tooltip ---- */
-.chart-tip {
-  position: absolute;
-  top: 0;
-  left: 0;
-  min-width: 150px;
-  max-width: 250px;
-  border-radius: var(--radius-md);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-lg);
-  pointer-events: none;
-  z-index: 10;
-  font-size: 12px;
-  overflow: hidden;
-  transition:
-    left 0.16s ease-out,
-    right 0.16s ease-out,
-    top 0.16s ease-out;
-}
-.tip-head {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 7px 12px;
-  color: #fff;
-  white-space: nowrap;
-}
-.tip-head b {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-}
-.tip-delta,
-.tip-rank {
-  font-size: 12px;
-  font-weight: 600;
-  opacity: 0.92;
-}
-.tip-body {
-  padding: 8px 12px 9px;
-}
-.tip-contest {
-  color: var(--color-text-secondary);
-  line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.tip-contest .platform-tag {
-  margin-right: 6px;
-}
-.tip-time {
-  color: var(--color-text-tertiary);
-  margin-top: 3px;
-}
-.tip-enter-active,
-.tip-leave-active {
-  transition: opacity 0.12s ease;
-}
-.tip-enter-from,
-.tip-leave-to {
-  opacity: 0;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .pt,
-  .halo,
-  .area-in,
-  .tier-g,
-  .flag-in {
+  .chart-series-segment,
+  .chart-area,
+  .chart-dot {
     animation: none;
+    stroke-dashoffset: 0;
+    opacity: 1;
   }
-  .chart-tip {
+  .chart-tooltip {
     transition: none;
   }
 }

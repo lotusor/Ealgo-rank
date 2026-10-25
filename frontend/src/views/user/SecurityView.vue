@@ -88,9 +88,12 @@ async function onSubmit() {
 
 <template>
   <div class="container-wide" style="max-width: 640px">
-    <div class="section-title" style="margin-bottom: var(--space-6)">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
-      账号安全
+    <div class="page-head">
+      <div>
+        <div class="breadcrumb"><span>个人中心</span><span>/</span><span>账号安全</span></div>
+        <h1 class="page-title">账号安全</h1>
+        <p class="page-subtitle">本地密码与会话安全</p>
+      </div>
     </div>
 
     <div class="card card-pad">
@@ -137,7 +140,7 @@ async function onSubmit() {
 </template>
 
 <style scoped>
-.card-pad { padding: var(--space-8); }
+.card-pad { padding: var(--space-6); }
 .alert-success {
   background: color-mix(in srgb, var(--color-success, #10b981) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-success, #10b981) 40%, transparent);

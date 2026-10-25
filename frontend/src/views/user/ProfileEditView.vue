@@ -14,6 +14,8 @@ const auth = useAuthStore()
 const toast = useToast()
 
 const me = computed(() => auth.user)
+const avatarFailed = ref(false)
+watch(() => me.value?.avatar, () => (avatarFailed.value = false))
 
 // ---------- 头像 ----------
 const avatarFile = ref<HTMLInputElement | null>(null)
@@ -146,7 +148,7 @@ function onAccountsChanged() {
     <div class="card card-pad" style="margin-bottom: var(--space-6)">
       <div style="display: flex; align-items: center; gap: var(--space-5); flex-wrap: wrap">
         <div class="avatar-edit">
-          <img v-if="me?.avatar" :src="me.avatar" class="avatar-img" alt="头像" />
+          <img v-if="me?.avatar && !avatarFailed" :src="me.avatar" class="avatar-img" alt="头像" @error="avatarFailed = true" />
           <div v-else class="avatar-img avatar-fallback">{{ initial(me?.real_name || me?.username || '?') }}</div>
           <div class="avatar-actions">
             <button class="btn btn-secondary btn-sm" :disabled="avatarBusy" @click="onPickAvatar">
@@ -229,20 +231,20 @@ function onAccountsChanged() {
   gap: var(--space-3);
 }
 .avatar-img {
-  width: 96px;
-  height: 96px;
-  border-radius: var(--radius-xl);
+  width: 80px;
+  height: 80px;
+  border-radius: 0;
   object-fit: cover;
-  box-shadow: var(--shadow-glow);
+  border: 1px solid var(--rule);
 }
 .avatar-fallback {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 36px;
-  font-weight: 700;
-  color: #fff;
-  background: var(--gradient-primary);
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--paper-2);
+  background: var(--accent);
 }
 .avatar-actions {
   display: flex;

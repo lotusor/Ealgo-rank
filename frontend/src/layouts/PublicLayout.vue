@@ -16,6 +16,10 @@ import SystemAnnouncement from '@/components/layout/SystemAnnouncement.vue'
     </main>
     <footer class="app-footer">
       <div class="app-footer-inner">
+        <div>
+          <div class="footer-wordmark">E-algo <em>Rank</em></div>
+          <div class="footer-note">高校算法竞赛积分年鉴 · Season 2026</div>
+        </div>
         <div class="legal">
           © 2026 E时代算法竞赛排名系统<br />
           E-algo Rank™ 为演示项目产品名称<br />

@@ -132,9 +132,10 @@ function fmtDate(s: string | null) {
   flex-direction: column;
 }
 .contest-name {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--color-text-primary);
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
   line-height: 1.4;
 }
 .contest-name:hover {
