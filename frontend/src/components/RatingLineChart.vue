@@ -26,7 +26,7 @@ const TIER_SETS: Record<string, TierSet> = {
       { min: 0, color: 'var(--chart-tier-none)' },
       { min: 1200, color: 'var(--chart-tier-green)' },
       { min: 1400, color: 'var(--chart-tier-cyan)' },
-      { min: 1600, color: 'var(--chart-tier-indigo)' },
+      { min: 1600, color: 'var(--chart-tier-blue)' },
       { min: 1900, color: 'var(--chart-tier-purple)' },
       { min: 2100, color: 'var(--chart-tier-orange)' },
       { min: 2400, color: 'var(--chart-tier-red)' },
@@ -40,7 +40,7 @@ const TIER_SETS: Record<string, TierSet> = {
       { min: 400, color: 'var(--chart-tier-brown)' },
       { min: 800, color: 'var(--chart-tier-green)' },
       { min: 1200, color: 'var(--chart-tier-cyan)' },
-      { min: 1600, color: 'var(--chart-tier-indigo)' },
+      { min: 1600, color: 'var(--chart-tier-blue)' },
       { min: 2000, color: 'var(--chart-tier-amber)' },
       { min: 2400, color: 'var(--chart-tier-orange)' },
       { min: 2800, color: 'var(--chart-tier-red)' },
@@ -51,7 +51,7 @@ const TIER_SETS: Record<string, TierSet> = {
     tiers: [
       { min: 0, color: 'var(--chart-tier-none)' },
       { min: 700, color: 'var(--chart-tier-purple)' },
-      { min: 1100, color: 'var(--chart-tier-indigo)' },
+      { min: 1100, color: 'var(--chart-tier-blue)' },
       { min: 1500, color: 'var(--chart-tier-teal)' },
       { min: 2000, color: 'var(--chart-tier-amber)' },
       { min: 2400, color: 'var(--chart-tier-orange)' },
@@ -165,6 +165,7 @@ const geom = computed(() => {
     cy: y(point.value),
     index,
   }))
+  const tangents = monotoneTangents(coords)
   const baseline = p.top + innerH
 
   const ticks: { value: number; y: number }[] = []
@@ -193,6 +194,7 @@ const geom = computed(() => {
 
   return {
     coords,
+    tangents,
     innerW,
     innerH,
     baseline,
@@ -203,50 +205,102 @@ const geom = computed(() => {
   }
 })
 
-function smoothPath(points: ChartPoint[]) {
+/**
+ * 单调三次 Hermite（Fritsch–Carlson）切线。
+ * 评分点的时间间隔并不均匀，普通 Catmull-Rom 在长间隔/急转折处会过冲，
+ * 甚至让曲线回折成环；这里限制切线，保证每段 x 单调、y 不超出两端点范围。
+ */
+function monotoneTangents(points: ChartPoint[]): number[] {
+  const n = points.length
+  if (n < 2) return []
+  const h: number[] = []
+  const delta: number[] = []
+  for (let i = 0; i < n - 1; i += 1) {
+    const dx = points[i + 1].cx - points[i].cx
+    h.push(dx)
+    delta.push(dx > 0 ? (points[i + 1].cy - points[i].cy) / dx : 0)
+  }
+  const m = new Array<number>(n).fill(0)
+  m[0] = delta[0]
+  m[n - 1] = delta[n - 2]
+  for (let i = 1; i < n - 1; i += 1) {
+    const d0 = delta[i - 1]
+    const d1 = delta[i]
+    if (h[i - 1] <= 0 || h[i] <= 0 || d0 === 0 || d1 === 0 || d0 * d1 < 0) {
+      m[i] = 0
+      continue
+    }
+    const w1 = 2 * h[i] + h[i - 1]
+    const w2 = h[i] + 2 * h[i - 1]
+    m[i] = (w1 + w2) / (w1 / d0 + w2 / d1)
+  }
+  // 限制切线幅度，避免三次曲线越出相邻点范围
+  for (let i = 0; i < n - 1; i += 1) {
+    if (delta[i] === 0) {
+      m[i] = 0
+      m[i + 1] = 0
+      continue
+    }
+    const a = m[i] / delta[i]
+    const b = m[i + 1] / delta[i]
+    const s = a * a + b * b
+    if (s > 9) {
+      const t = 3 / Math.sqrt(s)
+      m[i] = t * a * delta[i]
+      m[i + 1] = t * b * delta[i]
+    }
+  }
+  return m
+}
+
+function cubicControls(p1: ChartPoint, p2: ChartPoint, t1: number, t2: number) {
+  const h = p2.cx - p1.cx
+  if (h <= 0) return null
+  return {
+    c1x: p1.cx + h / 3,
+    c1y: p1.cy + (t1 * h) / 3,
+    c2x: p2.cx - h / 3,
+    c2y: p2.cy - (t2 * h) / 3,
+  }
+}
+
+function smoothPath(points: ChartPoint[], tangents: number[]) {
   if (!points.length) return ''
   if (points.length === 1) return `M${points[0].cx.toFixed(1)},${points[0].cy.toFixed(1)}`
-  let d = `M${points[0].cx.toFixed(1)},${points[0].cy.toFixed(1)} `
+  let d = `M${points[0].cx.toFixed(1)},${points[0].cy.toFixed(1)}`
   for (let i = 0; i < points.length - 1; i += 1) {
-    const p0 = points[i - 1] || points[i]
     const p1 = points[i]
     const p2 = points[i + 1]
-    const p3 = points[i + 2] || p2
-    const c1x = p1.cx + (p2.cx - p0.cx) / 6
-    const c1y = p1.cy + (p2.cy - p0.cy) / 6
-    const c2x = p2.cx - (p3.cx - p1.cx) / 6
-    const c2y = p2.cy - (p3.cy - p1.cy) / 6
-    d += `C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.cx.toFixed(1)},${p2.cy.toFixed(1)} `
+    const c = cubicControls(p1, p2, tangents[i] ?? 0, tangents[i + 1] ?? 0)
+    d += c
+      ? ` C${c.c1x.toFixed(1)},${c.c1y.toFixed(1)} ${c.c2x.toFixed(1)},${c.c2y.toFixed(1)} ${p2.cx.toFixed(1)},${p2.cy.toFixed(1)}`
+      : ` L${p2.cx.toFixed(1)},${p2.cy.toFixed(1)}`
   }
   return d
 }
 
-function segmentPath(points: ChartPoint[], index: number) {
-  const p0 = points[index - 1] || points[index]
+function segmentPath(points: ChartPoint[], index: number, tangents: number[]) {
   const p1 = points[index]
   const p2 = points[index + 1]
-  const p3 = points[index + 2] || p2
-  const c1x = p1.cx + (p2.cx - p0.cx) / 6
-  const c1y = p1.cy + (p2.cy - p0.cy) / 6
-  const c2x = p2.cx - (p3.cx - p1.cx) / 6
-  const c2y = p2.cy - (p3.cy - p1.cy) / 6
-  return `M${p1.cx.toFixed(1)},${p1.cy.toFixed(1)} C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.cx.toFixed(1)},${p2.cy.toFixed(1)}`
+  const c = cubicControls(p1, p2, tangents[index] ?? 0, tangents[index + 1] ?? 0)
+  if (!c) return `M${p1.cx.toFixed(1)},${p1.cy.toFixed(1)} L${p2.cx.toFixed(1)},${p2.cy.toFixed(1)}`
+  return `M${p1.cx.toFixed(1)},${p1.cy.toFixed(1)} C${c.c1x.toFixed(1)},${c.c1y.toFixed(1)} ${c.c2x.toFixed(1)},${c.c2y.toFixed(1)} ${p2.cx.toFixed(1)},${p2.cy.toFixed(1)}`
 }
 
 const areaPath = computed(() => {
   const g = geom.value
   if (!g || g.coords.length < 2) return ''
-  const path = smoothPath(g.coords)
+  const path = smoothPath(g.coords, g.tangents)
   const first = g.coords[0]
   const last = g.coords[g.coords.length - 1]
-  return `M${first.cx.toFixed(1)},${g.baseline.toFixed(1)} L${first.cx.toFixed(1)},${first.cy.toFixed(1)} ${path.replace(/^M[^C]+/, '')} L${last.cx.toFixed(1)},${g.baseline.toFixed(1)} Z`
+  return `M${first.cx.toFixed(1)},${g.baseline.toFixed(1)} L${first.cx.toFixed(1)},${first.cy.toFixed(1)} ${path.replace(/^M[^ ]+/, '')} L${last.cx.toFixed(1)},${g.baseline.toFixed(1)} Z`
 })
 
 const segments = computed(() => {
   const g = geom.value
   if (!g || g.coords.length < 2) return []
   return g.coords.slice(0, -1).map((point, index) => ({
-    d: segmentPath(g.coords, index),
+    d: segmentPath(g.coords, index, g.tangents),
     color: tierColor(g.coords[index + 1].value),
     delay: Math.min(460, index * 26),
     target: g.coords[index + 1],
@@ -257,6 +311,22 @@ const latestValue = computed(() => geom.value?.latest.value ?? null)
 const latestPrecision = computed(() => {
   const value = latestValue.value
   return value != null && !Number.isInteger(value) ? 1 : 0
+})
+const latestTier = computed(() => {
+  const ts = tierSet.value
+  const value = latestValue.value
+  if (!ts || value == null) return null
+  let index = 0
+  for (let i = 0; i < ts.tiers.length; i += 1) {
+    if (value >= ts.tiers[i].min) index = i
+  }
+  const next = ts.tiers[index + 1]
+  return { min: ts.tiers[index].min, max: next ? next.min - 1 : null }
+})
+const tierRangeText = computed(() => {
+  const tier = latestTier.value
+  if (!tier) return ''
+  return `段位 ${tier.min}${tier.max == null ? '+' : `–${tier.max}`}`
 })
 const areaColor = computed(() => {
   const g = geom.value
@@ -456,7 +526,7 @@ onBeforeUnmount(() => {
         />
         <span class="chart-legend__label">
           {{ isAggregate ? '站内总积分' : platformName() }}
-          <small>{{ isAggregate ? 'SITE TOTAL · 近一年' : 'OFFICIAL RATING · 平台口径' }}</small>
+          <small>{{ isAggregate ? 'SITE TOTAL · 近一年' : `OFFICIAL RATING · 平台口径${tierRangeText ? ` · ${tierRangeText}` : ''}` }}</small>
         </span>
         <span class="chart-legend__value">
           <CountUp :value="latestValue" :precision="latestPrecision" />
