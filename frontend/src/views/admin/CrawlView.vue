@@ -5,6 +5,7 @@ import { listCrawlJobs, triggerCrawl, recomputeRanking, getCrawlConfig, saveCraw
 import type { CrawlJob, CrawlConfig } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
+import Dialog from '@/components/ui/Dialog.vue'
 import { fmtDate } from '@/utils/format'
 import { CRAWLABLE_PLATFORMS, platformMeta } from '@/platforms/meta'
 
@@ -263,17 +264,12 @@ async function onSaveCrawlConfig() {
       </div>
     </div>
 
-    <div v-if="showLog" class="modal-overlay" @click.self="showLog = false" v-esc="() => (showLog = false)">
-      <div class="modal" style="width: 640px">
-        <div class="modal-header">执行日志</div>
-        <div class="modal-body">
-          <pre class="log-block">{{ logText }}</pre>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-ghost" @click="showLog = false">关闭</button>
-        </div>
-      </div>
-    </div>
+    <Dialog v-model:open="showLog" title="执行日志" width="640px">
+      <pre class="log-block">{{ logText }}</pre>
+      <template #footer="{ close }">
+        <button class="btn btn-ghost" @click="close">关闭</button>
+      </template>
+    </Dialog>
   </div>
 </template>
 

@@ -5,6 +5,7 @@ import { listSchools, updateSchool, createSchool } from '@/api'
 import type { School } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import DataPagination from '@/components/ui/DataPagination.vue'
+import Dialog from '@/components/ui/Dialog.vue'
 
 const auth = useAuthStore()
 const toast = useToast()
@@ -146,33 +147,32 @@ onMounted(load)
       @update:page="page = $event"
     />
 
-    <div v-if="showEdit" class="modal-overlay" @click.self="showEdit = false" v-esc="() => (showEdit = false)">
-      <div class="modal" style="width: 480px">
-        <div class="modal-header">{{ editing ? '编辑学校' : '新增学校' }}</div>
-        <div class="modal-body">
-          <div class="field">
-            <label class="field-label">学校名称</label>
-            <input v-model="form.name" class="input" placeholder="如：清华大学" />
-          </div>
-          <div class="field">
-            <label class="field-label">简称</label>
-            <input v-model="form.short_name" class="input" placeholder="如：THU" />
-          </div>
-          <div class="field">
-            <label class="field-label">代码</label>
-            <input v-model="form.code" class="input" placeholder="如：THU" />
-          </div>
-          <div class="field">
-            <label class="field-label">描述</label>
-            <textarea v-model="form.description" class="input" rows="3" placeholder="可选" />
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-ghost" @click="showEdit = false">取消</button>
-          <button class="btn btn-primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
-        </div>
+    <Dialog
+      v-model:open="showEdit"
+      :title="editing ? '编辑学校' : '新增学校'"
+      :busy="saving"
+    >
+      <div class="field">
+        <label class="field-label">学校名称</label>
+        <input v-model="form.name" class="input" placeholder="如：清华大学" />
       </div>
-    </div>
+      <div class="field">
+        <label class="field-label">简称</label>
+        <input v-model="form.short_name" class="input" placeholder="如：THU" />
+      </div>
+      <div class="field">
+        <label class="field-label">代码</label>
+        <input v-model="form.code" class="input" placeholder="如：THU" />
+      </div>
+      <div class="field">
+        <label class="field-label">描述</label>
+        <textarea v-model="form.description" class="input" rows="3" placeholder="可选" />
+      </div>
+      <template #footer="{ close }">
+        <button class="btn btn-ghost" :disabled="saving" @click="close">取消</button>
+        <button class="btn btn-primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
+      </template>
+    </Dialog>
   </div>
 </template>
 

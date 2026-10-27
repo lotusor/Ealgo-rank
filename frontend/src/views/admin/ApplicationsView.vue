@@ -5,6 +5,7 @@ import { listApplications, approveApplication, rejectApplication, cancelApplicat
 import type { Application, ApplicationStatus } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import PageTabs from '@/components/ui/PageTabs.vue'
+import Dialog from '@/components/ui/Dialog.vue'
 import { fmtDate } from '@/utils/format'
 
 const auth = useAuthStore()
@@ -61,8 +62,10 @@ function openReview(a: Application, action: 'approve' | 'reject') {
   reviewComment.value = ''
   showReview.value = true
 }
+const reviewSubmitting = ref(false)
 async function submitReview() {
-  if (!reviewTarget.value) return
+  if (!reviewTarget.value || reviewSubmitting.value) return
+  reviewSubmitting.value = true
   try {
     if (reviewAction.value === 'approve') {
       await approveApplication(reviewTarget.value.id, reviewComment.value)
@@ -75,6 +78,8 @@ async function submitReview() {
     await load()
   } catch (e: any) {
     toast.error(e?.response?.data?.detail || '操作失败')
+  } finally {
+    reviewSubmitting.value = false
   }
 }
 async function cancel(a: Application) {
@@ -176,27 +181,25 @@ onMounted(load)
       </div>
     </div>
 
-    <div v-if="showReview" class="modal-overlay" @click.self="showReview = false" v-esc="() => (showReview = false)">
-      <div class="modal" style="width: 480px">
-        <div class="modal-header">审批意见</div>
-        <div class="modal-body">
-          <p class="text-secondary" style="margin-bottom: var(--space-4)">
-            对「<b>{{ reviewTarget?.school?.name || reviewTarget?.proposed_school_name || '—' }}</b>」的申请执行
-            <b :class="reviewAction === 'approve' ? 'text-success' : 'text-danger'">{{ reviewAction === 'approve' ? '通过' : '驳回' }}</b>。
-          </p>
-          <div class="field">
-            <label class="field-label">审批意见（可选）</label>
-            <textarea v-model="reviewComment" class="input" rows="3" placeholder="填写审批意见…" />
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-ghost" @click="showReview = false">取消</button>
-          <button class="btn" :class="reviewAction === 'approve' ? 'btn-primary' : 'btn-danger'" @click="submitReview">
-            确认{{ reviewAction === 'approve' ? '通过' : '驳回' }}
-          </button>
-        </div>
+    <Dialog v-model:open="showReview" title="审批意见" :busy="reviewSubmitting">
+      <p class="text-secondary" style="margin-bottom: var(--space-4)">
+        对「<b>{{ reviewTarget?.school?.name || reviewTarget?.proposed_school_name || '—' }}</b>」的申请执行
+        <b :class="reviewAction === 'approve' ? 'text-success' : 'text-danger'">{{ reviewAction === 'approve' ? '通过' : '驳回' }}</b>。
+      </p>
+      <div class="field">
+        <label class="field-label">审批意见（可选）</label>
+        <textarea v-model="reviewComment" class="input" rows="3" placeholder="填写审批意见…" />
       </div>
-    </div>
+      <template #footer="{ close }">
+        <button class="btn btn-ghost" :disabled="reviewSubmitting" @click="close">取消</button>
+        <button
+          class="btn"
+          :class="reviewAction === 'approve' ? 'btn-primary' : 'btn-danger'"
+          :disabled="reviewSubmitting"
+          @click="submitReview"
+        >{{ reviewSubmitting ? '提交中…' : `确认${reviewAction === 'approve' ? '通过' : '驳回'}` }}</button>
+      </template>
+    </Dialog>
   </div>
 </template>
 

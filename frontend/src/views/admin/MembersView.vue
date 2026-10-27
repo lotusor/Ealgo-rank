@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   listUsers, listSchools, setUserRole,
@@ -11,6 +11,7 @@ import type {
 } from '@/api/types'
 import { useToast } from '@/composables/useToast'
 import DataPagination from '@/components/ui/DataPagination.vue'
+import Dialog from '@/components/ui/Dialog.vue'
 import { fmtDate } from '@/utils/format'
 import { BINDABLE_COUNT, BINDABLE_PLATFORMS } from '@/platforms/meta'
 
@@ -122,7 +123,6 @@ const newBind = ref({ platform: BINDABLE_PLATFORMS[0]?.key ?? 'codeforces', hand
 const rebindDlg = ref<AdminPlatformAccount | null>(null)
 const rebindHandle = ref('')
 const rebindReason = ref('')
-const rebindInput = ref<HTMLInputElement | null>(null)
 const unbindDlg = ref<AdminPlatformAccount | null>(null)
 const unbindReason = ref('')
 
@@ -194,7 +194,6 @@ function openRebind(a: AdminPlatformAccount) {
   rebindHandle.value = ''
   rebindReason.value = ''
   rebindDlg.value = a
-  nextTick(() => rebindInput.value?.focus())
 }
 
 async function confirmUnbind() {
@@ -352,171 +351,170 @@ onMounted(() => {
     <DataPagination v-model:page="page" :page-size="pageSize" :total="total" @update:page="(p) => { page = p; load() }" />
 
     <!-- 平台账号归属管理 -->
-    <div v-if="acctUser" class="modal-overlay" @click.self="closeAccounts" v-esc="closeAccounts">
-      <div class="modal" style="width: 720px; max-width: 96vw">
-        <div class="modal-header">
-          平台账号 · {{ acctUser.real_name || acctUser.username }}
-        </div>
-        <div class="modal-body" :aria-busy="acctLoading">
-          <p class="field-hint">
-            解绑会删除该 ID 名下的全部参赛记录；改绑是「改名」语义，已入库的旧 ID 成绩仍留在该账号名下。
-            要把成绩整体挪到另一个人，请先解绑错的一方，再为正确的人绑定。
-          </p>
+    <Dialog
+      :open="!!acctUser"
+      :title="`平台账号 · ${acctUser?.real_name || acctUser?.username || ''}`"
+      width="720px"
+      max-width="96vw"
+      :busy="busy !== null"
+      @update:open="(value) => { if (!value) closeAccounts() }"
+    >
+      <p class="field-hint">
+        解绑会删除该 ID 名下的全部参赛记录；改绑是「改名」语义，已入库的旧 ID 成绩仍留在该账号名下。
+        要把成绩整体挪到另一个人，请先解绑错的一方，再为正确的人绑定。
+      </p>
 
-          <table class="data-table">
-            <colgroup>
-              <col style="width: 15%" />
-              <col style="width: 28%" />
-              <col style="width: 12%" />
-              <col style="width: 14%" />
-              <col style="width: 31%" />
-            </colgroup>
-            <thead>
-              <tr><th>平台</th><th>账号 ID</th><th class="num-cell">成绩条数</th><th>状态</th><th class="num-cell">操作</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="a in accounts" :key="a.id">
-                <td><span class="badge badge-muted">{{ a.platform_display }}</span></td>
-                <td class="cell-strong">
-                  {{ a.handle }}
-                  <div v-if="a.released_at" class="field-hint">该 ID 曾在 {{ fmtDate(a.released_at) }} 被卸下</div>
-                </td>
-                <td class="num-cell num">{{ a.participation_count }}</td>
-                <td>
-                  <span v-if="a.verified" class="badge badge-success">已核实</span>
-                  <span v-else class="badge badge-warning">待核实</span>
-                </td>
-                <td class="num-cell">
-                  <div class="acct-actions">
-                    <button
-                      class="btn btn-ghost btn-sm"
-                      :disabled="busy === a.id"
-                      @click="openRebind(a)"
-                    >改绑</button>
-                    <button
-                      class="btn btn-danger btn-sm"
-                      :disabled="busy === a.id"
-                      @click="openUnbind(a)"
-                    >解绑</button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="!accounts.length && !acctLoading">
-                <td colspan="5" class="empty-cell">该用户还没有绑定任何平台账号</td>
-              </tr>
-            </tbody>
-          </table>
+      <table class="data-table">
+        <colgroup>
+          <col style="width: 15%" />
+          <col style="width: 28%" />
+          <col style="width: 12%" />
+          <col style="width: 14%" />
+          <col style="width: 31%" />
+        </colgroup>
+        <thead>
+          <tr><th>平台</th><th>账号 ID</th><th class="num-cell">成绩条数</th><th>状态</th><th class="num-cell">操作</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="a in accounts" :key="a.id">
+            <td><span class="badge badge-muted">{{ a.platform_display }}</span></td>
+            <td class="cell-strong">
+              {{ a.handle }}
+              <div v-if="a.released_at" class="field-hint">该 ID 曾在 {{ fmtDate(a.released_at) }} 被卸下</div>
+            </td>
+            <td class="num-cell num">{{ a.participation_count }}</td>
+            <td>
+              <span v-if="a.verified" class="badge badge-success">已核实</span>
+              <span v-else class="badge badge-warning">待核实</span>
+            </td>
+            <td class="num-cell">
+              <div class="acct-actions">
+                <button
+                  class="btn btn-ghost btn-sm"
+                  :disabled="busy === a.id || busy !== null"
+                  @click="openRebind(a)"
+                >改绑</button>
+                <button
+                  class="btn btn-danger btn-sm"
+                  :disabled="busy === a.id || busy !== null"
+                  @click="openUnbind(a)"
+                >解绑</button>
+              </div>
+            </td>
+          </tr>
+          <tr v-if="!accounts.length && !acctLoading">
+            <td colspan="5" class="empty-cell">该用户还没有绑定任何平台账号</td>
+          </tr>
+        </tbody>
+      </table>
 
-          <div class="bind-row">
-            <select v-model="newBind.platform" class="input" style="width: auto" aria-label="选择平台">
-              <option v-for="p in BINDABLE_PLATFORMS" :key="p.key" :value="p.key">{{ p.label }}</option>
-            </select>
-            <input
-              v-model="newBind.handle"
-              class="input"
-              type="text"
-              style="flex: 1"
-              placeholder="平台账号 ID（CF=handle，AtCoder=用户名，牛客=uid）"
-              aria-label="要绑定的平台账号 ID"
-              @keyup.enter="doBind"
-            />
-            <button class="btn btn-primary btn-sm" :disabled="busy === 'bind' || !newBind.handle.trim()" @click="doBind">
-              {{ busy === 'bind' ? '绑定中…' : '代为绑定' }}
-            </button>
-          </div>
-
-          <div class="field" style="margin-top: var(--space-3)">
-            <label class="field-label" for="bind-reason">绑定理由（写入留痕，可空）</label>
-            <input id="bind-reason" v-model="bindReason" class="input" type="text" maxlength="200" placeholder="如：本人申诉，ID 填错" />
-          </div>
-
-          <div class="audit-box">
-            <div class="caption text-tertiary">最近归属变动</div>
-            <ul v-if="audits.length" class="audit-list">
-              <li v-for="h in audits" :key="h.id">
-                <span class="badge" :class="auditCls(h.action)">{{ h.action_display }}</span>
-                <b class="num">{{ h.handle }}</b>
-                <span class="text-tertiary">{{ fmtDate(h.created_at) }}</span>
-                <span v-if="h.actor_name">· 操作人 {{ h.actor_name }}</span>
-                <span v-if="h.reason" class="text-tertiary">· {{ h.reason }}</span>
-              </li>
-            </ul>
-            <p v-else class="caption text-tertiary">暂无留痕</p>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-ghost" @click="closeAccounts">关闭</button>
-        </div>
+      <div class="bind-row">
+        <select v-model="newBind.platform" class="input" style="width: auto" aria-label="选择平台">
+          <option v-for="p in BINDABLE_PLATFORMS" :key="p.key" :value="p.key">{{ p.label }}</option>
+        </select>
+        <input
+          v-model="newBind.handle"
+          class="input"
+          type="text"
+          style="flex: 1"
+          placeholder="平台账号 ID（CF=handle，AtCoder=用户名，牛客=uid）"
+          aria-label="要绑定的平台账号 ID"
+          @keyup.enter="doBind"
+        />
+        <button class="btn btn-primary btn-sm" :disabled="busy === 'bind' || !newBind.handle.trim()" @click="doBind">
+          {{ busy === 'bind' ? '绑定中…' : '代为绑定' }}
+        </button>
       </div>
-    </div>
+
+      <div class="field" style="margin-top: var(--space-3)">
+        <label class="field-label" for="bind-reason">绑定理由（写入留痕，可空）</label>
+        <input id="bind-reason" v-model="bindReason" class="input" type="text" maxlength="200" placeholder="如：本人申诉，ID 填错" />
+      </div>
+
+      <div class="audit-box">
+        <div class="caption text-tertiary">最近归属变动</div>
+        <ul v-if="audits.length" class="audit-list">
+          <li v-for="h in audits" :key="h.id">
+            <span class="badge" :class="auditCls(h.action)">{{ h.action_display }}</span>
+            <b class="num">{{ h.handle }}</b>
+            <span class="text-tertiary">{{ fmtDate(h.created_at) }}</span>
+            <span v-if="h.actor_name">· 操作人 {{ h.actor_name }}</span>
+            <span v-if="h.reason" class="text-tertiary">· {{ h.reason }}</span>
+          </li>
+        </ul>
+        <p v-else class="caption text-tertiary">暂无留痕</p>
+      </div>
+      <template #footer="{ close }">
+        <button class="btn btn-ghost" :disabled="busy !== null" @click="close">关闭</button>
+      </template>
+    </Dialog>
 
     <!-- 二级确认：改绑（同名 ID 改名语义） -->
-    <div v-if="rebindDlg" class="modal-overlay" @click.self="rebindDlg = null" v-esc="() => (rebindDlg = null)">
-      <div class="modal">
-        <div class="modal-header">改绑 · {{ rebindDlg.platform_display }}</div>
-        <div class="modal-body">
-          <p class="field-hint">
-            改绑是「改名」语义：{{ rebindDlg.real_name || rebindDlg.username }} 已入库的
-            {{ rebindDlg.participation_count }} 条旧 ID 成绩仍留在其名下，新 ID 的历史成绩随后自动补抓。
-          </p>
-          <div class="field">
-            <label class="field-label">当前账号 ID</label>
-            <div class="num cell-strong">{{ rebindDlg.handle }}</div>
-          </div>
-          <div class="field">
-            <label class="field-label" for="rebind-handle">新账号 ID</label>
-            <input
-              id="rebind-handle"
-              ref="rebindInput"
-              v-model="rebindHandle"
-              class="input"
-              type="text"
-              :placeholder="`请输入新的 ${rebindDlg.platform_display} 账号 ID`"
-              @keyup.enter="confirmRebind"
-            />
-          </div>
-          <div class="field">
-            <label class="field-label" for="rebind-reason">理由（写入留痕，可空）</label>
-            <input id="rebind-reason" v-model="rebindReason" class="input" type="text" maxlength="200" />
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-ghost" @click="rebindDlg = null">取消</button>
-          <button
-            class="btn btn-primary"
-            :disabled="busy === rebindDlg.id || !rebindHandle.trim()"
-            @click="confirmRebind"
-          >{{ busy === rebindDlg.id ? '提交中…' : '确认改绑' }}</button>
-        </div>
+    <Dialog
+      :open="!!rebindDlg"
+      :title="`改绑 · ${rebindDlg?.platform_display || ''}`"
+      :busy="busy === rebindDlg?.id"
+      @update:open="(value) => { if (!value) rebindDlg = null }"
+    >
+      <p class="field-hint">
+        改绑是「改名」语义：{{ rebindDlg?.real_name || rebindDlg?.username }} 已入库的
+        {{ rebindDlg?.participation_count }} 条旧 ID 成绩仍留在其名下，新 ID 的历史成绩随后自动补抓。
+      </p>
+      <div class="field">
+        <label class="field-label">当前账号 ID</label>
+        <div class="num cell-strong">{{ rebindDlg?.handle }}</div>
       </div>
-    </div>
+      <div class="field">
+        <label class="field-label" for="rebind-handle">新账号 ID</label>
+        <input
+          id="rebind-handle"
+          v-model="rebindHandle"
+          class="input"
+          type="text"
+          :placeholder="`请输入新的 ${rebindDlg?.platform_display} 账号 ID`"
+          @keyup.enter="confirmRebind"
+        />
+      </div>
+      <div class="field">
+        <label class="field-label" for="rebind-reason">理由（写入留痕，可空）</label>
+        <input id="rebind-reason" v-model="rebindReason" class="input" type="text" maxlength="200" />
+      </div>
+      <template #footer="{ close }">
+        <button class="btn btn-ghost" :disabled="busy === rebindDlg?.id" @click="close">取消</button>
+        <button
+          class="btn btn-primary"
+          :disabled="busy === rebindDlg?.id || !rebindHandle.trim()"
+          @click="confirmRebind"
+        >{{ busy === rebindDlg?.id ? '提交中…' : '确认改绑' }}</button>
+      </template>
+    </Dialog>
 
     <!-- 二级确认：解绑（连带删除参赛记录） -->
-    <div v-if="unbindDlg" class="modal-overlay" @click.self="unbindDlg = null" v-esc="() => (unbindDlg = null)">
-      <div class="modal">
-        <div class="modal-header">解绑 · {{ unbindDlg.platform_display }}</div>
-        <div class="modal-body">
-          <p class="field-hint">
-            将解除 {{ unbindDlg.real_name || unbindDlg.username }} 与账号 ID
-            <b class="num">{{ unbindDlg.handle }}</b> 的绑定，其名下
-            {{ unbindDlg.participation_count }} 条参赛记录一并删除并触发排名重算，不可恢复。
-            解绑后该 ID 进入冷却期，期间仅原持有者可自助重绑；管理员改绑不受冷却限制。
-          </p>
-          <div class="field">
-            <label class="field-label" for="unbind-reason">理由（写入留痕，可空）</label>
-            <input id="unbind-reason" v-model="unbindReason" class="input" type="text" maxlength="200" />
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-ghost" @click="unbindDlg = null">取消</button>
-          <button
-            class="btn btn-danger"
-            :disabled="busy === unbindDlg.id"
-            @click="confirmUnbind"
-          >{{ busy === unbindDlg.id ? '提交中…' : '确认解绑' }}</button>
-        </div>
+    <Dialog
+      :open="!!unbindDlg"
+      :title="`解绑 · ${unbindDlg?.platform_display || ''}`"
+      :busy="busy === unbindDlg?.id"
+      @update:open="(value) => { if (!value) unbindDlg = null }"
+    >
+      <p class="field-hint">
+        将解除 {{ unbindDlg?.real_name || unbindDlg?.username }} 与账号 ID
+        <b class="num">{{ unbindDlg?.handle }}</b> 的绑定，其名下
+        {{ unbindDlg?.participation_count }} 条参赛记录一并删除并触发排名重算，不可恢复。
+        解绑后该 ID 进入冷却期，期间仅原持有者可自助重绑；管理员改绑不受冷却限制。
+      </p>
+      <div class="field">
+        <label class="field-label" for="unbind-reason">理由（写入留痕，可空）</label>
+        <input id="unbind-reason" v-model="unbindReason" class="input" type="text" maxlength="200" />
       </div>
-    </div>
+      <template #footer="{ close }">
+        <button class="btn btn-ghost" :disabled="busy === unbindDlg?.id" @click="close">取消</button>
+        <button
+          class="btn btn-danger"
+          :disabled="busy === unbindDlg?.id"
+          @click="confirmUnbind"
+        >{{ busy === unbindDlg?.id ? '提交中…' : '确认解绑' }}</button>
+      </template>
+    </Dialog>
   </div>
 </template>
 

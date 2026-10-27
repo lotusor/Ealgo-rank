@@ -2,7 +2,6 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
-import { vEsc } from './directives/escape'
 import { vSheen } from './directives/sheen'
 // 旧令牌在 styles.css，新的深色设计系统放在 styles/ 下。
 // 必须让 tokens.css 在 styles.css 之后加载，其 Legacy bridge 才能把
@@ -16,7 +15,5 @@ import './styles/editorial.css'
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
-// Esc 关闭浮层（规范 A2）：任何 .modal-overlay 加 v-esc 即可，只有最上层响应
-app.directive('esc', vEsc)
 app.directive('sheen', vSheen)
 app.mount('#app')

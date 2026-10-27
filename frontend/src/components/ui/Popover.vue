@@ -1,10 +1,9 @@
 <script setup lang="ts">
 /**
- * 通用浮层容器（受控组件）。
+ * 非模态浮层容器（受控组件）：外点关闭 + Esc 关闭 + 定位 + 层级令牌。
  *
- * 项目此前没有 popover 组件，各页面各自内联 `.modal-overlay` / 手写
- * `document.addEventListener('mousedown')` 做外点关闭（重复多处）。
- * 这里抽出统一实现：外点关闭 + Esc 关闭 + 定位 + 层级令牌。
+ * 模态弹窗请用 `Dialog.vue`；两者共用 `overlayStack` 的「一次 Esc 只关最上层」，
+ * 所以弹窗压在选项卡面板之上时不会一起被关掉。
  *
  * 用法：
  *   <Popover v-model:open="open" align="end">
@@ -14,7 +13,8 @@
  *     <template #panel>…</template>
  *   </Popover>
  */
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { popOverlay, pushOverlay, type Overlay } from '@/composables/overlayStack'
 
 const props = withDefaults(
   defineProps<{
@@ -42,17 +42,28 @@ function onDocMouseDown(e: MouseEvent) {
   if (!props.open) return
   if (rootRef.value && !rootRef.value.contains(e.target as Node)) close()
 }
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') close()
+
+// Esc 走浮层栈：弹窗压在选项卡面板之上时，一次 Esc 只关最上层
+const overlay: Overlay = { requestClose: close }
+let layered = false
+function syncLayer() {
+  if (props.open && !layered) {
+    layered = true
+    pushOverlay(overlay)
+  } else if (!props.open && layered) {
+    layered = false
+    popOverlay(overlay)
+  }
 }
 
 onMounted(() => {
   document.addEventListener('mousedown', onDocMouseDown)
-  document.addEventListener('keydown', onKeydown)
+  syncLayer()
 })
-onUnmounted(() => {
+watch(() => props.open, syncLayer)
+onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onDocMouseDown)
-  document.removeEventListener('keydown', onKeydown)
+  if (layered) popOverlay(overlay)
 })
 </script>
 
