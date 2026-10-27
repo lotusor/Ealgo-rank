@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed } from 'vue'
 import { listContests } from '@/api'
 import type { Contest, ContestPlatform } from '@/api/types'
+import { useResource } from '@/composables/useResource'
 import DataPagination from '@/components/ui/DataPagination.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
@@ -13,15 +14,42 @@ const keyword = ref('')
 const sort = ref<'time' | 'difficulty' | 'participants'>('time')
 const page = ref(1)
 const pageSize = 12
-
-const rows = ref<Contest[]>([])
-const total = ref(0)
-const loading = ref(false)
-const error = ref('')
-let requestSeq = 0
-let resettingPage = false
-let searchTimer: ReturnType<typeof setTimeout> | undefined
 const SEARCH_DEBOUNCE_MS = 300
+
+const list = useResource(async ({ isCurrent }) => {
+  try {
+    const { count, results } = await listContests({
+      platform: platform.value || undefined,
+      is_rated: rated.value === 'all' ? undefined : rated.value === 'yes',
+      name: keyword.value.trim() || undefined,
+      page: page.value,
+      page_size: pageSize,
+    })
+    return { count, results }
+  } catch (e) {
+    // 过期请求的失败也不能覆盖新请求的状态，交给 useResource 的序号判定丢弃
+    if (!isCurrent()) return { count: 0, results: [] }
+    throw e
+  }
+}, {
+  initial: { count: 0, results: [] as Contest[] },
+  watch: [platform, rated, keyword],
+  // 搜索框防抖，点平台/状态要立刻出结果
+  debounce: (_values, previous) =>
+    previous && _values[2] !== previous[2] ? SEARCH_DEBOUNCE_MS : 0,
+  reset: () => { page.value = 1 },
+})
+
+const rows = computed(() => list.data.value.results)
+const total = computed(() => list.data.value.count)
+const loading = list.loading
+const error = computed(() => (list.error.value ? '比赛列表加载失败，请重试。' : ''))
+
+// 翻页不属「输入变化」，所以不复用 watch：直接换页并重发，避免与筛选复位重复请求
+function onPage(next: number) {
+  page.value = next
+  void list.reload()
+}
 
 // 比赛目录列的是「有榜单的真实赛次」，所以只给可计分平台；
 // 只做日历展示的平台（洛谷）在 /calendar 里出现，这里点了必然是空列表
@@ -40,63 +68,7 @@ const sortOptions = [
   { label: '本页按参与人数', value: 'participants' as const },
 ]
 
-async function load() {
-  clearTimeout(searchTimer)
-  searchTimer = undefined
-  const seq = ++requestSeq
-  loading.value = true
-  error.value = ''
-  try {
-    const { count, results } = await listContests({
-      platform: platform.value || undefined,
-      is_rated: rated.value === 'all' ? undefined : rated.value === 'yes',
-      name: keyword.value.trim() || undefined,
-      page: page.value,
-      page_size: pageSize,
-    })
-    if (seq !== requestSeq) return
-    rows.value = results
-    total.value = count
-  } catch {
-    if (seq !== requestSeq) return
-    rows.value = []
-    total.value = 0
-    error.value = '比赛列表加载失败，请重试。'
-  } finally {
-    if (seq === requestSeq) loading.value = false
-  }
-}
-
-onMounted(load)
-watch([platform, rated, keyword], (values, previous) => {
-  // 输入时立即作废旧请求，不能等防抖结束才阻止旧响应写入。
-  requestSeq += 1
-  clearTimeout(searchTimer)
-  searchTimer = undefined
-  resettingPage = true
-  page.value = 1
-  resettingPage = false
-  rows.value = []
-  total.value = 0
-  error.value = ''
-  loading.value = true
-  if (values[2] !== previous[2]) {
-    searchTimer = setTimeout(load, SEARCH_DEBOUNCE_MS)
-  } else {
-    load()
-  }
-}, { flush: 'sync' })
-watch(page, () => {
-  // 筛选归首页由上面的 watcher 加载，避免重复请求。
-  if (!resettingPage) load()
-}, { flush: 'sync' })
-onBeforeUnmount(() => {
-  clearTimeout(searchTimer)
-  requestSeq += 1
-})
-
-const sortedRows = computed(() => {
-  const arr = [...rows.value]
+const sortedRows = computed(() => {  const arr = [...rows.value]
   if (sort.value === 'difficulty')
     arr.sort((a, b) => Number(b.difficulty_factor) - Number(a.difficulty_factor))
   else if (sort.value === 'participants')
@@ -139,7 +111,7 @@ function fmtDate(s: string | null) {
 
     <div v-else-if="error" class="card card-pad" role="alert">
       <p>{{ error }}</p>
-      <button type="button" class="btn btn-secondary" @click="load">重试</button>
+      <button type="button" class="btn btn-secondary" @click="list.reload()">重试</button>
     </div>
 
     <div v-else-if="sortedRows.length" class="grid grid-2 contest-grid">
@@ -163,7 +135,13 @@ function fmtDate(s: string | null) {
 
     <EmptyState v-else title="暂无比赛" hint="换个筛选条件试试" />
 
-    <DataPagination v-if="!error && total > 0" v-model:page="page" :page-size="pageSize" :total="total" />
+    <DataPagination
+      v-if="!error && total > 0"
+      :page="page"
+      :page-size="pageSize"
+      :total="total"
+      @update:page="onPage"
+    />
   </div>
 </template>
 

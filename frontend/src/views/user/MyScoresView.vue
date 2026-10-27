@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { listMyParticipations, listRankings, getMyBestRecord, getRatingHistory } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { useResource } from '@/composables/useResource'
 import type { MyParticipation, ContestPlatform, RankSnapshot, UserBestRecord, RatingHistoryPoint } from '@/api/types'
 import RatingLineChart from '@/components/RatingLineChart.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -16,12 +17,29 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const platform = ref<'' | ContestPlatform>('')
-const rows = ref<MyParticipation[]>([])
-const loading = ref(false)
-const error = ref('')
-let requestSeq = 0
 const tablePage = ref(1)
 const tablePageSize = 20
+
+const records = useResource(async ({ isCurrent }) => {
+  const selectedPlatform = platform.value || undefined
+  const allRows: MyParticipation[] = []
+  // 分页合同只有 total_pages：逐页收齐后一次性发布，避免把部分页当全量统计
+  for (let page = 1; ; page += 1) {
+    const res = await listMyParticipations({ platform: selectedPlatform, page, page_size: 100 })
+    if (!isCurrent()) return []
+    allRows.push(...res.results)
+    if (page >= res.total_pages) break
+  }
+  return allRows
+}, {
+  initial: [] as MyParticipation[],
+  watch: [platform],
+  reset: () => { tablePage.value = 1 },
+})
+
+const rows = records.data
+const loading = records.loading
+const error = computed(() => (records.error.value ? '参赛记录加载失败，请重试。' : ''))
 const pagedRows = computed(() =>
   rows.value.slice((tablePage.value - 1) * tablePageSize, tablePage.value * tablePageSize),
 )
@@ -32,43 +50,11 @@ const platformOptions = computed(() => [
   ...SCORING_PLATFORMS.map((p) => ({ label: p.label, value: p.key })),
 ])
 
-async function load() {
-  const seq = ++requestSeq
-  const selectedPlatform = platform.value || undefined
-  rows.value = []
-  loading.value = true
-  error.value = ''
-  try {
-    const allRows: MyParticipation[] = []
-    let page = 1
-    while (true) {
-      const res = await listMyParticipations({ platform: selectedPlatform, page, page_size: 100 })
-      if (seq !== requestSeq) return
-      allRows.push(...res.results)
-      if (page >= res.total_pages) break
-      page += 1
-    }
-    // 收齐后再发布，避免把部分页当作全量统计。
-    rows.value = allRows
-  } catch {
-    if (seq !== requestSeq) return
-    rows.value = []
-    error.value = '参赛记录加载失败，请重试。'
-  } finally {
-    if (seq === requestSeq) loading.value = false
-  }
-}
 onMounted(() => {
-  load()
   loadRank()
   getMyBestRecord().then((r) => (bestRecord.value = r)).catch(() => {})
   getRatingHistory().then((h) => (history.value = h)).catch(() => {})
 })
-watch(platform, () => {
-  tablePage.value = 1
-  load()
-}, { flush: 'sync' })
-onBeforeUnmount(() => { requestSeq += 1 })
 
 // 历史最佳纪录（学生榜 period=all：最高名次配对当时总 rating + 历史最高总 rating）
 const bestRecord = ref<UserBestRecord | null>(null)
@@ -350,7 +336,7 @@ function fmtBest(v: number | null | undefined) {
     <div v-if="loading" class="card card-pad" role="status">正在加载全部参赛记录…</div>
     <div v-else-if="error" class="card card-pad" role="alert">
       <p>{{ error }}</p>
-      <button type="button" class="btn btn-secondary" @click="load">重试</button>
+      <button type="button" class="btn btn-secondary" @click="records.reload()">重试</button>
     </div>
 
     <!-- 只有「未绑定任何平台」才整页收空态；绑定过账号时选项卡与曲线卡片必须在场 -->

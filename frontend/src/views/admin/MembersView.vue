@@ -10,6 +10,7 @@ import type {
   UserRoster, School, AdminPlatformAccount, HandleAuditRow,
 } from '@/api/types'
 import { useToast } from '@/composables/useToast'
+import { useResource } from '@/composables/useResource'
 import DataPagination from '@/components/ui/DataPagination.vue'
 import Dialog from '@/components/ui/Dialog.vue'
 import { fmtDate } from '@/utils/format'
@@ -18,11 +19,8 @@ import { BINDABLE_COUNT, BINDABLE_PLATFORMS } from '@/platforms/meta'
 const auth = useAuthStore()
 const toast = useToast()
 
-const data = ref<UserRoster[]>([])
-const loading = ref(false)
 const page = ref(1)
 const pageSize = 20
-const total = ref(0)
 const settling = ref<number | null>(null)
 
 const roleOptions = [
@@ -44,24 +42,25 @@ const bindOptions = [
   { label: '部分绑定', value: 'partial' as const },
 ]
 
-async function load() {
-  loading.value = true
-  try {
-    const params: any = { page: page.value, page_size: pageSize }
-    if (keyword.value.trim()) params.keyword = keyword.value.trim()
-    if (auth.isSuperAdmin && schoolSel.value) params.school = schoolSel.value
-    const res = await listUsers(params)
-    let rows = res.results
-    if (bind.value === 'full') rows = rows.filter((u) => u.platform_accounts_count >= BIND_TOTAL)
-    else if (bind.value === 'partial') rows = rows.filter((u) => u.platform_accounts_count < BIND_TOTAL)
-    data.value = rows
-    total.value = res.count
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail || '加载失败')
-  } finally {
-    loading.value = false
-  }
-}
+const roster = useResource(async () => {
+  const params: any = { page: page.value, page_size: pageSize }
+  if (keyword.value.trim()) params.keyword = keyword.value.trim()
+  if (auth.isSuperAdmin && schoolSel.value) params.school = schoolSel.value
+  const res = await listUsers(params)
+  let rows = res.results
+  if (bind.value === 'full') rows = rows.filter((u) => u.platform_accounts_count >= BIND_TOTAL)
+  else if (bind.value === 'partial') rows = rows.filter((u) => u.platform_accounts_count < BIND_TOTAL)
+  return { rows, count: res.count }
+}, {
+  initial: { rows: [] as UserRoster[], count: 0 },
+  immediate: false,
+  onError: (e: any) => toast.error(e?.response?.data?.detail || '加载失败'),
+})
+
+const data = computed(() => roster.data.value.rows)
+const total = computed(() => roster.data.value.count)
+const loading = roster.loading
+const load = () => roster.reload()
 
 async function onRoleChange(u: UserRoster, ev: Event) {
   const el = ev.target as HTMLSelectElement
