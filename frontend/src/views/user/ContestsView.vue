@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { listContests } from '@/api'
 import type { Contest, ContestPlatform } from '@/api/types'
 import DataPagination from '@/components/ui/DataPagination.vue'
@@ -17,6 +17,11 @@ const pageSize = 12
 const rows = ref<Contest[]>([])
 const total = ref(0)
 const loading = ref(false)
+const error = ref('')
+let requestSeq = 0
+let resettingPage = false
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+const SEARCH_DEBOUNCE_MS = 300
 
 // 比赛目录列的是「有榜单的真实赛次」，所以只给可计分平台；
 // 只做日历展示的平台（洛谷）在 /calendar 里出现，这里点了必然是空列表
@@ -30,30 +35,65 @@ const ratedOptions = [
   { label: '非 Rated', value: 'no' as const },
 ]
 const sortOptions = [
-  { label: '按时间倒序', value: 'time' as const },
-  { label: '按难度', value: 'difficulty' as const },
-  { label: '按参与人数', value: 'participants' as const },
+  { label: '本页按时间倒序', value: 'time' as const },
+  { label: '本页按难度', value: 'difficulty' as const },
+  { label: '本页按参与人数', value: 'participants' as const },
 ]
 
-function load() {
+async function load() {
+  clearTimeout(searchTimer)
+  searchTimer = undefined
+  const seq = ++requestSeq
   loading.value = true
-  listContests({
-    platform: platform.value || undefined,
-    is_rated: rated.value === 'all' ? undefined : rated.value === 'yes',
-    name: keyword.value.trim() || undefined,
-    page: page.value,
-    page_size: pageSize,
-  })
-    .then(({ count, results }) => {
-      rows.value = results
-      total.value = count
+  error.value = ''
+  try {
+    const { count, results } = await listContests({
+      platform: platform.value || undefined,
+      is_rated: rated.value === 'all' ? undefined : rated.value === 'yes',
+      name: keyword.value.trim() || undefined,
+      page: page.value,
+      page_size: pageSize,
     })
-    .catch(() => {})
-    .finally(() => (loading.value = false))
+    if (seq !== requestSeq) return
+    rows.value = results
+    total.value = count
+  } catch {
+    if (seq !== requestSeq) return
+    rows.value = []
+    total.value = 0
+    error.value = '比赛列表加载失败，请重试。'
+  } finally {
+    if (seq === requestSeq) loading.value = false
+  }
 }
 
 onMounted(load)
-watch([platform, rated, keyword, sort, page], () => load())
+watch([platform, rated, keyword], (values, previous) => {
+  // 输入时立即作废旧请求，不能等防抖结束才阻止旧响应写入。
+  requestSeq += 1
+  clearTimeout(searchTimer)
+  searchTimer = undefined
+  resettingPage = true
+  page.value = 1
+  resettingPage = false
+  rows.value = []
+  total.value = 0
+  error.value = ''
+  loading.value = true
+  if (values[2] !== previous[2]) {
+    searchTimer = setTimeout(load, SEARCH_DEBOUNCE_MS)
+  } else {
+    load()
+  }
+}, { flush: 'sync' })
+watch(page, () => {
+  // 筛选归首页由上面的 watcher 加载，避免重复请求。
+  if (!resettingPage) load()
+}, { flush: 'sync' })
+onBeforeUnmount(() => {
+  clearTimeout(searchTimer)
+  requestSeq += 1
+})
 
 const sortedRows = computed(() => {
   const arr = [...rows.value]
@@ -93,8 +133,13 @@ function fmtDate(s: string | null) {
       </select>
     </div>
 
-    <div v-if="loading" class="grid grid-2 contest-grid">
+    <div v-if="loading" class="grid grid-2 contest-grid" role="status" aria-label="正在加载比赛列表">
       <div v-for="n in 4" :key="n" class="card card-pad"><span class="skel" style="width: 100%; height: 96px" /></div>
+    </div>
+
+    <div v-else-if="error" class="card card-pad" role="alert">
+      <p>{{ error }}</p>
+      <button type="button" class="btn btn-secondary" @click="load">重试</button>
     </div>
 
     <div v-else-if="sortedRows.length" class="grid grid-2 contest-grid">
@@ -118,7 +163,7 @@ function fmtDate(s: string | null) {
 
     <EmptyState v-else title="暂无比赛" hint="换个筛选条件试试" />
 
-    <DataPagination v-model:page="page" :page-size="pageSize" :total="total" />
+    <DataPagination v-if="!error && total > 0" v-model:page="page" :page-size="pageSize" :total="total" />
   </div>
 </template>
 

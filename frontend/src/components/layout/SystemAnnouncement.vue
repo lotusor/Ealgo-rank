@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, useId } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   listAnnouncements,
@@ -23,6 +23,13 @@ const list = ref<Announcement[]>([])
 const dismissed = ref<Set<number>>(new Set())
 const editorOpen = ref(false)
 const editing = ref<EditableAnnouncement | null>(null)
+const pending = ref(false)
+const editorError = ref('')
+const dialogEl = ref<HTMLElement | null>(null)
+const titleInput = ref<HTMLInputElement | null>(null)
+const createButton = ref<HTMLButtonElement | null>(null)
+const editorId = useId()
+let editorTrigger: HTMLElement | null = null
 
 const LEVEL_CLS: Record<Announcement['level'], string> = {
   info: 'badge-info',
@@ -53,16 +60,62 @@ function dismiss() {
   }
 }
 
-function openEditor(a?: Announcement) {
+function openEditor(a?: Announcement, event?: Event) {
+  if (pending.value || editorOpen.value) return
+  editorTrigger = event?.currentTarget instanceof HTMLElement
+    ? event.currentTarget
+    : document.activeElement instanceof HTMLElement ? document.activeElement : null
   editing.value = a
     ? { ...a }
     : { title: '', content: '', level: 'info', pinned: false, is_active: true }
+  editorError.value = ''
   editorOpen.value = true
+  nextTick(() => titleInput.value?.focus())
+}
+
+function closeEditor() {
+  if (pending.value) {
+    dialogEl.value?.focus()
+    return
+  }
+  editorOpen.value = false
+  editing.value = null
+  const trigger = editorTrigger
+  nextTick(() => {
+    if (!editorOpen.value) (trigger?.isConnected ? trigger : createButton.value)?.focus()
+  })
+}
+
+function onEditorKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    closeEditor()
+    return
+  }
+  if (event.key !== 'Tab' || !dialogEl.value) return
+  event.preventDefault()
+  const controls = Array.from(dialogEl.value.querySelectorAll<HTMLElement>(
+    'button, input, textarea, select, a[href], [tabindex]',
+  )).filter(el => el.tabIndex >= 0 && !el.matches(':disabled') && el.getClientRects().length > 0
+    && getComputedStyle(el).visibility !== 'hidden')
+  if (!controls.length) {
+    dialogEl.value.focus()
+    return
+  }
+  const index = controls.indexOf(document.activeElement as HTMLElement)
+  const next = index < 0 ? (event.shiftKey ? controls.length - 1 : 0)
+    : (index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length
+  controls[next].focus()
 }
 
 async function saveEditor() {
   const e = editing.value
-  if (!e || !e.title?.trim() || !e.content?.trim()) return
+  if (pending.value || !e) return
+  if (!e.title?.trim() || !e.content?.trim()) {
+    editorError.value = '请填写标题和内容'
+    return
+  }
   const payload = {
     title: e.title.trim(),
     content: e.content.trim(),
@@ -70,24 +123,44 @@ async function saveEditor() {
     pinned: Boolean(e.pinned),
     is_active: e.is_active ?? true,
   }
-  if (e.id != null) {
-    await updateAnnouncement(e.id, payload)
-  } else {
-    await createAnnouncement(payload)
+  pending.value = true
+  editorError.value = ''
+  dialogEl.value?.focus()
+  let saved = false
+  try {
+    if (e.id != null) {
+      await updateAnnouncement(e.id, payload)
+    } else {
+      await createAnnouncement(payload)
+    }
+    // 刷新期间也保持锁定，避免迟到响应关闭随后打开的编辑器。
+    await load()
+    saved = true
+  } catch {
+    editorError.value = '保存公告失败，请重试'
+  } finally {
+    pending.value = false
   }
-  editorOpen.value = false
-  editing.value = null
-  await load()
+  if (saved) closeEditor()
 }
 
 async function removeEditor() {
   const e = editing.value
-  if (e?.id != null) {
+  if (pending.value || e?.id == null) return
+  pending.value = true
+  editorError.value = ''
+  dialogEl.value?.focus()
+  let removed = false
+  try {
     await deleteAnnouncement(e.id)
     await load()
+    removed = true
+  } catch {
+    editorError.value = '删除公告失败，请重试'
+  } finally {
+    pending.value = false
   }
-  editorOpen.value = false
-  editing.value = null
+  if (removed) closeEditor()
 }
 
 onMounted(load)
@@ -108,9 +181,11 @@ onMounted(load)
     </div>
     <button
       v-if="auth.isSuperAdmin"
+      ref="createButton"
       class="announce-act"
       title="新建公告"
-      @click="openEditor()"
+      :disabled="pending"
+      @click="openEditor(undefined, $event)"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 5v14M5 12h14" />
@@ -120,7 +195,8 @@ onMounted(load)
       v-if="auth.isSuperAdmin"
       class="announce-act"
       title="管理公告"
-      @click="openEditor(current)"
+      :disabled="pending"
+      @click="openEditor(current, $event)"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -134,50 +210,67 @@ onMounted(load)
     </button>
   </div>
 
+  <div v-else-if="auth.isSuperAdmin" class="announce-create">
+    <button ref="createButton" class="btn btn-ghost" :disabled="pending" @click="openEditor(undefined, $event)">新建公告</button>
+  </div>
+
   <!-- 管理弹窗 -->
-  <div v-if="editorOpen" class="modal-overlay" @click.self="editorOpen = false" v-esc="() => (editorOpen = false)">
-    <div class="modal">
+  <div v-if="editorOpen" class="modal-overlay" @click.self="closeEditor">
+    <div
+      ref="dialogEl"
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      :aria-labelledby="`${editorId}-heading`"
+      :aria-describedby="editorError ? `${editorId}-error` : undefined"
+      :aria-busy="pending"
+      tabindex="-1"
+      @keydown="onEditorKeydown"
+    >
       <div class="modal-header">
-        <span>{{ editing && editing.id != null ? '编辑公告' : '新建公告' }}</span>
+        <span :id="`${editorId}-heading`">{{ editing && editing.id != null ? '编辑公告' : '新建公告' }}</span>
       </div>
       <div class="modal-body">
         <div class="field">
-          <label class="field-label">标题</label>
-          <input class="input" v-model="editing!.title" placeholder="公告标题" />
+          <label class="field-label" :for="`${editorId}-title`">标题</label>
+          <input :id="`${editorId}-title`" ref="titleInput" class="input" v-model="editing!.title" :disabled="pending" placeholder="公告标题" />
         </div>
         <div class="field">
-          <label class="field-label">内容</label>
-          <textarea class="textarea" v-model="editing!.content" placeholder="公告内容" />
+          <label class="field-label" :for="`${editorId}-content`">内容</label>
+          <textarea :id="`${editorId}-content`" class="textarea" v-model="editing!.content" :disabled="pending" placeholder="公告内容" />
         </div>
         <div class="field-row">
           <div class="field">
-            <label class="field-label">级别</label>
-            <select class="select" v-model="editing!.level">
+            <label class="field-label" :for="`${editorId}-level`">级别</label>
+            <select :id="`${editorId}-level`" class="select" v-model="editing!.level" :disabled="pending">
               <option value="info">普通</option>
               <option value="success">成功</option>
               <option value="warning">警告</option>
               <option value="danger">重要</option>
             </select>
           </div>
-          <label class="field-check">
-            <input type="checkbox" v-model="editing!.pinned" /> 置顶
+          <label class="field-check" :for="`${editorId}-pinned`">
+            <input :id="`${editorId}-pinned`" type="checkbox" v-model="editing!.pinned" :disabled="pending" /> 置顶
           </label>
-          <label class="field-check">
-            <input type="checkbox" v-model="editing!.is_active" /> 启用
+          <label class="field-check" :for="`${editorId}-active`">
+            <input :id="`${editorId}-active`" type="checkbox" v-model="editing!.is_active" :disabled="pending" /> 启用
           </label>
         </div>
+        <p v-if="editorError" :id="`${editorId}-error`" class="editor-error" role="alert">{{ editorError }}</p>
+        <p v-if="pending" role="status">正在处理，请稍候…</p>
       </div>
       <div class="modal-footer">
         <button
           class="btn btn-ghost btn-sm"
           @click="removeEditor"
+          :disabled="pending"
           v-if="editing && editing.id != null"
         >
           删除
         </button>
         <span style="flex: 1" />
-        <button class="btn btn-ghost btn-sm" @click="editorOpen = false">取消</button>
-        <button class="btn btn-primary btn-sm" @click="saveEditor">保存</button>
+        <button class="btn btn-ghost btn-sm" :disabled="pending" @click="closeEditor">取消</button>
+        <button class="btn btn-primary btn-sm" :disabled="pending" @click="saveEditor">保存</button>
       </div>
     </div>
   </div>
@@ -262,5 +355,22 @@ onMounted(load)
   color: var(--color-text-secondary);
   padding-bottom: var(--space-3);
   white-space: nowrap;
+}
+.announce-create {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  max-width: var(--container-wide);
+  margin: var(--space-2) auto 0;
+  padding-inline: var(--page-padding-x);
+}
+.announce-create .btn,
+.modal-footer .btn {
+  min-width: var(--control-height-lg);
+  min-height: var(--control-height-lg);
+}
+.editor-error {
+  margin-top: var(--space-3);
+  color: var(--color-danger);
 }
 </style>

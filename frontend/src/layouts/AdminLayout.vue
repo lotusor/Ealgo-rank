@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import NavBar from '@/components/layout/NavBar.vue'
 import SystemAnnouncement from '@/components/layout/SystemAnnouncement.vue'
 
 const route = useRoute()
-const router = useRouter()
 const auth = useAuthStore()
 
 const groups = computed(() => {
@@ -39,14 +38,10 @@ const groups = computed(() => {
 const currentName = computed(() => route.name as string)
 
 const drawerOpen = ref(false)
-function go(name: string) {
-  drawerOpen.value = false
-  router.push({ name })
-}
 </script>
 
 <template>
-  <div class="app-shell admin-shell">
+  <div class="app-shell admin-shell" @keydown.esc="drawerOpen = false">
     <NavBar />
     <SystemAnnouncement />
     <div class="admin-body">
@@ -67,25 +62,26 @@ function go(name: string) {
       <aside class="admin-sidebar" :class="{ open: drawerOpen }">
         <template v-for="grp in groups" :key="grp.label">
           <div class="sidebar-group-label">{{ grp.label }}</div>
-          <a
+          <RouterLink
             v-for="link in grp.links"
             :key="link.name"
+            :to="{ name: link.name }"
             class="sidebar-link"
             :class="{ active: currentName === link.name }"
-            @click="go(link.name)"
+            @click="drawerOpen = false"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path :d="link.icon" />
             </svg>
             {{ link.label }}
-          </a>
+          </RouterLink>
         </template>
       </aside>
       <div class="admin-backdrop" :class="{ open: drawerOpen }" @click="drawerOpen = false" />
       <main class="main-content admin-main">
-        <router-view v-slot="{ Component }">
-          <transition name="page" mode="out-in">
-            <component :is="Component" />
+        <router-view v-slot="{ Component, route: pageRoute }">
+          <transition name="page" mode="out-in" appear>
+            <component :is="Component" :key="pageRoute.path" />
           </transition>
         </router-view>
       </main>
@@ -196,18 +192,20 @@ function go(name: string) {
   left: 0;
   bottom: 0;
   z-index: var(--z-sidebar);
+  visibility: hidden;
   transform: translateX(-100%);
   transition: transform var(--duration-slow) var(--ease-standard);
 }
 .admin-sidebar.open {
+  visibility: visible;
   transform: translateX(0);
 }
 .admin-backdrop.open {
   display: block;
   position: fixed;
   inset: var(--nav-height) 0 0 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: var(--z-sidebar);
+  background: var(--scrim);
+  z-index: calc(var(--z-sidebar) - 1);
 }
 .admin-main {
   padding: var(--space-5) var(--space-4);
@@ -218,7 +216,8 @@ function go(name: string) {
     display: none;
   }
   .admin-sidebar {
-    position: static;
+    position: sticky;
+    visibility: visible;
     transform: none;
   }
   .admin-backdrop.open {

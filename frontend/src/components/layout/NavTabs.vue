@@ -17,13 +17,14 @@ defineEmits<{ navigate: [key: string] }>()
 
 <template>
   <nav class="nav-links nav-tabs" aria-label="主导航">
-    <a
+    <RouterLink
       v-for="item in items"
       :key="item.key"
+      :to="{ name: item.key }"
       :class="{ active: item.key === activeKey }"
       :aria-current="item.key === activeKey ? 'page' : undefined"
       @click="$emit('navigate', item.key)"
-      >{{ item.label }}</a
+      >{{ item.label }}</RouterLink
     >
   </nav>
 </template>

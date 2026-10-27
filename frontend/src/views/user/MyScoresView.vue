@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { listMyParticipations, listRankings, getMyBestRecord, getRatingHistory } from '@/api'
 import { useAuthStore } from '@/stores/auth'
@@ -8,6 +8,7 @@ import RatingLineChart from '@/components/RatingLineChart.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import CountUp from '@/components/ui/CountUp.vue'
+import DataPagination from '@/components/ui/DataPagination.vue'
 import { initial } from '@/utils/format'
 import { SCORING_PLATFORMS, platformClass, platformLabel } from '@/platforms/meta'
 
@@ -17,6 +18,13 @@ const auth = useAuthStore()
 const platform = ref<'' | ContestPlatform>('')
 const rows = ref<MyParticipation[]>([])
 const loading = ref(false)
+const error = ref('')
+let requestSeq = 0
+const tablePage = ref(1)
+const tablePageSize = 20
+const pagedRows = computed(() =>
+  rows.value.slice((tablePage.value - 1) * tablePageSize, tablePage.value * tablePageSize),
+)
 
 // 成绩维度只对可计分平台有意义（只做日历展示的平台没有榜单）
 const platformOptions = computed(() => [
@@ -24,12 +32,31 @@ const platformOptions = computed(() => [
   ...SCORING_PLATFORMS.map((p) => ({ label: p.label, value: p.key })),
 ])
 
-function load() {
+async function load() {
+  const seq = ++requestSeq
+  const selectedPlatform = platform.value || undefined
+  rows.value = []
   loading.value = true
-  listMyParticipations({ platform: platform.value || undefined, page_size: 100 })
-    .then(({ results }) => (rows.value = results))
-    .catch(() => {})
-    .finally(() => (loading.value = false))
+  error.value = ''
+  try {
+    const allRows: MyParticipation[] = []
+    let page = 1
+    while (true) {
+      const res = await listMyParticipations({ platform: selectedPlatform, page, page_size: 100 })
+      if (seq !== requestSeq) return
+      allRows.push(...res.results)
+      if (page >= res.total_pages) break
+      page += 1
+    }
+    // 收齐后再发布，避免把部分页当作全量统计。
+    rows.value = allRows
+  } catch {
+    if (seq !== requestSeq) return
+    rows.value = []
+    error.value = '参赛记录加载失败，请重试。'
+  } finally {
+    if (seq === requestSeq) loading.value = false
+  }
 }
 onMounted(() => {
   load()
@@ -37,7 +64,11 @@ onMounted(() => {
   getMyBestRecord().then((r) => (bestRecord.value = r)).catch(() => {})
   getRatingHistory().then((h) => (history.value = h)).catch(() => {})
 })
-watch(platform, () => load())
+watch(platform, () => {
+  tablePage.value = 1
+  load()
+}, { flush: 'sync' })
+onBeforeUnmount(() => { requestSeq += 1 })
 
 // 历史最佳纪录（学生榜 period=all：最高名次配对当时总 rating + 历史最高总 rating）
 const bestRecord = ref<UserBestRecord | null>(null)
@@ -64,7 +95,7 @@ const me = computed(() => auth.user)
 const avatarFailed = ref(false)
 watch(() => me.value?.avatar, () => (avatarFailed.value = false))
 
-const countedCount = computed(() => rows.value.filter((r) => !r.is_excluded).length)
+const unexcludedCount = computed(() => rows.value.filter((r) => !r.is_excluded).length)
 const totalDelta = computed(() => rows.value.reduce((s, r) => s + (r.rating_delta ?? 0), 0))
 
 // 站点 rating 时间线（后端单一事实源，与榜单口径一致；替代旧的前端聚合）
@@ -279,14 +310,14 @@ function fmtBest(v: number | null | undefined) {
         <span class="metric__meta">与榜单同口径</span>
       </div>
       <div class="metric">
-        <span class="metric__label">计入积分场数</span>
-        <strong class="metric__value num"><CountUp :value="countedCount" /></strong>
-        <span class="metric__meta">未排除</span>
+        <span class="metric__label">未排除记录</span>
+        <strong class="metric__value num"><CountUp :value="loading || error ? null : unexcludedCount" /></strong>
+        <span class="metric__meta">不等同于计分场数</span>
       </div>
       <div class="metric">
         <span class="metric__label">参赛记录</span>
-        <strong class="metric__value num"><CountUp :value="rows.length" /></strong>
-        <span class="metric__meta">全部场次</span>
+        <strong class="metric__value num"><CountUp :value="loading || error ? null : rows.length" /></strong>
+        <span class="metric__meta">当前筛选的全部记录</span>
       </div>
       <div class="metric">
         <span class="metric__label">历史最佳排名</span>
@@ -316,8 +347,14 @@ function fmtBest(v: number | null | undefined) {
       </div>
     </section>
 
+    <div v-if="loading" class="card card-pad" role="status">正在加载全部参赛记录…</div>
+    <div v-else-if="error" class="card card-pad" role="alert">
+      <p>{{ error }}</p>
+      <button type="button" class="btn btn-secondary" @click="load">重试</button>
+    </div>
+
     <!-- 只有「未绑定任何平台」才整页收空态；绑定过账号时选项卡与曲线卡片必须在场 -->
-    <EmptyState v-if="!loading && accounts.length === 0" title="暂无参赛记录" hint="绑定平台账号并触发爬虫后将自动同步" />
+    <EmptyState v-if="!loading && !error && accounts.length === 0" title="暂无参赛记录" hint="绑定平台账号并触发爬虫后将自动同步" />
 
     <template v-else>
       <!-- Rating chart：镜头内只呈现一条语义明确的曲线 -->
@@ -330,7 +367,7 @@ function fmtBest(v: number | null | undefined) {
           </div>
           <SegmentedControl v-model="platform" :options="platformOptions" />
         </div>
-        <div v-sheen class="glass-lens chart-lens">
+        <div v-if="!loading && !error" v-sheen class="glass-lens chart-lens">
           <RatingLineChart
             v-if="chartPoints.length"
             :points="chartPoints"
@@ -339,7 +376,7 @@ function fmtBest(v: number | null | undefined) {
           />
           <EmptyState v-else :title="emptyChartHint?.title" :hint="emptyChartHint?.hint" />
         </div>
-        <div class="chart-stage__foot">
+        <div v-if="!loading && !error" class="chart-stage__foot">
           <span>
             当前{{ platform === '' ? '站内总积分' : '平台 Rating' }}:
             <b><CountUp :value="currentRating" :precision="currentPrecision" /></b>
@@ -356,12 +393,12 @@ function fmtBest(v: number | null | undefined) {
       </section>
 
       <!-- Contest history -->
-      <div class="card" style="overflow: hidden">
+      <div v-if="!loading && !error" class="card" style="overflow: hidden">
         <div class="card-header">
           <div class="card-title">参赛历史</div>
           <span class="caption text-tertiary">共 {{ rows.length }} 场</span>
         </div>
-        <EmptyState v-if="!rows.length" title="该平台暂无 rated 参赛记录"
+        <EmptyState v-if="!rows.length" title="当前筛选暂无参赛记录"
                     hint="绑定账号后由爬虫按调度同步，未及时出现可等待下一轮爬取" />
         <div v-else class="table-wrap" style="border: none; border-radius: 0">
           <table class="data-table">
@@ -377,7 +414,7 @@ function fmtBest(v: number | null | undefined) {
               <tr><th>比赛名称</th><th>平台</th><th class="num-cell">时间</th><th class="num-cell">排名</th><th class="num-cell hide-mobile">解题数</th><th class="num-cell">Rating 变化</th></tr>
             </thead>
             <tbody>
-              <tr v-for="r in rows" :key="r.id" :class="{ 'excluded-row': r.is_excluded }">
+              <tr v-for="r in pagedRows" :key="r.id" :class="{ 'excluded-row': r.is_excluded }">
                 <td>
                   <a v-if="r.contest_url" :href="r.contest_url" target="_blank" rel="noopener" class="title-link">{{ r.contest_name }}</a>
                   <span v-else class="title-link">{{ r.contest_name }}</span>
@@ -399,6 +436,7 @@ function fmtBest(v: number | null | undefined) {
             </tbody>
           </table>
         </div>
+        <DataPagination v-if="rows.length" v-model:page="tablePage" :page-size="tablePageSize" :total="rows.length" />
       </div>
     </template>
   </div>

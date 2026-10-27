@@ -93,6 +93,7 @@ function measure() {
   const next = Math.max(280, Math.round(plotEl.value?.clientWidth || 720))
   if (next !== width.value) width.value = next
   ready.value = true
+  if (tipVisible.value) nextTick(placeTip)
 }
 
 const H = computed(() =>
@@ -372,16 +373,23 @@ const marker = computed(() => {
 function placeTip() {
   const point = tipPoint.value
   const tip = tipEl.value
-  if (!point || !tip) return
+  const target = chartPlotEl.value
+  const svg = target?.querySelector('svg')
+  if (!point || !tip || !target || !svg) return
+  const box = target.getBoundingClientRect()
+  const svgBox = svg.getBoundingClientRect()
+  if (!svgBox.width || !svgBox.height) return
+  // 数据点用 viewBox 单位，tooltip 的尺寸和定位用容器内 CSS 像素。
+  const x = svgBox.left - box.left + point.cx * svgBox.width / width.value
+  const y = svgBox.top - box.top + point.cy * svgBox.height / H.value
   const tipWidth = tip.offsetWidth || 220
   const tipHeight = tip.offsetHeight || 140
-  const p = PAD.value
-  let left = point.cx + 14
-  if (left + tipWidth > width.value - 8) left = point.cx - tipWidth - 14
-  left = Math.max(8, Math.min(left, width.value - tipWidth - 8))
-  let top = point.cy - tipHeight - 14
-  if (top < 8) top = point.cy + 14
-  if (top + tipHeight > H.value - 8) top = Math.max(8, H.value - tipHeight - 8)
+  let left = x + 14
+  if (left + tipWidth > box.width - 8) left = x - tipWidth - 14
+  left = Math.max(8, Math.min(left, box.width - tipWidth - 8))
+  let top = y - tipHeight - 14
+  if (top < 8) top = y + 14
+  top = Math.max(8, Math.min(top, box.height - tipHeight - 8))
   tipLeft.value = left
   tipTop.value = top
 }
@@ -408,12 +416,16 @@ function pointFromEvent(event: PointerEvent | MouseEvent) {
     hide()
     return
   }
+  const svgBox = target.querySelector('svg')?.getBoundingClientRect()
+  if (!svgBox?.width || !svgBox.height) return
+  const x = (event.clientX - svgBox.left) * width.value / svgBox.width
+  const y = (event.clientY - svgBox.top) * H.value / svgBox.height
   let best = -1
   let bestScore = Infinity
   g.coords.forEach((point, index) => {
-    const dx = Math.abs(px - point.cx)
+    const dx = Math.abs(x - point.cx)
     if (dx > 42) return
-    const score = dx + Math.abs(py - point.cy) * 0.32
+    const score = dx + Math.abs(y - point.cy) * 0.32
     if (score < bestScore) {
       bestScore = score
       best = index
@@ -437,6 +449,11 @@ function onFocus(index: number) {
   show(index)
 }
 function onKeydown(event: KeyboardEvent, index: number) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    hide()
+    return
+  }
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
   event.preventDefault()
   const total = geom.value?.coords.length || 0
@@ -499,10 +516,6 @@ watch(
   },
   { flush: 'post' },
 )
-watch(width, () => {
-  if (tipVisible.value) nextTick(placeTip)
-})
-
 onMounted(() => {
   measure()
   resizeObserver = new ResizeObserver(measure)
@@ -650,7 +663,7 @@ onBeforeUnmount(() => {
             :style="{ animationDelay: `${segment.delay}ms` }"
           />
         </g>
-        <path
+        <circle
           v-else-if="geom.coords.length === 1"
           class="chart-single-dot-halo"
           :cx="geom.coords[0].cx"

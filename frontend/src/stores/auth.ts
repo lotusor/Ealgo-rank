@@ -2,6 +2,10 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { fetchMe, login as apiLogin } from '@/api'
 import type { UserMe } from '@/api/types'
+import { toast } from '@/composables/useToast'
+import { saveSession, clearSession } from '@/api/session'
+
+const REVOCATION_TIMEOUT_MS = 5000
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(localStorage.getItem('access_token'))
@@ -35,9 +39,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   // passport 回调 / 注册成功后写入完整登录态（token + source + user）
   function setSession(access: string, refresh: string, source: string) {
-    localStorage.setItem('access_token', access)
-    localStorage.setItem('refresh_token', refresh)
-    localStorage.setItem('auth_source', source)
+    saveSession(access, refresh, source)
     token.value = access
     authSource.value = source
   }
@@ -47,26 +49,26 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = u
   }
 
-  async function logout() {
-    // 尽力吊销 passport 侧 jti（离线验签不查黑名单，显式吊销更稳妥）
+  function logout() {
     const source = authSource.value
+    const access = localStorage.getItem('access_token')
     const pp = import.meta.env.VITE_PASSPORT_URL as string | undefined
-    if (source === 'passport' && token.value && pp) {
-      try {
-        await fetch(`${pp}/api/v1/logout/`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token.value}` },
-        })
-      } catch {
-        /* 吊销失败不阻断本地清理 */
-      }
-    }
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('refresh_token')
-    localStorage.removeItem('auth_source')
+    clearSession()
     token.value = null
     authSource.value = 'local'
     user.value = null
+    if (source === 'passport' && access && pp) {
+      // 远端吊销尽力执行，本地退出不等待网络。
+      void fetch(`${pp}/api/v1/logout/`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${access}` },
+        signal: AbortSignal.timeout(REVOCATION_TIMEOUT_MS),
+      }).then((response) => {
+        if (!response.ok) throw new Error('Revocation not confirmed')
+      }).catch(() => {
+        toast('本站已退出，通行证会话撤销未确认，请在通行证中检查会话。', 'info')
+      })
+    }
   }
 
   // 管理动作「只能向下」：与后端 apps/common/permissions.py 的 ROLE_RANK 同序，

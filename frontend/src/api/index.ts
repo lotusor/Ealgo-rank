@@ -1,4 +1,5 @@
 import client from './client'
+import { saveSession, clearSession } from './session'
 import { createPkcePair } from '../utils/pkce'
 import type {
   AdminPlatformAccount,
@@ -34,9 +35,7 @@ import type {
 // ---------- Auth ----------
 export async function login(username: string, password: string) {
   const { data } = await client.post('/auth/token/', { username, password })
-  localStorage.setItem('access_token', data.access)
-  localStorage.setItem('refresh_token', data.refresh)
-  localStorage.setItem('auth_source', 'local') // 本地密码登录（root/兜底），刷新走 algo_rank
+  saveSession(data.access, data.refresh, 'local')
   return data
 }
 
@@ -56,9 +55,7 @@ export async function logout() {
       headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {})
   }
-  localStorage.removeItem('access_token')
-  localStorage.removeItem('refresh_token')
-  localStorage.removeItem('auth_source')
+  clearSession()
 }
 
 // ---------- Lotus Passport OAuth（统一登录）----------
@@ -451,9 +448,7 @@ export interface RegisterResult {
 
 export async function register(payload: RegisterPayload): Promise<RegisterResult> {
   const { data } = await client.post<RegisterResult>('/register/', payload)
-  localStorage.setItem('access_token', data.access)
-  localStorage.setItem('refresh_token', data.refresh)
-  localStorage.setItem('auth_source', 'local') // 本地注册账号，刷新走 algo_rank
+  saveSession(data.access, data.refresh, 'local')
   return data
 }
 

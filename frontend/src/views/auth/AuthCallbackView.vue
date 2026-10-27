@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { isCancel } from 'axios'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { exchangePassportCode } from '@/api'
@@ -22,13 +23,14 @@ function goTarget() {
 }
 
 async function finishLogin(access: string, refresh: string) {
-  localStorage.setItem('access_token', access)
-  localStorage.setItem('refresh_token', refresh)
-  localStorage.setItem('auth_source', 'passport')
   auth.setSession(access, refresh, 'passport')
   try {
     await auth.loadMe()
-  } catch {
+  } catch (error) {
+    if (isCancel(error)) {
+      window.location.reload()
+      return
+    }
     await auth.logout()
     loading.value = false
     failed.value = true

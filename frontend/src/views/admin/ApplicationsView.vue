@@ -136,7 +136,7 @@ onMounted(load)
             <tr v-for="a in rows" :key="a.id">
               <td class="cell-strong">{{ a.applicant.username }}</td>
               <td>{{ a.applicant.real_name || '—' }}</td>
-              <td class="cell-ellipsis">{{ a.school?.name || '—' }}</td>
+              <td class="cell-ellipsis">{{ a.school?.name || a.proposed_school_name || '—' }}</td>
               <td class="cell-ellipsis">
                 <span class="text-secondary">{{ a.reason || '—' }}</span>
                 <div v-if="a.contact" class="caption text-tertiary">联系：{{ a.contact }}</div>
@@ -181,7 +181,7 @@ onMounted(load)
         <div class="modal-header">审批意见</div>
         <div class="modal-body">
           <p class="text-secondary" style="margin-bottom: var(--space-4)">
-            对「<b>{{ reviewTarget?.school?.name }}</b>」的申请执行
+            对「<b>{{ reviewTarget?.school?.name || reviewTarget?.proposed_school_name || '—' }}</b>」的申请执行
             <b :class="reviewAction === 'approve' ? 'text-success' : 'text-danger'">{{ reviewAction === 'approve' ? '通过' : '驳回' }}</b>。
           </p>
           <div class="field">

@@ -1,8 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { isCancel } from 'axios'
 import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return { ...savedPosition, behavior: 'instant' }
+    if (to.path !== from.path) return { top: 0, behavior: 'instant' }
+    return false
+  },
   routes: [
     {
       path: '/login',
@@ -180,7 +186,8 @@ router.beforeEach(async (to) => {
   if (auth.token && !auth.user) {
     try {
       await auth.loadMe()
-    } catch {
+    } catch (error) {
+      if (isCancel(error)) return false
       await auth.logout()
       // loadMe 失败说明凭证已失效：清状态后回登录页，避免卡在空白/报错页
       if (to.name !== 'login') {

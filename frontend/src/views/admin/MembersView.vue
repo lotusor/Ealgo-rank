@@ -114,6 +114,7 @@ const acctUser = ref<UserRoster | null>(null)
 const accounts = ref<AdminPlatformAccount[]>([])
 const audits = ref<HandleAuditRow[]>([])
 const acctLoading = ref(false)
+let acctRequestSeq = 0
 const busy = ref<number | 'bind' | null>(null)
 // 每个动作自带理由：共用一个输入框会让「这条留痕到底记给了谁」说不清
 const bindReason = ref('')
@@ -140,30 +141,41 @@ function apiErr(e: any, fallback: string): string {
 }
 
 async function refreshAccounts(u: UserRoster) {
+  const seq = ++acctRequestSeq
+  const isCurrent = () => seq === acctRequestSeq && acctUser.value?.id === u.id
   acctLoading.value = true
   try {
     const [acc, aud] = await Promise.all([
       listAdminPlatformAccounts({ user: u.id, page_size: 20 }),
       listHandleAudits({ user: u.id, page_size: 8 }),
     ])
+    if (!isCurrent()) return
     accounts.value = acc.results
     audits.value = aud.results
   } catch (e: any) {
-    toast.error(apiErr(e, '加载平台账号失败'))
+    if (isCurrent()) toast.error(apiErr(e, '加载平台账号失败'))
   } finally {
-    acctLoading.value = false
+    if (isCurrent()) acctLoading.value = false
   }
 }
 
 async function openAccounts(u: UserRoster) {
   acctUser.value = u
+  accounts.value = []
+  audits.value = []
+  rebindDlg.value = null
+  unbindDlg.value = null
   bindReason.value = ''
   newBind.value = { platform: BINDABLE_PLATFORMS[0]?.key ?? 'codeforces', handle: '' }
   await refreshAccounts(u)
 }
 
 function closeAccounts() {
+  acctRequestSeq += 1
   acctUser.value = null
+  accounts.value = []
+  audits.value = []
+  acctLoading.value = false
   rebindDlg.value = null
   unbindDlg.value = null
 }
@@ -340,7 +352,7 @@ onMounted(() => {
     <DataPagination v-model:page="page" :page-size="pageSize" :total="total" @update:page="(p) => { page = p; load() }" />
 
     <!-- 平台账号归属管理 -->
-    <div v-if="acctUser" class="modal-overlay" @click.self="acctUser = null" v-esc="() => (acctUser = null)">
+    <div v-if="acctUser" class="modal-overlay" @click.self="closeAccounts" v-esc="closeAccounts">
       <div class="modal" style="width: 720px; max-width: 96vw">
         <div class="modal-header">
           平台账号 · {{ acctUser.real_name || acctUser.username }}

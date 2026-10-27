@@ -45,15 +45,19 @@ async function loadAccounts() {
   accountsLoading.value = true
   try {
     accounts.value = await listPlatformAccounts()
-  } catch {
-    /* ignore */
+  } catch (e: any) {
+    toast.error(`加载平台账号失败：${extractError(e)}`)
   } finally {
     accountsLoading.value = false
   }
 }
 
-function onAccountsChanged() {
-  loadAccounts()
+async function onAccountsChanged() {
+  try {
+    await Promise.all([loadAccounts(), auth.loadMe()])
+  } catch (e: any) {
+    toast.error(`刷新用户信息失败：${extractError(e)}`)
+  }
 }
 
 // ---------- 用户名实时查重 ----------

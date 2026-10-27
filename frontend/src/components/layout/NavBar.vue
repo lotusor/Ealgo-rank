@@ -185,7 +185,7 @@ defineExpose({ drawerOpen })
       <NavTabs
         :items="tabItems"
         :active-key="activeKey"
-        @navigate="goByKey"
+        @navigate="closeAll"
       />
 
       <Popover v-model:open="paletteOpen" align="start" panel-width="300px" class="nav-palette">
@@ -269,11 +269,11 @@ defineExpose({ drawerOpen })
           </template>
           <template #panel>
             <div class="menu-list">
-              <a v-if="auth.isAdmin" @click="goByKey('dashboard')">后台管理</a>
-              <a @click="goByKey('my-scores')">个人中心</a>
-              <a @click="goByKey('profile')">资料编辑</a>
-              <a @click="goByKey('security')">账号安全</a>
-              <a class="danger" @click="doLogout">退出登录</a>
+              <RouterLink v-if="auth.isAdmin" :to="{ name: 'dashboard' }" @click="closeAll">后台管理</RouterLink>
+              <RouterLink :to="{ name: 'my-scores' }" @click="closeAll">个人中心</RouterLink>
+              <RouterLink :to="{ name: 'profile' }" @click="closeAll">资料编辑</RouterLink>
+              <RouterLink :to="{ name: 'security' }" @click="closeAll">账号安全</RouterLink>
+              <button type="button" class="danger" @click="doLogout">退出登录</button>
             </div>
           </template>
         </Popover>
@@ -357,21 +357,26 @@ defineExpose({ drawerOpen })
 .menu-list {
   padding: var(--space-2);
 }
-.menu-list a {
+.menu-list :is(a, button) {
   display: block;
+  width: 100%;
+  min-height: var(--control-height-lg);
   padding: var(--space-3);
+  border: none;
   border-radius: var(--radius-md);
-  font-size: 14px;
+  background: none;
+  text-align: left;
+  font-size: var(--text-base);
   font-weight: 500;
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--duration-fast);
+  transition: background-color var(--duration-fast), color var(--duration-fast);
 }
-.menu-list a:hover {
+.menu-list :is(a, button):hover {
   background: var(--color-bg-overlay);
   color: var(--color-text-primary);
 }
-.menu-list a.danger:hover {
+.menu-list :is(a, button).danger:hover {
   color: var(--color-danger);
 }
 

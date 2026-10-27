@@ -98,6 +98,16 @@ async function loadCrawlConfig() {
 
 async function onSaveCrawlConfig() {
   if (!crawlConfig.value) return
+  const hourInput = String(crawlConfig.value.auto_crawl_hour ?? '').trim()
+  if (!hourInput) {
+    toast.error('请填写触发小时（0-23）')
+    return
+  }
+  const hour = Number(hourInput)
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+    toast.error('触发小时必须为 0-23 的整数')
+    return
+  }
   savingCfg.value = true
   try {
     const payload = {
@@ -106,7 +116,7 @@ async function onSaveCrawlConfig() {
       atcoder_count: Number(crawlConfig.value.atcoder_count) || 20,
       nowcoder_months_back: Number(crawlConfig.value.nowcoder_months_back) || 2,
       auto_crawl_interval_days: Number(crawlConfig.value.auto_crawl_interval_days) || 1,
-      auto_crawl_hour: Number(crawlConfig.value.auto_crawl_hour) || 2,
+      auto_crawl_hour: hour,
     }
     crawlConfig.value = await saveCrawlConfig(payload)
     toast.success('自动爬取配置已保存（Beat 调度将自动同步）')

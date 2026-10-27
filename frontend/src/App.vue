@@ -3,6 +3,7 @@ import { onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
+import { SESSION_KEY } from '@/api/session'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -18,31 +19,38 @@ function onLogout() {
     router.replace({ name: 'login', query: { redirect } })
   }
 }
-onMounted(() => window.addEventListener('auth:logout', onLogout))
-onUnmounted(() => window.removeEventListener('auth:logout', onLogout))
+function onSessionChange(event: StorageEvent) {
+  // 换号后重建视图，避免旧身份表单使用另一标签页的新令牌。
+  if (event.key === SESSION_KEY) window.location.reload()
+}
+onMounted(() => {
+  window.addEventListener('auth:logout', onLogout)
+  window.addEventListener('storage', onSessionChange)
+})
+onUnmounted(() => {
+  window.removeEventListener('auth:logout', onLogout)
+  window.removeEventListener('storage', onSessionChange)
+})
 </script>
 
 <template>
-  <router-view v-slot="{ Component }">
-    <transition name="page" mode="out-in">
-      <component :is="Component" />
-    </transition>
-  </router-view>
+  <router-view />
 </template>
 
 <style>
-/* 页面切换过渡：轻微淡入 + 上移，避免路由跳转的突兀生硬感 */
+/* 布局壳不参与转场，避免改变固定导航和浮层的定位参照。 */
 .page-enter-active,
 .page-leave-active {
-  transition: opacity var(--duration-base) var(--ease-standard),
-    transform var(--duration-base) var(--ease-standard);
+  transition: opacity var(--duration-base) var(--ease-standard);
 }
-.page-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
-}
+.page-enter-from,
 .page-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-enter-active,
+  .page-leave-active {
+    transition: none;
+  }
 }
 </style>

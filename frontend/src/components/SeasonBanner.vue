@@ -9,6 +9,9 @@ const past = ref<PastSeason[]>([])
 const loading = ref(true)
 const error = ref('')
 const showPast = ref(false)
+const pastLoading = ref(false)
+const pastError = ref('')
+const pastLoaded = ref(false)
 
 const stageMeta = computed(() => {
   const s = season.value?.stage
@@ -60,15 +63,23 @@ async function load() {
   }
 }
 
-async function togglePast() {
-  showPast.value = !showPast.value
-  if (showPast.value && past.value.length === 0) {
-    try {
-      past.value = await getPastSeasons()
-    } catch {
-      past.value = []
-    }
+async function loadPast() {
+  if (pastLoading.value || pastLoaded.value) return
+  pastLoading.value = true
+  pastError.value = ''
+  try {
+    past.value = await getPastSeasons()
+    pastLoaded.value = true
+  } catch {
+    pastError.value = '加载往期赛季失败，请重试'
+  } finally {
+    pastLoading.value = false
   }
+}
+
+function togglePast() {
+  showPast.value = !showPast.value
+  if (showPast.value) void loadPast()
 }
 
 onMounted(load)
@@ -162,7 +173,12 @@ onMounted(load)
           <span class="caption">往期赛季</span>
           <button class="btn btn-sm btn-ghost" @click="showPast = false">收起</button>
         </div>
-        <div v-if="past.length" class="past-list">
+        <div v-if="pastLoading" class="caption text-tertiary past-empty" role="status">正在加载往期赛季…</div>
+        <div v-else-if="pastError" class="season-error" role="alert">
+          <span>{{ pastError }}</span>
+          <button class="btn btn-ghost past-retry" :disabled="pastLoading" @click="loadPast">重试</button>
+        </div>
+        <div v-else-if="past.length" class="past-list">
           <div v-for="p in past" :key="p.id" class="past-item">
             <span class="num">{{ p.year }}</span>
             <span class="past-name">{{ p.name }}</span>
@@ -352,6 +368,10 @@ onMounted(load)
 .past-empty {
   padding: var(--space-4);
   text-align: center;
+}
+.past-retry {
+  min-width: var(--control-height-lg);
+  min-height: var(--control-height-lg);
 }
 
 .season-banner { padding: var(--space-5); }

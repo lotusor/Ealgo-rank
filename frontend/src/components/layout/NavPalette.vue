@@ -125,7 +125,14 @@ function onDragEnd() {
             <path :d="item.icon" />
           </svg>
         </span>
-        <span class="palette-label">{{ item.label }}</span>
+        <button
+          class="palette-main"
+          type="button"
+          :title="`打开${item.label}`"
+          @click="emit('navigate', item.key)"
+        >
+          <span class="palette-label">{{ item.label }}</span>
+        </button>
         <span class="palette-actions">
           <button
             class="palette-icon-btn"
@@ -283,6 +290,7 @@ function onDragEnd() {
   height: 16px;
 }
 .palette-main {
+  min-height: var(--control-height-lg);
   flex: 1;
   min-width: 0;
   display: flex;

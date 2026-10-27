@@ -545,7 +545,7 @@ table.data-table {
   justify-content: center;
   font-size: 11px;
   font-weight: 700;
-  color: #fff;
+  color: var(--org-logo-fg);
   flex-shrink: 0;
   letter-spacing: -0.02em;
 }
@@ -577,7 +577,7 @@ table.data-table {
   justify-content: center;
   font-size: 13px;
   font-weight: 600;
-  color: #fff;
+  color: var(--color-text-inverse);
   flex-shrink: 0;
   background: var(--gradient-primary);
 }
@@ -766,7 +766,7 @@ table.data-table {
 .textarea:focus {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--color-primary-subtle);
-  background: var(--color-bg-base);
+  background-color: var(--color-bg-base);
 }
 .select {
   appearance: none;
@@ -1185,8 +1185,11 @@ table.data-table {
   z-index: var(--z-modal);
 }
 .modal {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-width: 480px;
+  max-height: calc(100dvh - var(--space-4) * 2);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-xl);
@@ -1194,6 +1197,7 @@ table.data-table {
   overflow: hidden;
 }
 .modal-header {
+  flex-shrink: 0;
   padding: var(--space-4) var(--space-5);
   font-size: 16px;
   font-weight: 700;
@@ -1201,9 +1205,13 @@ table.data-table {
   border-bottom: 1px solid var(--color-border);
 }
 .modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-5);
 }
 .modal-footer {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: var(--space-3);

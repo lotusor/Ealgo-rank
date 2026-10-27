@@ -8,9 +8,9 @@ import SystemAnnouncement from '@/components/layout/SystemAnnouncement.vue'
     <NavBar />
     <SystemAnnouncement />
     <main class="main-content">
-      <router-view v-slot="{ Component }">
-        <transition name="page" mode="out-in">
-          <component :is="Component" />
+      <router-view v-slot="{ Component, route }">
+        <transition name="page" mode="out-in" appear>
+          <component :is="Component" :key="route.path" />
         </transition>
       </router-view>
     </main>
