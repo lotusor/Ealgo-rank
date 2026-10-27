@@ -3,10 +3,8 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { vSheen } from './directives/sheen'
-// 旧令牌在 styles.css，新的深色设计系统放在 styles/ 下。
-// 必须让 tokens.css 在 styles.css 之后加载，其 Legacy bridge 才能把
-// --bg / --brand 等旧名覆盖成深色值，避免迁移期出现浅底深色撕裂。
-import './styles.css'
+// 令牌 → 基础层 → 组件层 → 纸本层：editorial.css 最后加载，
+// 靠加载顺序覆盖同名规则，新增全局样式请放进对应一层而不是再开一份。
 import './styles/tokens.css'
 import './styles/base.css'
 import './styles/components.css'

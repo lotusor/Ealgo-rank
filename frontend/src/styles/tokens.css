@@ -211,6 +211,9 @@
   --control-height-sm: 32px;
   --control-height-lg: 44px;
   --table-row-h: 44px;
+  /* 表格单元格内边距：表头与数据行共用同一档，避免两层各写一份导致行高漂移 */
+  --table-cell-pad-y: 10px;
+  --table-cell-pad-x: 12px;
   --avatar-size: 28px;
 
   /* ===== Z-index ===== */
@@ -355,20 +358,4 @@
     --container-max: 1280px;
     --container-wide: 1360px;
   }
-}
-
-/* ===== Legacy bridge ===== */
-:root {
-  --bg: var(--color-bg-base);
-  --bg-elev: var(--color-bg-surface);
-  --bg-soft: var(--color-bg-elevated);
-  --text: var(--color-text-primary);
-  --text-dim: var(--color-text-secondary);
-  --border: var(--color-border);
-  --brand: var(--color-primary);
-  --brand-2: var(--color-secondary);
-  --brand-soft: var(--color-primary-subtle);
-  --good: var(--color-success);
-  --bad: var(--color-danger);
-  --shadow: var(--shadow-lg);
 }

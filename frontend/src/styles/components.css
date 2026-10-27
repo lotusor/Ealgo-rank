@@ -422,7 +422,7 @@ table.data-table {
 .data-table thead th {
   background: var(--color-bg-inset);
   text-align: left;
-  padding: 10px 12px;
+  padding: var(--table-cell-pad-y) var(--table-cell-pad-x);
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;

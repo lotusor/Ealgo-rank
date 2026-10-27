@@ -29,12 +29,14 @@ fieldset {
 }
 
 html {
+  height: 100%;
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
+  height: 100%;
   font-family: var(--font-sans);
   background: var(--color-bg-base);
   color: var(--color-text-primary);
@@ -46,6 +48,7 @@ body {
 }
 
 #app {
+  height: 100%;
   min-height: 100vh;
 }
 

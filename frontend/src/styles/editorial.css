@@ -332,11 +332,11 @@ table.data-table {
   color: var(--ink-3);
   background: var(--paper-3);
   border-bottom: 1px solid var(--rule-strong);
-  padding: 9px 12px;
+  padding: var(--table-cell-pad-y) var(--table-cell-pad-x);
 }
 .data-table tbody td {
   border-bottom: 1px solid var(--rule);
-  padding: 10px 12px;
+  padding: var(--table-cell-pad-y) var(--table-cell-pad-x);
 }
 .data-table tbody tr:nth-child(even) {
   background: transparent;
