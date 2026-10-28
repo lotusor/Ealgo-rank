@@ -38,19 +38,38 @@ onUnmounted(() => {
 </template>
 
 <style>
-/* 布局壳不参与转场，避免改变固定导航和浮层的定位参照。 */
-.page-enter-active,
-.page-leave-active {
-  transition: opacity var(--duration-base) var(--ease-standard);
+/*
+ * 页面转场只作用于「布局内容区里的页面组件」，不碰布局壳：
+ * 壳一旦被 transform，固定导航与浮层的定位参照会跟着走，滚动位置也会跳。
+ * 进出用不对称时长——离场快（让位），入场略缓（把注意力带到新页）。
+ */
+.page-enter-active {
+  transition:
+    opacity var(--duration-page-in) var(--ease-out),
+    transform var(--duration-page-in) var(--ease-out);
 }
-.page-enter-from,
+.page-leave-active {
+  transition:
+    opacity var(--duration-page-out) var(--ease-standard),
+    transform var(--duration-page-out) var(--ease-standard);
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
 .page-leave-to {
   opacity: 0;
+  transform: translateY(-6px);
 }
 @media (prefers-reduced-motion: reduce) {
   .page-enter-active,
   .page-leave-active {
     transition: none;
+  }
+  .page-enter-from,
+  .page-leave-to {
+    opacity: 1;
+    transform: none;
   }
 }
 </style>

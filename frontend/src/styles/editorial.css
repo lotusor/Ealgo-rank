@@ -71,7 +71,7 @@ body::after {
 .kicker,
 .mono-label {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-3xs);
   font-weight: 500;
   letter-spacing: 0.16em;
   line-height: 1.4;
@@ -163,7 +163,7 @@ p {
 }
 .breadcrumb {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-3xs);
   letter-spacing: 0.13em;
   text-transform: uppercase;
   color: var(--ink-3);
@@ -206,7 +206,7 @@ p {
 }
 .stat-label {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-3xs);
   font-weight: 500;
   letter-spacing: 0.1em;
   color: var(--ink-3);
@@ -308,7 +308,7 @@ p {
 }
 .field-label {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-2xs);
   letter-spacing: 0.06em;
   color: var(--ink-2);
 }
@@ -321,11 +321,11 @@ p {
   overflow-x: auto;
 }
 table.data-table {
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 .data-table thead th {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-3xs);
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -360,7 +360,7 @@ table.data-table {
   border: 1px solid var(--rule);
   color: var(--ink-2);
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: var(--text-3xs);
   font-weight: 500;
   letter-spacing: 0.05em;
   padding: 2px 7px;
@@ -401,7 +401,7 @@ table.data-table {
 }
 .platform-tag {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: var(--text-3xs);
   letter-spacing: 0.04em;
   border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
   background: transparent;
@@ -441,7 +441,7 @@ table.data-table {
 .seg-btn {
   border-radius: 0;
   border-right: 1px solid var(--rule);
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--ink-2);
   background: transparent;
 }
@@ -461,7 +461,7 @@ table.data-table {
 }
 .tab {
   border-radius: 0;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--ink-3);
 }
 .tab.active {
@@ -510,7 +510,7 @@ table.data-table {
 .brand {
   font-family: var(--font-display-latin);
   font-weight: 400;
-  font-size: 20px;
+  font-size: var(--text-2xl);
   letter-spacing: 0.01em;
   color: var(--ink);
 }
@@ -550,7 +550,7 @@ table.data-table {
   height: var(--nav-height);
   padding: 0 12px;
   border-radius: 0;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--ink-3);
   background: transparent;
@@ -664,7 +664,7 @@ table.data-table {
 .auth-brand {
   font-family: var(--font-display-latin);
   font-weight: 400;
-  font-size: 22px;
+  font-size: var(--text-2xl);
   color: var(--ink);
 }
 .auth-card h1 {
@@ -725,7 +725,7 @@ table.data-table {
 }
 .sidebar-group-label {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: var(--text-3xs);
   letter-spacing: 0.14em;
   color: var(--ink-3);
 }
@@ -770,7 +770,7 @@ table.data-table {
 .app-footer .legal {
   color: color-mix(in srgb, var(--paper) 68%, transparent);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-3xs);
   letter-spacing: 0.04em;
   line-height: 1.9;
 }
@@ -797,7 +797,7 @@ table.data-table {
 .footer-note {
   margin-top: 8px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-3xs);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   opacity: 0.62;
@@ -859,7 +859,7 @@ table.data-table {
 }
 .chart-stage__intro p {
   max-width: 62ch;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--ink-3);
 }
 .chart-stage__foot {
@@ -871,7 +871,7 @@ table.data-table {
   padding-top: var(--space-2);
   border-top: 1px solid var(--rule);
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: var(--text-3xs);
   letter-spacing: 0.04em;
   color: var(--ink-3);
 }
@@ -880,23 +880,27 @@ table.data-table {
   isolation: isolate;
   border-radius: 18px;
   border: 1px solid var(--glass-border-top);
+  /*
+   * 不用 backdrop-filter：这是常驻元素，浏览器会为每一帧滚动重算其身后模糊，
+   * 而纸本底接近纯色，30px 模糊的可见差异其实只剩「提亮」。改成静态磨砂底 +
+   * 高光内描边，观感保持、合成开销去掉。真正需要模糊的是滚动时会被内容穿过的
+   * 导航栏（.navbar 仍用 --glass-blur）。
+   */
   background: linear-gradient(
     145deg,
-    rgba(255, 255, 255, 0.44),
-    rgba(250, 247, 240, 0.17)
+    rgba(255, 255, 255, 0.62),
+    rgba(250, 247, 240, 0.34)
   );
   box-shadow:
     var(--glass-shadow),
     inset 0 1px 0 rgba(255, 255, 255, 0.72),
     inset 0 -1px 0 rgba(255, 255, 255, 0.16);
-  -webkit-backdrop-filter: blur(30px) saturate(1.6);
-  backdrop-filter: blur(30px) saturate(1.6);
 }
 :root[data-theme='dark'] .glass-lens {
   background: linear-gradient(
     145deg,
     rgba(255, 255, 255, 0.075),
-    rgba(25, 22, 17, 0.34)
+    rgba(25, 22, 17, 0.62)
   );
   box-shadow:
     var(--glass-shadow),
@@ -949,7 +953,7 @@ table.data-table {
 /* ===== Shared editorial helpers ===== */
 .paper-note {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: var(--text-3xs);
   letter-spacing: 0.08em;
   color: var(--ink-3);
 }
@@ -984,7 +988,7 @@ table.data-table {
     border-radius: 15px;
   }
   .chart-stage__intro p {
-    font-size: 12px;
+    font-size: var(--text-xs);
   }
   .auth-card h1 {
     font-size: 1.55rem;

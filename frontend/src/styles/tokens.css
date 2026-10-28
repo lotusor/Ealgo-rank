@@ -126,6 +126,8 @@
   --rank-bronze-fg: #fffaf0;
 
   /* ===== Font size ===== */
+  /* 微标签（表头/角标/轴刻度）：原先 9.5 / 10 / 10.5 三档是漂移，合并为一档 */
+  --text-3xs: 10px;
   --text-2xs: 11px;
   --text-xs: 12px;
   --text-sm: 13px;
@@ -134,6 +136,16 @@
   --text-lg: 16px;
   --text-xl: 18px;
   --text-2xl: 22px;
+  --text-3xl: 30px;
+  /*
+   * 标题阶梯（移动优先）：窄屏值写在 :root，≥ --bp-md 一次整体升档。
+   * 原先是「桌面值 + 后置小屏覆盖 + min-width 再断言回来」三段互相抵消的写法。
+   */
+  --text-h4: 17px;
+  --text-h3: 19px;
+  --text-h2: 21px;
+  --text-h1: 26px;
+  --text-display: 32px;
 
   /* ===== Spacing ===== */
   --space-05: 2px;
@@ -191,6 +203,9 @@
   --duration-base: 320ms;
   --duration-slow: 640ms;
   --duration-slower: 640ms;
+  /* 页面转场：离场快、入场略缓，总时长仍低于一次点击的预期反馈上限 */
+  --duration-page-out: 140ms;
+  --duration-page-in: 240ms;
   --stagger-1: 40ms;
   --stagger-2: 60ms;
   --stagger-3: 80ms;
@@ -350,6 +365,15 @@
   --navbar-bg: rgba(18, 16, 13, 0.76);
 
   color-scheme: dark;
+}
+
+/* 标题阶梯升档：断点字面量与 --bp-md 保持一致（@media 消费不了 var()） */
+@media (min-width: 768px) {
+  :root {
+    --text-h2: 24px;
+    --text-h1: 30px;
+    --text-display: 40px;
+  }
 }
 
 /* 宽屏（2K/4K）只小幅放大版心：内容密度优先，同时避免回到 1600 通栏 */
