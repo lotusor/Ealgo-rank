@@ -499,3 +499,51 @@ export interface ScoreRules {
     platforms: { platform: string; factor: string | number }[]
   } | null
 }
+
+// ---------- 导出学校赛情 ----------
+export type ExportStatus =
+  | 'pending' | 'running' | 'succeeded' | 'failed' | 'expired' | 'revoked'
+export type ExportScopeKind = 'school' | 'multi' | 'all'
+export type ExportLayout = 'per_school' | 'merged'
+export type ExportRatingWindow = 'season' | 'latest'
+
+export interface ExportJob {
+  id: number
+  status: ExportStatus
+  status_display: string
+  scope_kind: ExportScopeKind
+  scope_kind_display: string
+  scope_school_ids: number[]
+  year: number
+  layout: ExportLayout
+  layout_display: string
+  options: {
+    include_zero_participation?: boolean
+    include_global_rank?: boolean
+    rating_window?: ExportRatingWindow
+  }
+  row_count: number
+  sheet_count: number
+  file_name: string
+  file_size: number
+  download_count: number
+  is_expired: boolean
+  expires_at: string | null
+  suspicious: boolean
+  error_message: string
+  actor_username: string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  download_url: string | null
+}
+
+export interface ExportCreatePayload {
+  scope_kind: ExportScopeKind
+  school_ids?: number[]
+  year: number
+  layout: ExportLayout
+  include_zero_participation?: boolean
+  include_global_rank?: boolean
+  rating_window?: ExportRatingWindow
+}

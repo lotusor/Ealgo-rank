@@ -2377,22 +2377,41 @@ class CalendarBeatScheduleTests(TestCase):
 class BeatQueueConsumedTests(TestCase):
     """beat 调度必须落在 worker 真消费的队列上，否则是静默黑洞。
 
-    生产 worker 的启动命令是 `celery -A config worker -Q crawl,crawl_slow`
-    （docker-compose.yml），PeriodicTask 的 queue 字段会**盖过** CELERY_TASK_ROUTES，
-    所以写错队列时：beat 照发、日志无异常、监控全绿，消息只是在 Redis 里堆到永远。
+    生产 worker 的启动命令在 `docker-compose.yml` 里声明 `-Q` 队列；
+    PeriodicTask 的 queue 字段会**盖过** CELERY_TASK_ROUTES，所以写错队列时：
+    beat 照发、日志无异常、监控全绿，消息只是在 Redis 里堆到永远。
     recompute-ranking-daily 因此堆积 51 条（2026-08-29 → 10-18 实测），
     由 crawler 迁移 0009 纠正。queue 留空是安全的：走 CELERY_TASK_DEFAULT_QUEUE=crawl。
     """
 
-    CONSUMED = {"crawl", "crawl_slow", "", None}
+    def _consumed_queues(self):
+        """从 worker 启动命令里取实际消费的队列。
+
+        刻意不写死集合：写死的话，加队列的人忘了同步这里 → 测试仍绿但线上是黑洞；
+        只改这里不改 compose → 测试绿了线上还是黑洞。两侧必须同一个真值源。
+        """
+        import re
+        from pathlib import Path
+
+        compose = Path(__file__).resolve().parents[3] / "docker-compose.yml"
+        if not compose.exists():
+            self.fail("找不到 docker-compose.yml，无法校验 worker 消费队列")
+        text = compose.read_text(encoding="utf-8")
+        match = re.search(r"celery\s+-A\s+\S+\s+worker[^\n]*?-Q\s+([\w,\-]+)",
+                          text)
+        if match is None:
+            self.fail("docker-compose.yml 里找不到 worker 的 -Q 队列声明")
+        return {q.strip() for q in match.group(1).split(",") if q.strip()}
 
     def test_every_seeded_schedule_targets_a_consumed_queue(self):
         from django_celery_beat.models import PeriodicTask
 
+        consumed = self._consumed_queues() | {"", None}
         offenders = [(pt.name, pt.queue) for pt in PeriodicTask.objects.all()
-                     if pt.queue not in self.CONSUMED]
+                     if pt.queue not in consumed]
         self.assertEqual(offenders, [],
-                         f"以下调度落在无人消费的队列: {offenders}")
+                         f"以下调度落在无人消费的队列: {offenders}"
+                         f"（worker 消费: {sorted(self._consumed_queues())}）")
 
     def test_recompute_daily_targets_crawl(self):
         from django_celery_beat.models import PeriodicTask

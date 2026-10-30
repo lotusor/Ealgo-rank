@@ -75,6 +75,7 @@ LOCAL_APPS = [
     "apps.crawler",
     "apps.ranking",
     "apps.announcements",
+    "apps.exports",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -207,6 +208,34 @@ SIMPLE_JWT = {
 # 竞赛平台账号 handle 一周仅可修改一次（解绑重绑视为新账号，不受限）。
 PLATFORM_HANDLE_EDIT_COOLDOWN_DAYS = int(env("PLATFORM_HANDLE_EDIT_COOLDOWN_DAYS", "7"))
 
+# ---------- 导出学校赛情 ----------
+# 导出文件**绝不能**落在 MEDIA_ROOT：/media/ 在 nginx 里是无鉴权 alias + 30 天
+# 缓存，落进去等于全校学号对公网长期公开。这里用独立目录 + internal location。
+EXPORT_ROOT = BASE_DIR / "exports"
+EXPORT_INTERNAL_PREFIX = "/_files/exports/"
+# 生产走 X-Accel-Redirect（nginx 直出，Python 不碰文件字节）；本地开发无 nginx 时关掉
+EXPORT_ACCEL_ENABLED = env_bool("EXPORT_ACCEL_ENABLED", True)
+# 同步/异步分流阈值：单校典型 50–300 人，永远落在同步路径
+EXPORT_SYNC_MAX_ROWS = int(env("EXPORT_SYNC_MAX_ROWS", "500"))
+EXPORT_SYNC_MAX_SHEETS = int(env("EXPORT_SYNC_MAX_SHEETS", "5"))
+# 硬上限。常规模式写 xlsx（write_only 不支持 merge_cells），内存随行数线性增长，
+# 10000 行约 60–80MB，配合 worker 的 mem_limit 1g 有安全余量。
+EXPORT_MAX_ROWS = int(env("EXPORT_MAX_ROWS", "10000"))
+EXPORT_MAX_SHEETS = int(env("EXPORT_MAX_SHEETS", "200"))
+EXPORT_MIN_YEAR = int(env("EXPORT_MIN_YEAR", "2025"))
+EXPORT_FILE_TTL_HOURS = int(env("EXPORT_FILE_TTL_HOURS", "2"))
+EXPORT_REUSE_TTL_SECONDS = int(env("EXPORT_REUSE_TTL_SECONDS", "600"))
+EXPORT_DISK_QUOTA_BYTES = int(env("EXPORT_DISK_QUOTA_BYTES",
+                                  str(2 * 1024 ** 3)))
+EXPORT_MIN_FREE_BYTES = int(env("EXPORT_MIN_FREE_BYTES",
+                                str(2 * 1024 ** 3)))
+EXPORT_SUSPICIOUS_DOWNLOAD_LIMIT = int(
+    env("EXPORT_SUSPICIOUS_DOWNLOAD_LIMIT", "5"))
+EXPORT_CREATE_RATE_SCHOOL_ADMIN = env("EXPORT_CREATE_RATE_SCHOOL_ADMIN",
+                                      "5/hour")
+EXPORT_CREATE_RATE_SUPER_ADMIN = env("EXPORT_CREATE_RATE_SUPER_ADMIN",
+                                     "20/hour")
+
 # ---------- Celery ----------
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/1")
@@ -236,6 +265,11 @@ CELERY_TASK_ROUTES = {
     "apps.crawler.tasks.crawl_nowcoder*": {"queue": "crawl_slow"},
     "apps.crawler.tasks.*": {"queue": "crawl"},
     "apps.ranking.tasks.*": {"queue": "crawl"},
+    # 导出单独一条队列：既要能被 worker 消费到，又不能和 55 分钟的牛客长任务
+    # 抢同一批 prefork 槽位。
+    # ⚠️ worker 启动命令必须含 export（docker-compose.yml / scripts/start_celery.sh），
+    # 否则消息无人消费、任务永远停在 pending。兜底见 exports.tasks.reap_stale_export_jobs。
+    "apps.exports.tasks.*": {"queue": "export"},
 }
 # 未显式路由的任务（如 debug_task）同样落入 crawl，确保始终有消费者
 CELERY_TASK_DEFAULT_QUEUE = "crawl"

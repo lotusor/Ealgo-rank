@@ -29,6 +29,8 @@ start_worker() {
   celery -A "$APP_MODULE" worker -Q crawl -l info --concurrency 4 --max-tasks-per-child 50 &
   # crawl_slow：牛客最慢，低并发避免打满
   celery -A "$APP_MODULE" worker -Q crawl_slow -l info --concurrency 2 --max-tasks-per-child 20 &
+  # export：导出赛情。单独一条低并发队列，避免与 55 分钟的牛客长任务抢槽位
+  celery -A "$APP_MODULE" worker -Q export -l info --concurrency 1 --max-tasks-per-child 20 &
   # default：积分重算等
   celery -A "$APP_MODULE" worker -Q default -l info --concurrency 2 --max-tasks-per-child 50 &
   wait

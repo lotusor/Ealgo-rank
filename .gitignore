@@ -50,3 +50,6 @@ volumes/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+# 导出赛情的临时产物（与 media 分开：media 被 nginx 无鉴权直出，导出文件不能进去）
+/backend/exports/

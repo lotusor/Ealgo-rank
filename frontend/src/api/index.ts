@@ -30,6 +30,8 @@ import type {
   UserBestRecord,
   RatingHistoryPoint,
   ScoreRules,
+  ExportJob,
+  ExportCreatePayload,
 } from './types'
 
 // ---------- Auth ----------
@@ -649,4 +651,59 @@ export interface PublicStats {
 export async function getPublicStats(): Promise<PublicStats> {
   const { data } = await client.get<PublicStats>('/stats/')
   return data
+}
+
+// ---------- 导出学校赛情 ----------
+export async function listExports(
+  params: PageQuery & { status?: string; year?: number } = {},
+): Promise<Paginated<ExportJob>> {
+  const { data } = await client.get<Paginated<ExportJob>>('/exports/', { params })
+  return data
+}
+
+export async function createExport(payload: ExportCreatePayload): Promise<ExportJob> {
+  const { data } = await client.post<ExportJob>('/exports/', payload)
+  return data
+}
+
+export async function getExport(id: number): Promise<ExportJob> {
+  const { data } = await client.get<ExportJob>(`/exports/${id}/`)
+  return data
+}
+
+export async function revokeExport(id: number): Promise<void> {
+  await client.delete(`/exports/${id}/`)
+}
+
+/** 从 Content-Disposition 里取 UTF-8 文件名（后端同时给了 ASCII 兜底）。 */
+function filenameFromDisposition(disposition: string | undefined, fallback: string): string {
+  if (!disposition) return fallback
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1])
+    } catch {
+      /* 解码失败退回兜底 */
+    }
+  }
+  const plain = /filename="([^"]+)"/i.exec(disposition)
+  return plain?.[1] || fallback
+}
+
+/**
+ * 下载导出文件。
+ *
+ * 必须走 Authorization 头（后端刻意不支持 URL 签名），所以不能用裸
+ * `<a href>`，只能取 blob 再本地落盘。成功后必须 revokeObjectURL，
+ * 否则长会话会一直占着内存。
+ */
+export async function downloadExport(id: number): Promise<{ blob: Blob; filename: string }> {
+  const resp = await client.get(`/exports/${id}/download/`, { responseType: 'blob' })
+  return {
+    blob: resp.data as Blob,
+    filename: filenameFromDisposition(
+      (resp.headers as Record<string, string>)['content-disposition'],
+      `export-${id}.xlsx`,
+    ),
+  }
 }

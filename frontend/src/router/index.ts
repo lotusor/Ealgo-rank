@@ -153,6 +153,13 @@ const router = createRouter({
           component: () => import('@/views/admin/ParticipationsView.vue'),
         },
         {
+          // 导出赛情：校管可导出本校，超管可选单校/多校/全站。
+          // 不加 superOnly —— 这正是给校管用的功能。
+          path: 'exports',
+          name: 'exports',
+          component: () => import('@/views/admin/ExportsView.vue'),
+        },
+        {
           path: 'members',
           name: 'members',
           component: () => import('@/views/admin/MembersView.vue'),

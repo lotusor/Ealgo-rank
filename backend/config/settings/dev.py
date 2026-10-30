@@ -15,6 +15,10 @@ DATABASES = {
 
 CORS_ALLOW_ALL_ORIGINS = True
 
+# 本地没有 nginx（没有 internal location），下载走 Django 直出文件，
+# 否则 X-Accel-Redirect 头会被忽略、浏览器拿到 0 字节空响应。
+EXPORT_ACCEL_ENABLED = env_bool("EXPORT_ACCEL_ENABLED", False)
+
 # 本地没起 Redis 时可设 CELERY_TASK_ALWAYS_EAGER=1 同步执行任务，方便调试
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", False)
 CELERY_TASK_EAGER_PROPAGATES = True

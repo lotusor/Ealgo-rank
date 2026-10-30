@@ -11,6 +11,8 @@ redis==8.1.0
 python-dotenv==1.2.2
 requests==2.34.2
 Pillow==13.0.0
+# 导出学校赛情（xlsx 生成）。纯 Python、无编译依赖，体积约 1MB。
+openpyxl==3.1.5
 
 # 生产环境额外需要（Docker 部署已启用）
 psycopg[binary]==3.2.*

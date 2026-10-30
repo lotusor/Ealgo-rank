@@ -31,6 +31,9 @@ services:
     volumes:
       - ./volumes/media:/app/backend/media
       - ./volumes/crawler-data:/app/crawlers/data
+      # 导出赛情的落盘目录。**刻意与 media 分开**：/media/ 在 nginx 里是无鉴权
+      # alias + 30 天缓存，导出文件含学号，落进去等于对公网长期公开。
+      - ./volumes/exports:/app/backend/exports
     restart: unless-stopped
 
   worker:
@@ -41,7 +44,9 @@ services:
         APT_MIRROR: mirrors.tuna.tsinghua.edu.cn
         PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
     network_mode: "host"
-    command: celery -A config worker -Q crawl,crawl_slow -l info
+    # ⚠️ export 队列必须在这里声明：路由到没人消费的队列会让导出任务永远
+    # 停在 pending（本仓历史上踩过 recompute 堆积在没人消费队列的坑）。
+    command: celery -A config worker -Q crawl,crawl_slow,export -l info
     env_file:
       - .env.prod
     environment:
@@ -50,6 +55,7 @@ services:
     volumes:
       - ./volumes/media:/app/backend/media
       - ./volumes/crawler-data:/app/crawlers/data
+      - ./volumes/exports:/app/backend/exports
     # 内存护栏：单机内存有限，牛客爬虫大榜单 JSON 解析存在内存放大。
     # 超限由内核 OOM 杀掉 worker 进程，容器 restart: unless-stopped 自动拉起；
     # 任务幂等 + 渐进补抓，宿主与其他服务得到保护。
@@ -81,6 +87,8 @@ services:
       - ./deploy/rank-nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ${RANK_DIST_DIR:-./frontend/dist}:/usr/share/nginx/html:ro
       - ./volumes/media:/var/www/media:ro
+      # 导出文件只读挂载：nginx 通过 internal location 直出，外部直连 404
+      - ./volumes/exports:/var/www/exports:ro
     depends_on:
       - backend
     restart: unless-stopped
