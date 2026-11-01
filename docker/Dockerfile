@@ -2,7 +2,7 @@
 # 仅含后端（Django + Gunicorn + Celery）。前端为静态产物，由宿主机反向代理托管。
 # 构建上下文 = 仓库根目录（需含 backend/ 与 crawlers/）。
 
-FROM python:3.13-slim
+FROM python:3.15-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
