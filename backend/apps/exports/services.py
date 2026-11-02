@@ -36,7 +36,7 @@ from openpyxl.utils import get_column_letter
 from apps.accounts.models import PlatformAccount, User
 from apps.common.models import ExcludeReason, Platform
 from apps.contests.models import Participation
-from apps.ranking.models import RankSnapshot
+from apps.ranking.models import RankSnapshot, ScoreRecord
 
 # 表头与列顺序严格对齐用户提供的模板：
 # 姓名 | 学号 | 参赛次数 | 异常次数 | 牛客rating | CF rating | Atcoder rating | 总rating | 校排
@@ -188,12 +188,37 @@ def _load_users(school_ids):
     )
 
 
-def _load_contest_counts(school_ids, year):
-    """参赛次数 / 作弊次数，一次 GROUP BY 拿全。
+def _load_scored_counts(school_ids, year):
+    """本赛季「计分场次」。
 
-    「异常次数」按用户口径只统计 `exclude_reason=cheater`。
-    注意它与「参赛次数」是包含关系，相减**不等于**计分场次
-    （还有赛后补交/人工剔除/打星等剔除原因），文件内的说明页已写明。
+    取 `ScoreRecord`（与站内榜单 `RankSnapshot.contest_count` **同一来源**），
+    不是 `Participation`：`rated=False` 的练习赛/节日赛也有参赛记录，但**不计分**，
+    把它们算进「参赛次数」会让报表数字与榜单对不上。
+
+    实测反例（2026-11-02）：选手「骑士猫猫」本赛季 7 条 participation 全是
+    `rated=False`，所有计分场次来自 2025 年——按 participation 计会写 7，
+    而榜单与他本人的计分场次都是 0。
+    """
+    rows = (
+        ScoreRecord.objects
+        .filter(
+            platform_account__isnull=False,
+            platform_account__school_id__in=school_ids,
+            contest_time__year=year,
+        )
+        .values("platform_account__user_id")
+        .annotate(n=Count("id"))
+        .order_by()
+    )
+    return {r["platform_account__user_id"]: r["n"] for r in rows
+            if r["platform_account__user_id"]}
+
+
+def _load_participation_counts(school_ids, year):
+    """本赛季「参赛条数」与「作弊场次」。
+
+    参赛条数只用来判断「本赛季是否露过面」（决定该不该出行），不进报表数字；
+    作弊是行为，与是否计分无关，单独统计。
     """
     rows = (
         Participation.objects
@@ -217,50 +242,90 @@ def _load_contest_counts(school_ids, year):
     return out
 
 
-def _load_platform_ratings(school_ids, year, rating_window):
-    """各平台「赛季末最后一场」的赛后 rating，一次查询 N 行。
+def _rating_subquery(year):
+    """`PlatformAccount` 上「最后一场有 rating 的比赛」的注解。
 
-    用 `Subquery` 而不是 `DISTINCT ON`：后者 SQLite 不支持，CI 会红。
+    year=None 表示不限赛季，用于「本赛季无计分赛」时的当前值回退。
     """
-    latest = Participation.objects.filter(
+    qs = Participation.objects.filter(
         platform_account=OuterRef("pk"),
         new_rating__isnull=False,
     )
-    if rating_window == "season":
-        latest = latest.filter(contest__start_time__year=year)
-    latest = latest.order_by("-contest__start_time", "-id").values(
-        "new_rating")[:1]
+    if year is not None:
+        qs = qs.filter(contest__start_time__year=year)
+    return qs.order_by("-contest__start_time", "-id").values("new_rating")[:1]
 
+
+def _load_platform_ratings(school_ids, year):
+    """各平台 rating：返回 {user_id: {platform: (赛季末值, 全历史最新值)}}。
+
+    两个值都取出来，是为了「本赛季没打该平台」时能回退到当前 rating
+    而不是留空——报表要求如实反映选手现状，空值等于把人当不存在。
+
+    用 `Subquery` 而不是 `DISTINCT ON`：后者 SQLite 不支持，CI 会红。
+    """
     rows = (
         PlatformAccount.objects
         .filter(school_id__in=school_ids)
-        .annotate(latest_rating=Subquery(latest))
-        .values("user_id", "platform", "latest_rating")
+        .annotate(
+            season_rating=Subquery(_rating_subquery(year)),
+            latest_rating=Subquery(_rating_subquery(None)),
+        )
+        .values("user_id", "platform", "season_rating", "latest_rating")
     )
     out = {}
     for r in rows:
-        if r["latest_rating"] is None:
+        if r["season_rating"] is None and r["latest_rating"] is None:
             continue
-        out.setdefault(r["user_id"], {})[r["platform"]] = r["latest_rating"]
+        out.setdefault(r["user_id"], {})[r["platform"]] = (
+            r["season_rating"], r["latest_rating"])
     return out
 
 
 def _load_total_ratings(user_ids, year):
-    """站内赛季有效分：与排行榜 student 榜同源（RankSnapshot）。"""
+    """站内有效分：返回 {user_id: (本赛季分, 全历史当前分)}。
+
+    `RankSnapshot` 只给**有计分记录**的人建行，所以本赛季没计分赛的选手
+    在 `period=<year>` 里根本不存在（骑士猫猫就是这种），必须能回退到
+    `period="all"` 的当前分。
+    """
     rows = (
         RankSnapshot.objects
-        .filter(scope=RankSnapshot.Scope.STUDENT, period=str(year),
+        .filter(scope=RankSnapshot.Scope.STUDENT,
+                period__in=[str(year), "all"],
                 user_id__in=user_ids)
-        .values("user_id", "total_score")
+        .values("user_id", "period", "total_score")
     )
-    return {r["user_id"]: r["total_score"] for r in rows}
+    out = {}
+    for r in rows:
+        slot = out.setdefault(r["user_id"], [None, None])
+        if r["period"] == str(year):
+            slot[0] = r["total_score"]
+        else:
+            slot[1] = r["total_score"]
+    return {uid: tuple(v) for uid, v in out.items()}
+
+
+def is_current_season(year):
+    """是否当前赛季。回退只在当前赛季成立——把「今天的分」塞进往年报表是错的。"""
+    return int(year) == timezone.localdate().year
 
 
 def estimate_row_count(school_ids, year, include_zero_participation=False):
-    """粗估行数，用于同步/异步分流。只发 1～2 条 COUNT，不碰明细。"""
+    """粗估行数，用于同步/异步分流。
+
+    当前赛季按「已绑定账号人数」估（0 计分场的人也要出行）；历史赛季按
+    该赛季实际参赛人数估，避免高估导致无谓地转异步。
+    """
     if include_zero_participation:
         return User.objects.filter(school_id__in=school_ids,
                                    is_active=True).count()
+    if is_current_season(year):
+        return (
+            PlatformAccount.objects
+            .filter(school_id__in=school_ids, user__is_active=True)
+            .values("user_id").distinct().count()
+        )
     return (
         Participation.objects
         .filter(
@@ -268,9 +333,7 @@ def estimate_row_count(school_ids, year, include_zero_participation=False):
             platform_account__school_id__in=school_ids,
             contest__start_time__year=year,
         )
-        .values("platform_account__user_id")
-        .distinct()
-        .count()
+        .values("platform_account__user_id").distinct().count()
     )
 
 
@@ -315,38 +378,84 @@ def _assign_ranks(rows):
 
 
 def collect(school_ids, year, options):
-    """取全量数据并按学校分组。返回 (schools, rows_by_school, stats)。"""
+    """取全量数据并按学校分组。返回 (schools, rows_by_school, stats)。
+
+    出行规则（2026-11-02 按用户口径修正）：只要这个人在本校**有绑定账号**，
+    就保留一行，哪怕本赛季 0 计分场——他的平台 rating 与站内当前分仍然真实存在，
+    写空等于把人从报表里抹掉。只有「完全没有任何数据」的人才按
+    `include_zero_participation` 决定是否列出。
+    """
     include_zero = bool(options.get("include_zero_participation"))
     rating_window = options.get("rating_window") or "season"
+    current = is_current_season(year)
 
     schools = _load_schools(school_ids)
     users = _load_users(school_ids)
-    counts = _load_contest_counts(school_ids, year)
-    ratings = _load_platform_ratings(school_ids, year, rating_window)
+    scored = _load_scored_counts(school_ids, year)
+    participation = _load_participation_counts(school_ids, year)
+    ratings = _load_platform_ratings(school_ids, year)
     user_ids = [u["id"] for u in users]
     totals = _load_total_ratings(user_ids, year)
 
     skipped_zero = 0
+    fallback_total = 0
+    fallback_platform = 0
     rows_by_school = {sid: [] for sid in school_ids}
+
     for u in users:
         uid = u["id"]
-        total_cnt, cheat_cnt = counts.get(uid, (0, 0))
-        if total_cnt == 0 and not include_zero:
+        scored_cnt = scored.get(uid, 0)
+        part_cnt, cheat_cnt = participation.get(uid, (0, 0))
+
+        season_total, all_total = totals.get(uid, (None, None))
+        if season_total is not None:
+            total, total_fb = season_total, False
+        elif current and all_total is not None:
+            # 本赛季没有计分场 → 回退到站内当前分，仍参与校排
+            total, total_fb = all_total, True
+        else:
+            total, total_fb = None, False
+
+        plat = ratings.get(uid, {})
+        picked = {}
+        for platform, _label in PLATFORM_COLUMNS:
+            season_v, latest_v = plat.get(platform, (None, None))
+            if rating_window == "latest":
+                picked[platform] = latest_v
+            elif season_v is not None:
+                picked[platform] = season_v
+            elif current and latest_v is not None:
+                picked[platform] = latest_v
+                fallback_platform += 1
+            else:
+                picked[platform] = None
+
+        # 「本赛季露过面」：参赛过、计过分、或被标记过作弊，任一即算。
+        # 当前赛季额外接受「只有历史数据」的人（回退路径），历史赛季不接受——
+        # 否则导 2025 会把只在 2026 打过的人拉进 2025 的表。
+        met_this_season = bool(part_cnt or scored_cnt or cheat_cnt)
+        usable_fallback = current and (total is not None
+                                       or any(v is not None
+                                              for v in picked.values()))
+        if not (met_this_season or usable_fallback) and not include_zero:
             skipped_zero += 1
             continue
-        plat = ratings.get(uid, {})
-        score = totals.get(uid)
+        if total_fb:
+            fallback_total += 1
+
         rows_by_school.setdefault(u["school_id"], []).append({
             "_uid": uid,
             "name": _display_name(u),
             "student_no": (u["student_no"] or "").strip(),
-            "contests": total_cnt,
+            # 计分场次（不是参赛条数）：与榜单 contest_count 同源
+            "contests": scored_cnt,
             "cheaters": cheat_cnt,
-            "nowcoder": plat.get(Platform.NOWCODER),
-            "codeforces": plat.get(Platform.CODEFORCES),
-            "atcoder": plat.get(Platform.ATCODER),
+            "nowcoder": picked[Platform.NOWCODER],
+            "codeforces": picked[Platform.CODEFORCES],
+            "atcoder": picked[Platform.ATCODER],
             # 表里展示与排名都取整，避免「显示同分却不同名次」
-            "total": None if score is None else int(round(float(score))),
+            "total": None if total is None else int(round(float(total))),
+            "total_fallback": total_fb,
             "rank": None,
         })
 
@@ -357,6 +466,8 @@ def collect(school_ids, year, options):
         "row_count": sum(len(v) for v in rows_by_school.values()),
         "skipped_zero": skipped_zero,
         "school_count": len([v for v in rows_by_school.values() if v]),
+        "fallback_total": fallback_total,
+        "fallback_platform": fallback_platform,
     }
     return schools, rows_by_school, stats
 
@@ -449,17 +560,40 @@ def _write_merged_sheet(ws, rows, year):
 # 口径说明：这七条是「同一份报表两次导出数值不同」这类质询的唯一挡箭牌，
 # 改动统计口径时必须同步改这里。
 _NOTES = [
-    "1. 参赛次数：该赛季内、以平台账号归属校为准的全部参赛记录数（含被剔除场次）。",
-    "2. 异常次数：仅统计平台标记作弊（exclude_reason=cheater）的场次；不含赛后补交、"
-    "人工剔除、打星等其它剔除原因。因此「参赛次数 − 异常次数」不等于计分场次。",
-    "3. 平台 rating：该平台在本赛季内最后一场比赛的赛后 rating；本赛季未参加该平台"
-    "比赛则留空（不是 0）。",
-    "4. 总rating：站内赛季有效分（最近若干场表现分衰减加权，并带 1200 新手先验），"
-    "与站内排行榜「学生榜」同源，不等于三平台 rating 之和。",
-    "5. 校排：校内按总rating 降序，同分并列同名次、后续跳号；无总rating 者排末位并记「—」。",
+    "1. 参赛次数：该赛季内「计入积分」的场次数，与站内排行榜「学生榜」的参赛场次同源。"
+    "不计分的比赛（练习赛、节日赛、rated=False 的场次）不计入——它们有参赛记录，"
+    "但不产生积分，计进来会让报表数字与榜单对不上。",
+    "2. 异常次数：该赛季内被平台标记作弊（exclude_reason=cheater）的场次。"
+    "它统计的是「行为」，与是否计分无关，因此「与参赛次数不存在包含关系」，"
+    "两者相减没有意义。",
+    "3. 平台 rating：该平台在本赛季最后一场计分赛的赛后值。"
+    "导出当前赛季时，若本赛季在该平台没有计分赛，则回退为该平台「最近一次」有 rating 的"
+    "值（即选手当前 rating）；导出历史赛季不回退，留空。回退数量见上方统计。",
+    "4. 总rating：站内本赛季有效分（最近若干场表现分衰减加权，并带 1200 新手先验），"
+    "与站内排行榜「学生榜」同源，不等于三平台 rating 之和。"
+    "导出当前赛季时，本赛季没有计分赛的选手回退为站内「当前分」（all 周期快照），"
+    "仍参与校排；导出历史赛季不回退。",
+    "5. 校排：校内按总rating 降序，同分并列同名次、后续跳号；"
+    "仅在完全没有任何 rating 时才记「—」并排末位。",
     "6. 学号列已设为文本格式，避免长数字被科学计数法截断或丢失前导零。",
     "7. 学生归属以平台账号归属学校为准；学生转校后历史成绩随账号一并迁移，"
     "与站内榜单口径一致。",
+]
+
+# 解释「为什么有人本赛季 0 场却还有 rating」这类质询。用户 2026-11-02 要求
+# 把这层解释直接写进表格，避免拿表的人反复来问。
+_EXPLAIN_TITLE = "关于本表数字的几点说明（常见疑问）"
+_EXPLAIN = [
+    "问：为什么有人的「参赛次数」是 0，rating 却有值？",
+    "答：参赛次数只数「计分」场次。该选手本赛季可能参加了若干不计分的练习赛，"
+    "因此计分场次为 0；但其 rating 是选手账号上的「当前值」，来自更早的计分赛，"
+    "按第 3、4 条回退规则如实输出，而不是抹成空值。",
+    "问：为什么他的校排不为空，但本赛季一场计分赛都没打？",
+    "答：校排按「本赛季有效分，缺则当前分」排序。这样选手不会因为一段时间没参赛"
+    "就从榜单上消失。若要严格只看本赛季，请筛选「参赛次数 > 0」的行自行比对。",
+    "问：异常次数为什么可能大于参赛次数？",
+    "答：两者口径不同（见第 1、2 条）：参赛次数只数计分场次，异常次数数作弊行为，"
+    "作弊场次本身通常不计分，因此前者可能小于后者，这不是数据错误。",
 ]
 
 
@@ -479,7 +613,11 @@ def _write_notes_sheet(ws, job, schools, stats):
         ("范围", scope_text),
         ("形态", job.get_layout_display()),
         ("数据行数", f"{stats['row_count']} 行"),
-        ("跳过零参赛学生", f"{stats['skipped_zero']} 人"),
+        ("无任何数据而跳过", f"{stats['skipped_zero']} 人"),
+        # 让拿表的人一眼看到有多少数字是回退来的，避免把当前分误当成本赛季分
+        ("总rating 用当前分回退", f"{stats.get('fallback_total', 0)} 行"),
+        ("平台 rating 用最新值回退",
+         f"{stats.get('fallback_platform', 0)} 个单元格"),
         ("榜单快照版本", str(_ranking_version())),
         ("操作人", getattr(job.actor, "username", "") or "-"),
     ]
@@ -493,6 +631,15 @@ def _write_notes_sheet(ws, job, schools, stats):
     row += 1
     for note in _NOTES:
         _put(ws, row, 1, note, font=_FONT, align=_ALIGN_WRAP)
+        row += 1
+
+    # 用户 2026-11-02 明确要求：把「数字为什么长这样」直接写进表格，
+    # 省得拿表的人反复来问，也避免被误当成数据错误。
+    row += 1
+    _put(ws, row, 1, _EXPLAIN_TITLE, font=_FONT_BOLD)
+    row += 1
+    for line in _EXPLAIN:
+        _put(ws, row, 1, line, font=_FONT, align=_ALIGN_WRAP)
         row += 1
 
 

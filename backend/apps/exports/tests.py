@@ -30,7 +30,7 @@ from apps.contests.models import Contest, Participation
 from apps.exports import services
 from apps.exports.models import ExportAuditLog, ExportEvent, ExportJob
 from apps.exports.tasks import run_export
-from apps.ranking.models import RankSnapshot
+from apps.ranking.models import RankSnapshot, ScoreRecord
 from apps.schools.models import School
 
 BASE = "/api/v1"
@@ -157,6 +157,17 @@ class ExportTestBase(APITestCase):
                             passport_user_id="0f8b5c1e-1111-4a2b-9c3d-eeeeeeeeeeee")
 
         computed = timezone.now()
+        # 「参赛次数」现在数的是计分场次（ScoreRecord），而 ScoreRecord 只对
+        # countable 的场次生成——夹具必须补上，否则所有人数都是 0。
+        # 注意 s1 的 c2 是被判作弊的场次，真实引擎不会为它产生 ScoreRecord。
+        for pa in (self.pa_s1, self.pa_s2, self.pa_s3, self.pa_s4):
+            part = Participation.objects.get(contest=self.c1,
+                                             platform_account=pa)
+            ScoreRecord.objects.create(
+                participation=part, platform_account=pa,
+                school=self.school_a, platform=pa.platform,
+                contest_time=self.c1.start_time, final_score=1000)
+
         for user, score in ((self.s3, 1700.0), (self.s1, 1460.4),
                             (self.s2, 1460.0), (self.s4, 1000.0)):
             RankSnapshot.objects.create(
@@ -303,9 +314,10 @@ class ExportContentTests(ExportTestBase):
         rows = {ws.cell(row=r, column=1).value: r for r in range(3, ws.max_row + 1)}
         zhang = rows["张一"]
 
-        # 参赛次数只算本赛季（2026）的两场，去年的 c_old 不计
-        self.assertEqual(ws.cell(row=zhang, column=3).value, 2)
-        # 异常次数只统计 cheater
+        # 参赛次数 = **计分场次**：本赛季 c1 计分、c2 判作弊不计分 → 1
+        # （旧口径按 participation 数会写 2，那正是本次要修的问题）
+        self.assertEqual(ws.cell(row=zhang, column=3).value, 1)
+        # 异常次数只统计 cheater，且与参赛次数不是包含关系
         self.assertEqual(ws.cell(row=zhang, column=4).value, 1)
         # 平台 rating 取赛季内最后一场（c2 的 1400），不是第一场 1300
         self.assertEqual(ws.cell(row=zhang, column=6).value, 1400)
@@ -391,7 +403,10 @@ class ExportContentTests(ExportTestBase):
         self.assertIn("说明", wb.sheetnames)
         text = "\n".join(str(c.value) for row in wb["说明"].iter_rows()
                          for c in row if c.value)
-        self.assertIn("不等于计分场次", text)
+        # 参赛次数与计分口径的关系必须写明，否则「0 场次却有 rating」会被当成 bug
+        self.assertIn("计入积分", text)
+        self.assertIn("不存在包含关系", text)
+        self.assertIn("回退", text)
         self.assertIn("不等于三平台 rating 之和", text)
 
     def test_previous_season_export_uses_old_contests(self):
@@ -402,6 +417,151 @@ class ExportContentTests(ExportTestBase):
         names = [ws.cell(row=r, column=1).value
                  for r in range(3, ws.max_row + 1)]
         self.assertEqual(names, ["张一"])
+
+
+class ExportCaliberTests(ExportTestBase):
+    """2026-11-02 口径修正的两条不变量。
+
+    ① 参赛次数 = **计分场次**（`ScoreRecord`），不是参与条数；
+    ② 本赛季 0 计分场的人必须保留，并把「当前 rating / 当前分」如实输出、计入校排。
+    典型样本就是线上选手「骑士猫猫」：2026 年 7 场全是 rated=False 的练习赛，
+       计分场次为 0，最后一次计分赛停在 2025-12-21。
+    """
+
+    def _school_with_inactive_student(self):
+        school = School.objects.create(name="丙大学", code="bing",
+                                       short_name="丙大")
+        user = make_user("knight", school=school, real_name="骑士猫猫")
+        pa = PlatformAccount.objects.create(
+            user=user, platform=Platform.NOWCODER, handle="nc_knight",
+            school=school)
+
+        # 本赛季：只打不计分的练习赛
+        practice = Contest.objects.create(
+            platform=Platform.NOWCODER, external_id="p2026",
+            name="牛客2026年节日练习赛", is_rated=False,
+            participant_count=600,
+            start_time=timezone.make_aware(
+                timezone.datetime(YEAR, 5, 1, 12, 0)))
+        Participation.objects.create(
+            contest=practice, platform_account=pa, handle="nc_knight",
+            rank=100)
+
+        # 历史：2025 年两场计分赛，最后一场给 1104
+        scored_contests = []
+        for idx, (month, rating) in enumerate(((3, 1000), (12, 1104))):
+            c = Contest.objects.create(
+                platform=Platform.NOWCODER,
+                external_id="r2025-%s" % idx, name="牛客周赛 2025-%s" % idx,
+                is_rated=True, participant_count=500,
+                start_time=timezone.make_aware(
+                    timezone.datetime(YEAR - 1, month, 20, 11, 0)))
+            part = Participation.objects.create(
+                contest=c, platform_account=pa, handle="nc_knight",
+                rank=50, new_rating=rating)
+            ScoreRecord.objects.create(
+                participation=part, platform_account=pa, school=school,
+                platform=pa.platform, contest_time=c.start_time,
+                final_score=1000 + idx)
+            scored_contests.append(c)
+
+        # 站内快照：只有 all，没有 2026（真实引擎只给有计分记录的人建行）
+        RankSnapshot.objects.create(
+            scope=RankSnapshot.Scope.STUDENT, period="all", user=user,
+            school=school, rank=7, total_score=1081.8738, contest_count=2,
+            computed_at=timezone.now())
+        return school, user, pa
+
+    def test_zero_scored_contests_keeps_current_rating_and_rank(self):
+        school, user, _pa = self._school_with_inactive_student()
+
+        schools, rows_by_school, stats = services.collect(
+            [school.id], YEAR, {})
+
+        rows = rows_by_school[school.id]
+        self.assertEqual(len(rows), 1, "0 计分场的人被整体跳过了")
+        row = rows[0]
+
+        self.assertEqual(row["name"], "骑士猫猫")
+        # ① 参赛次数 = 计分场次（本赛季为 0），不是 7 条练习赛
+        self.assertEqual(row["contests"], 0)
+        # ② 平台 rating 回退到最近一次计分值
+        self.assertEqual(row["nowcoder"], 1104)
+        # ③ 总rating 回退到 all 周期当前分，并参与校排
+        self.assertEqual(row["total"], 1082)
+        self.assertEqual(row["rank"], 1)
+        self.assertTrue(row["total_fallback"])
+        self.assertEqual(stats["fallback_total"], 1)
+        self.assertEqual(stats["fallback_platform"], 1)
+
+    def test_scored_count_ignores_unrated_participations(self):
+        """3 条参赛记录、只有 1 条计分 → 参赛次数必须是 1。"""
+        school = School.objects.create(name="丁大学", code="ding",
+                                       short_name="丁大")
+        user = make_user("mixed", school=school, real_name="混合样本")
+        pa = PlatformAccount.objects.create(
+            user=user, platform=Platform.CODEFORCES, handle="cf_mixed",
+            school=school)
+
+        rated = Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id="m1", name="计分赛",
+            is_rated=True, participant_count=500,
+            start_time=timezone.make_aware(
+                timezone.datetime(YEAR, 2, 1, 12, 0)))
+        unrated = [Contest.objects.create(
+            platform=Platform.CODEFORCES, external_id="u%d" % i,
+            name="练习赛%d" % i, is_rated=False, participant_count=500,
+            start_time=timezone.make_aware(
+                timezone.datetime(YEAR, 3 + i, 1, 12, 0))) for i in (0, 1)]
+
+        part = Participation.objects.create(
+            contest=rated, platform_account=pa, handle="cf_mixed", rank=10)
+        for c in unrated:
+            Participation.objects.create(
+                contest=c, platform_account=pa, handle="cf_mixed", rank=99)
+        ScoreRecord.objects.create(
+            participation=part, platform_account=pa, school=school,
+            platform=pa.platform, contest_time=rated.start_time,
+            final_score=1500)
+
+        _schools, rows_by_school, _stats = services.collect(
+            [school.id], YEAR, {})
+        row = rows_by_school[school.id][0]
+        self.assertEqual(row["contests"], 1)
+        self.assertEqual(
+            Participation.objects.filter(platform_account__user=user).count(),
+            3, "夹具本身应有 3 条参赛记录")
+
+    def test_historical_season_does_not_pull_in_future_only_students(self):
+        """导历史赛季时不能把「只在别的年份打过」的人拉进来，也不回退当前分。"""
+        school, user, _pa = self._school_with_inactive_student()
+
+        _schools, rows_by_school, stats = services.collect(
+            [school.id], YEAR - 1, {})
+        rows = rows_by_school[school.id]
+
+        # 2025 年他确实打了 2 场计分赛 → 应当在
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["contests"], 2)
+        self.assertEqual(rows[0]["total"], None, "历史赛季不应回退当前分")
+        self.assertEqual(stats["fallback_total"], 0)
+
+        # 再往前一年：没有任何数据，不应出现
+        _s, rows_2024, _st = services.collect([school.id], YEAR - 2, {})
+        self.assertEqual(rows_2024[school.id], [])
+
+    def test_notes_sheet_explains_zero_contest_rows(self):
+        resp = self.create_export(self.admin_a)
+        job = ExportJob.objects.get(pk=resp.data["id"])
+        wb = load_workbook(Path(self._tmpdir) / job.file_path)
+        text = "\n".join(str(c.value) for row in wb["说明"].iter_rows()
+                         for c in row if c.value)
+
+        self.assertIn("参赛次数", text)
+        self.assertIn("计入积分", text)
+        self.assertIn("关于本表数字的几点说明", text)
+        self.assertIn("为什么有人的「参赛次数」是 0", text)
+        self.assertIn("总rating 用当前分回退", text)
 
 
 class ExportSecurityTests(ExportTestBase):
