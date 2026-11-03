@@ -62,11 +62,27 @@ const canSubmit = computed(() => {
   return singleSchool.value !== null
 })
 
-function statusBadge(status: ExportJob['status']): string {
-  if (status === 'succeeded') return 'badge badge-success'
-  if (status === 'failed') return 'badge badge-danger'
-  if (status === 'running' || status === 'pending') return 'badge badge-info'
-  return 'badge badge-muted'
+/**
+ * 状态展示。
+ *
+ * 不能直接用 `status_display`：任务状态是 succeeded，但文件过了 2 小时有效期后
+ * 已经下不动了。若状态列仍写「已完成」、操作列又写「已过期」，同一行自相矛盾
+ * （2026-11-03 生产截图实测）。这里把「已完成但文件已过期」统一显示为「已过期」。
+ */
+function statusInfo(job: ExportJob): { text: string; cls: string } {
+  if (job.status === 'succeeded' && job.is_expired) {
+    return { text: '已过期', cls: 'badge badge-muted' }
+  }
+  if (job.status === 'succeeded') return { text: job.status_display, cls: 'badge badge-success' }
+  if (job.status === 'failed') return { text: job.status_display, cls: 'badge badge-danger' }
+  if (job.status === 'running' || job.status === 'pending') {
+    return { text: job.status_display, cls: 'badge badge-info' }
+  }
+  return { text: job.status_display, cls: 'badge badge-muted' }
+}
+
+function canDownload(job: ExportJob): boolean {
+  return job.status === 'succeeded' && !job.is_expired
 }
 
 function fmtSize(bytes: number): string {
@@ -334,27 +350,30 @@ onUnmounted(clearPoll)
       <div class="table-wrap" style="border: none; border-radius: 0">
         <table class="data-table">
           <colgroup>
+            <col style="width: 6%" />
+            <col style="width: 19%" />
             <col style="width: 8%" />
-            <col style="width: 20%" />
+            <col style="width: 11%" />
+            <col style="width: 7%" />
             <col style="width: 8%" />
-            <col style="width: 12%" />
-            <col style="width: 8%" />
-            <col style="width: 9%" />
-            <col style="width: 9%" />
-            <col style="width: 13%" />
-            <col style="width: 13%" />
+            <col style="width: 7%" />
+            <col style="width: 11%" />
+            <col style="width: 23%" />
           </colgroup>
           <thead>
             <tr>
-              <th>#</th>
+              <!-- 数字列的表头必须同时带 num-cell：
+                   全局样式里 `th.num-cell` 是右对齐，只给 td 加会让表头左对齐、
+                   数字右对齐，窄列里数字就"漂"到下一列表头下方（2026-11-03 实测）。 -->
+              <th class="num-cell">#</th>
               <th>范围</th>
-              <th>赛季</th>
+              <th class="num-cell">赛季</th>
               <th>形态</th>
-              <th>行数</th>
-              <th>大小</th>
-              <th>下载</th>
+              <th class="num-cell">行数</th>
+              <th class="num-cell">大小</th>
+              <th class="num-cell">下载</th>
               <th>状态</th>
-              <th>操作</th>
+              <th class="num-cell">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -373,31 +392,32 @@ onUnmounted(clearPoll)
               <td class="num-cell">{{ fmtSize(job.file_size) }}</td>
               <td class="num-cell">{{ job.download_count }}</td>
               <td>
-                <span :class="statusBadge(job.status)">{{ job.status_display }}</span>
+                <span :class="statusInfo(job).cls">{{ statusInfo(job).text }}</span>
                 <div v-if="job.error_message" class="caption text-tertiary" :title="job.error_message">
                   {{ job.error_message.slice(0, 24) }}
                 </div>
               </td>
-              <td>
-                <button
-                  v-if="job.status === 'succeeded' && !job.is_expired"
-                  class="btn btn-ghost btn-sm"
-                  :disabled="downloadingId === job.id"
-                  @click="download(job)"
-                >
-                  {{ downloadingId === job.id ? '下载中…' : '下载' }}
-                </button>
-                <span v-else-if="job.is_expired" class="caption text-tertiary">已过期</span>
-                <button
-                  v-if="job.status === 'succeeded' || job.status === 'failed'"
-                  class="btn btn-ghost btn-sm"
-                  @click="revoke(job)"
-                >
-                  撤销
-                </button>
-                <span class="caption text-tertiary" style="margin-left: 6px">
-                  {{ formatDateTime(job.created_at) }}
-                </span>
+              <td class="num-cell">
+                <!-- 两行固定结构：按钮一行、时间一行且不换行。
+                     混排会让每行高度不一致，是这张表之前最刺眼的观感问题。 -->
+                <div class="act-line">
+                  <button
+                    v-if="canDownload(job)"
+                    class="btn btn-ghost btn-sm"
+                    :disabled="downloadingId === job.id"
+                    @click="download(job)"
+                  >
+                    {{ downloadingId === job.id ? '下载中…' : '下载' }}
+                  </button>
+                  <button
+                    v-if="job.status === 'succeeded' || job.status === 'failed'"
+                    class="btn btn-ghost btn-sm"
+                    @click="revoke(job)"
+                  >
+                    撤销
+                  </button>
+                </div>
+                <div class="act-time">{{ formatDateTime(job.created_at) }}</div>
               </td>
             </tr>
           </tbody>
@@ -478,6 +498,22 @@ onUnmounted(clearPoll)
 
 .school-chip input {
   display: none;
+}
+
+/* 操作列：按钮一行、时间一行，都不换行——否则三行高度不一，表格看起来是歪的 */
+.act-line {
+  display: flex;
+  gap: var(--space-1);
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 26px;
+}
+
+.act-time {
+  margin-top: 2px;
+  font-size: var(--text-2xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
 
 @media (max-width: 1024px) {
